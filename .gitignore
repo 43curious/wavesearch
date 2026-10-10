@@ -1,0 +1,30 @@
+# macOS
+.DS_Store
+
+# Xcode
+.DerivedData*/
+build/
+*.xcuserstate
+xcuserdata/
+
+# Zig
+.zig-cache/
+zig-out/
+
+# External CLAP/ONNX Runtime artifacts (installed explicitly, never committed)
+*.onnx
+*.ort
+libonnxruntime.*
+core/models/*/
+!core/models/README.md
+
+# Generated binary framework copies
+WaveSearchKit.xcframework/
+
+# Local perf/test data
+.perf/
+.relevance/
+.acoustic-acceptance/
+
+# Logs
+*.log

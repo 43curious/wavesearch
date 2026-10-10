@@ -1,0 +1,4 @@
+module WaveSearchKit {
+    umbrella header "wavesearch.h"
+    export *
+}
