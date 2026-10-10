@@ -65,7 +65,10 @@ in the database), the detailed cache budget, exports, and recovery copies, with
 Finder links and manual refresh.
 
 Press **⌘,** or choose **WaveSearch → Settings…** to open the native Settings
-window. General contains preview volume and background refinement; Appearance
+window. General contains editor import behavior, preview volume, and background
+refinement. **Keep the files in place** is the default and passes the full original
+file URL to the editor; **Copy files to Exports** copies whole files unchanged
+and renders selected waveform ranges as trimmed WAVs. Appearance
 contains System/Light/Dark mode, app accent, and waveform/played-waveform colors
 with a live preview and a color reset. These preferences persist across launches.
 

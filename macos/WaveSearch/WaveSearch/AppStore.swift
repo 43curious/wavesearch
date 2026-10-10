@@ -24,6 +24,7 @@ nonisolated struct SoundFile: Identifiable, Hashable, Sendable {
 
 @MainActor
 final class AppStore: ObservableObject {
+    @Published var isSidebarVisible = true
     @Published var folders: [LibraryFolder] = []
     @Published private(set) var isReady = false
     @Published private(set) var isLibraryChanging = false
@@ -214,23 +215,6 @@ final class AppStore: ObservableObject {
 
     var totalIndexedFiles: Int {
         folders.reduce(0) { $0 + $1.fileCount }
-    }
-
-    var searchSummary: String {
-        if isExampleSearch {
-            return isSearching ? "Finding acoustic matches…" : "\(results.count) acoustic matches"
-        }
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty {
-            if let id = selectedFolderId,
-               let folder = folders.first(where: { $0.id == id }) {
-                return "\(folder.fileCount) sounds in \(folder.name)"
-            }
-            return "\(totalIndexedFiles) sounds indexed"
-        }
-        if isSearching { return "Searching…" }
-        let noun = results.count == 1 ? "result" : "results"
-        return "\(results.count) \(noun) in \(selectedFolderName)"
     }
 
     func bootstrap() {

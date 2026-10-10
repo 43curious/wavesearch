@@ -462,9 +462,56 @@ struct AppStoreLifecycleCheck {
             try audio.write(from: buffer)
         }
         let file = SoundFile(id: 1, folderId: 1, path: source.path, name: source.lastPathComponent, durationMs: 43, contentHash: 1)
-        let payload = try await dragPayloadForClip(file: file, startFraction: 0.25, endFraction: 0.75)
+        precondition(AudioImportBehavior.current(preferences: preferences) == .keepInPlace)
+        preferences.set(AudioImportBehavior.copyToExports.rawValue, forKey: AudioImportBehavior.preferenceKey)
+        precondition(AudioImportBehavior.current(preferences: preferences) == .copyToExports)
+        preferences.removeObject(forKey: AudioImportBehavior.preferenceKey)
+
+        let originalPayload = try await dragPayloadForClip(
+            file: file, startFraction: 0.25, endFraction: 0.75, behavior: .keepInPlace
+        )
         let pasteboard = NSPasteboard(name: .init("wavesearch-drag-\(UUID().uuidString)"))
         defer { pasteboard.releaseGlobally() }
+        precondition(pasteboard.writeObjects([originalPayload.writer]))
+        let originals = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]
+        precondition(originals == [source], "Keep-in-place waveform drags must reference the original file")
+
+        func providerURL(_ behavior: AudioImportBehavior) async throws -> URL {
+            let provider = itemProviderForAudioImport(file, behavior: behavior)
+            return try await withCheckedThrowingContinuation { continuation in
+                provider.loadObject(ofClass: NSURL.self) { object, error in
+                    if let url = object as? URL { continuation.resume(returning: url) }
+                    else { continuation.resume(throwing: error ?? CocoaError(.fileReadUnknown)) }
+                }
+            }
+        }
+        let originalRowURL = try await providerURL(.keepInPlace)
+        precondition(originalRowURL == source, "Result-row drags must reference the original file")
+        let copiedURL = try await providerURL(.copyToExports)
+        defer { try? FileManager.default.removeItem(at: copiedURL) }
+        precondition(copiedURL != source && copiedURL.deletingLastPathComponent() == AudioClipStorage.directory)
+        let originalData = try Data(contentsOf: source)
+        let copiedData = try Data(contentsOf: copiedURL)
+        precondition(copiedData == originalData, "Whole-file imports must copy the original bytes")
+        let fullWaveformURL = try await audioImportURL(file: file, behavior: .copyToExports)
+        defer { try? FileManager.default.removeItem(at: fullWaveformURL) }
+        precondition(fullWaveformURL != copiedURL, "Separate copies must never overwrite previously imported media")
+        let fullWaveformData = try Data(contentsOf: fullWaveformURL)
+        precondition(fullWaveformData == originalData)
+        let cancelled = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await audioImportURL(file: file, behavior: .keepInPlace)
+        }
+        do {
+            _ = try await cancelled.value
+            preconditionFailure("Cancelled imports must not publish a URL")
+        } catch is CancellationError {}
+        precondition(FileManager.default.fileExists(atPath: source.path), "Cancellation must never remove the original")
+
+        let payload = try await dragPayloadForClip(
+            file: file, startFraction: 0.25, endFraction: 0.75, behavior: .copyToExports
+        )
+        pasteboard.clearContents()
         precondition(pasteboard.writeObjects([payload.writer]))
         let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]
         precondition(urls?.count == 1, "Waveform drag must supply an existing file URL, not only a Finder file promise")
@@ -479,7 +526,7 @@ struct AppStoreLifecycleCheck {
         try clip.read(into: read)
         precondition(abs(read.floatChannelData![0][0] - 0.25) < 0.000001 && abs(read.floatChannelData![1][0] + 0.25) < 0.000001)
         precondition(!outputURL.path.hasPrefix(FileManager.default.temporaryDirectory.path), "A project may reference the exported clip after temporary files are cleaned")
-        print("PASS: waveform drag file URL, trimmed PCM24 stereo, persistent media")
+        print("PASS: original import URLs, persistent whole-file copies, trimmed PCM24 selections, import preference")
     }
 
     private static func browsingAppendsPagesAndRetries() async {

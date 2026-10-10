@@ -89,14 +89,20 @@ The XCFramework build will:
 9. Use **Settings → Storage & Recovery** for catalog backups, restore, full
    integrity checks, and storage sizes. **Reconnect Library…** in a folder's
    context menu reconnects a moved library by re-scanning its new root.
-10. Press **⌘,** to open Settings. **General** controls preview volume and
-    background refinement; **Appearance** controls light/dark mode, app accent,
+10. Press **⌘,** to open Settings. **General** controls editor imports, preview volume,
+    and background refinement. Imports default to **Keep the files in place**:
+    dragging a result or waveform selection passes the full original file from
+    its library location, with trimming and media copying managed by your editor.
+    Choose **Copy files to Exports** to copy whole files unchanged or export
+    waveform selections as trimmed PCM24 WAVs to WaveSearch's persistent Exports folder.
+    **Appearance** controls light/dark mode, app accent,
     and waveform colors. **Storage & Recovery** shows cache locations and can
     delete generated waveform caches.
 
 Keyboard shortcuts:
 
 - **⌘K** or **/** — focus search
+- **⌃⌘S** — show/hide the sidebar (also available in the View menu)
 - **Esc** — leave search
 - **j / k** — next / previous result
 - **gg / G** — first / last result

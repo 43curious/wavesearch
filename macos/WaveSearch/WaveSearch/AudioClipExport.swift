@@ -2,22 +2,86 @@ import Foundation
 @preconcurrency import AVFoundation
 import AppKit
 
+nonisolated enum AudioImportBehavior: String, CaseIterable, Identifiable {
+    case keepInPlace
+    case copyToExports
+
+    static let preferenceKey = "ws_audio_import_behavior_v1"
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .keepInPlace: "Keep the files in place"
+        case .copyToExports: "Copy files to Exports"
+        }
+    }
+
+    @MainActor static func current(preferences: UserDefaults = .standard) -> Self {
+        Self(rawValue: preferences.string(forKey: preferenceKey) ?? "") ?? .keepInPlace
+    }
+}
+
 nonisolated enum AudioClipStorage {
     static var directory: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
             .appendingPathComponent("WaveSearch/Exports", isDirectory: true)
     }
 }
-func itemProviderForOriginalFile(_ file: SoundFile) -> NSItemProvider {
-    let provider = NSItemProvider(object: file.url as NSURL)
+/// Resolve a persistent file URL only when the receiving editor requests it.
+func itemProviderForAudioImport(_ file: SoundFile, behavior: AudioImportBehavior? = nil) -> NSItemProvider {
+    let behavior = behavior ?? .current()
+    let provider: NSItemProvider
+    if behavior == .keepInPlace {
+        provider = NSItemProvider(object: file.url as NSURL)
+    } else {
+        provider = NSItemProvider()
+        let generation = BlockingWorkRegistry.hostFiles.generation
+        provider.registerObject(ofClass: NSURL.self, visibility: .all) { completion in
+            let progress = Progress(totalUnitCount: 1)
+            let task = Task { @MainActor in
+                do {
+                    let url = try await audioImportURL(file: file, behavior: behavior, expectedGeneration: generation)
+                    completion(url as NSURL, nil)
+                    progress.completedUnitCount = 1
+                } catch {
+                    completion(nil, error)
+                }
+            }
+            progress.cancellationHandler = { task.cancel() }
+            return progress
+        }
+    }
     provider.suggestedName = file.displayName
     return provider
 }
 
-func dragPayloadForClip(file: SoundFile, startFraction: Double, endFraction: Double) async throws -> WaveformDragPayload {
-    let generation = BlockingWorkRegistry.hostFiles.generation
+func dragPayloadForClip(
+    file: SoundFile, startFraction: Double, endFraction: Double,
+    behavior: AudioImportBehavior? = nil
+) async throws -> WaveformDragPayload {
+    let url = try await audioImportURL(
+        file: file, startFraction: startFraction, endFraction: endFraction, behavior: behavior
+    )
+    // Editors such as Resolve need an existing file URL, not a Finder file promise.
+    return WaveformDragPayload(writer: url as NSURL)
+}
+
+/// Referencing media never writes a file. Copies and trimmed selections remain
+/// in Exports because an editor project may reference them indefinitely.
+func audioImportURL(
+    file: SoundFile, startFraction: Double = 0, endFraction: Double = 1,
+    behavior: AudioImportBehavior? = nil, expectedGeneration: UInt64? = nil
+) async throws -> URL {
+    try Task.checkCancellation()
+    let behavior = behavior ?? .current()
+    if behavior == .keepInPlace { return file.url }
+    let generation = expectedGeneration ?? BlockingWorkRegistry.hostFiles.generation
     let result = await BlockingWorkRegistry.hostFiles.run(priority: .userInitiated, expectedGeneration: generation) {
-        Result { try renderPCMSelection(file: file, startFraction: startFraction, endFraction: endFraction) }
+        Result {
+            if startFraction == 0 && endFraction == 1 {
+                return try copyAudioForImport(file)
+            }
+            return try renderPCMSelection(file: file, startFraction: startFraction, endFraction: endFraction)
+        }
     }
     guard let result else { throw CancellationError() }
     let url = try result.get()
@@ -25,8 +89,24 @@ func dragPayloadForClip(file: SoundFile, startFraction: Double, endFraction: Dou
         try? FileManager.default.removeItem(at: url)
         throw CancellationError()
     }
-    // Editors such as Resolve need an existing file URL, not a Finder file promise.
-    return WaveformDragPayload(writer: url as NSURL)
+    return url
+}
+
+nonisolated private func copyAudioForImport(_ file: SoundFile) throws -> URL {
+    try Task.checkCancellation()
+    let directory = AudioClipStorage.directory
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let baseName = String(decoding: file.url.deletingPathExtension().lastPathComponent.utf8.prefix(160), as: UTF8.self)
+    var outputURL = directory.appendingPathComponent("\(baseName)-\(UUID().uuidString)")
+    if !file.url.pathExtension.isEmpty { outputURL.appendPathExtension(file.url.pathExtension) }
+    do {
+        try FileManager.default.copyItem(at: file.url, to: outputURL)
+        try Task.checkCancellation()
+        return outputURL
+    } catch {
+        try? FileManager.default.removeItem(at: outputURL)
+        throw error
+    }
 }
 
 nonisolated func renderPCMSelection(

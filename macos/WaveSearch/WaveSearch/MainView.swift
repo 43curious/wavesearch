@@ -226,10 +226,15 @@ private struct SearchHeader: View {
                     .strokeBorder(AppTheme.hairline, lineWidth: 1)
             )
 
-            Text(store.searchSummary)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+            Button {
+                store.chooseSearchExample()
+            } label: {
+                Image(systemName: "waveform.badge.magnifyingglass")
+                    .font(.system(size: 13, weight: .medium))
+            }
+            .buttonStyle(.borderless)
+            .help("Find similar sounds from an audio file")
+            .accessibilityLabel("Find Similar Sounds")
 
             Spacer()
 
@@ -455,37 +460,12 @@ struct InlineSpinner: View {
     }
 }
 
-private struct KeyboardHint: View {
-    let key: String
-    let label: String
-
-    init(_ key: String, _ label: String) {
-        self.key = key
-        self.label = label
-    }
-
-    var body: some View {
-        HStack(spacing: 4) {
-            Text(key)
-                .font(.system(size: 10, weight: .bold, design: .rounded))
-                .padding(.horizontal, 5)
-                .padding(.vertical, 2)
-                .background(Color(nsColor: .separatorColor).opacity(0.22), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
-            Text(label)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(.secondary)
-        }
-    }
-}
-
 private struct SearchWorkspaceView: View {
     @EnvironmentObject private var store: AppStore
 
     var body: some View {
         VStack(spacing: 0) {
             VStack(spacing: 0) {
-                ResultsToolbar()
-                Divider()
                 ResultsTableHeader()
                 Divider()
                 ResultsList()
@@ -503,56 +483,6 @@ private struct SearchWorkspaceView: View {
             }
             .frame(maxWidth: .infinity)
         }
-    }
-}
-
-private struct ResultsToolbar: View {
-    @EnvironmentObject private var store: AppStore
-
-    private var label: String {
-        if store.isExampleSearch { return "Acoustic Matches" }
-        return store.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Library" : "Results"
-    }
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Text(label)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.secondary)
-
-            if !store.results.isEmpty {
-                Text("\(store.results.count)")
-                    .font(.system(size: 11, weight: .semibold))
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
-                    .background(AppTheme.accent.opacity(0.14), in: Capsule())
-                    .foregroundStyle(AppTheme.accent)
-            }
-
-            Spacer()
-
-            Button {
-                store.chooseSearchExample()
-            } label: {
-                Label("Find Similar", systemImage: "waveform.badge.magnifyingglass")
-                    .font(.system(size: 11, weight: .medium))
-            }
-            .buttonStyle(.borderless)
-
-            HStack(spacing: 10) {
-                KeyboardHint("⌘K", "Search")
-                KeyboardHint("j/k", "Nav")
-                KeyboardHint("I/O", "Marks")
-                KeyboardHint("⏎", "Play")
-            }
-
-            Text(store.searchSummary)
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-        .background(AppTheme.panelRaised)
     }
 }
 
@@ -604,7 +534,7 @@ struct ResultsList: View {
                                             PlayerController.shared.playFromSelectionStart()
                                         }
                                         .onDrag {
-                                            itemProviderForOriginalFile(file)
+                                            itemProviderForAudioImport(file)
                                         }
                                         .contextMenu {
                                             Button("Find Similar Sounds") { store.searchByExample(file) }

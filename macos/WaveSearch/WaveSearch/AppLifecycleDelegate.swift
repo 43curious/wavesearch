@@ -5,6 +5,12 @@ final class AppLifecycleDelegate: NSObject, NSApplicationDelegate {
     weak var store: AppStore?
     private var terminating = false
 
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        // Library tabs belong to WaveSearch; native window tabs add unrelated
+        // Show Tab Bar / Show All Tabs commands to the menu bar.
+        NSWindow.allowsAutomaticWindowTabbing = false
+    }
+
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let store else { return .terminateNow }
         guard !terminating else { return .terminateLater }

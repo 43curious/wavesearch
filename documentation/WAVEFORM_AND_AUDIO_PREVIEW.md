@@ -66,26 +66,30 @@ Selection and file dragging are deliberately separate gestures:
 2. Release the mouse.
 3. Press inside the highlighted range and drag again.
 
-The second drag renders the selected WAV off the UI thread, then starts a
-native AppKit `NSDraggingSession` with an existing file URL. Editors such as
-DaVinci Resolve need this URL rather than a Finder-only file promise. Keep the
-mouse button held while the clip is prepared; releasing it or closing the view
-cancels pending preparation instead of starting a stale drag.
+The second drag starts a native AppKit `NSDraggingSession` with an existing file
+URL. **Settings → General → Importing into editors** defaults to **Keep the files
+in place**: the URL references the full original in its library location, and
+the editor handles trimming and its own media copies. **Copy files to Exports**
+renders a selected range as a WAV off the UI thread; a full-range drag copies
+the original file unchanged. Result-row drags use the same preference.
+Editors such as DaVinci Resolve need a file URL rather than a Finder-only file
+promise. Keep the mouse button held while a copy or clip is prepared; releasing
+it or closing the view cancels preparation instead of starting a stale drag.
 
-A drag beginning inside the selection exports that selection. A drag beginning
+A drag beginning inside the selection imports according to that preference. A drag beginning
 outside it creates a replacement selection instead. This decision is made from
 the mouse-down position, so the selection cannot accidentally turn into an
 export halfway through the first gesture.
 
 ## 3. Selected-range export
 
-The exported file is named:
+With **Copy files to Exports** enabled, a trimmed exported file is named:
 
 ```text
 <original-name>-selection-<UUID>.wav
 ```
 
-Before starting the file drag, WaveSearch:
+Before starting a trimmed file drag, WaveSearch:
 
 1. Opens the source through `AVAudioFile` as non-interleaved Float32 PCM.
 2. Converts the normalized range to source-frame boundaries.

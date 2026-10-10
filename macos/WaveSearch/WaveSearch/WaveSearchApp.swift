@@ -18,11 +18,7 @@ struct WaveSearchApp: App {
         .windowStyle(.hiddenTitleBar)
         .windowToolbarStyle(.unifiedCompact(showsTitle: false))
         .commands {
-            CommandGroup(replacing: .newItem) {}
-            CommandGroup(replacing: .appSettings) {
-                SettingsLink { Text("Settings…") }
-                    .keyboardShortcut(",", modifiers: .command)
-            }
+            WaveSearchCommands(store: store)
         }
 
         Settings {

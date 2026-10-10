@@ -3,7 +3,6 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject var store: AppStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var sidebarVisible = true
     @State private var sidebarWidth: CGFloat = 240
     @GestureState private var sidebarDrag: CGFloat = 0
 
@@ -13,13 +12,13 @@ struct ContentView: View {
                 .toolbar {
                     if #available(macOS 26.0, *) {
                         sidebarToggle.sharedBackgroundVisibility(.hidden)
-                        if !sidebarVisible {
+                        if !store.isSidebarVisible {
                             libraryTabs(width: geometry.size.width - 170)
                                 .sharedBackgroundVisibility(.hidden)
                         }
                     } else {
                         sidebarToggle
-                        if !sidebarVisible {
+                        if !store.isSidebarVisible {
                             libraryTabs(width: geometry.size.width - 170)
                         }
                     }
@@ -34,17 +33,17 @@ struct ContentView: View {
 
     private var workspace: some View {
         let expandedSidebarWidth = min(320, max(200, sidebarWidth + sidebarDrag))
-        let panelCornerRadius: CGFloat = sidebarVisible ? 14 : 0
+        let panelCornerRadius: CGFloat = store.isSidebarVisible ? 14 : 0
         return HStack(spacing: 0) {
             SidebarView()
                 .frame(width: expandedSidebarWidth)
-                .frame(width: sidebarVisible ? expandedSidebarWidth : 0, alignment: .leading)
+                .frame(width: store.isSidebarVisible ? expandedSidebarWidth : 0, alignment: .leading)
                 .clipped()
-                .opacity(sidebarVisible ? 1 : 0)
-                .allowsHitTesting(sidebarVisible)
-                .accessibilityHidden(!sidebarVisible)
+                .opacity(store.isSidebarVisible ? 1 : 0)
+                .allowsHitTesting(store.isSidebarVisible)
+                .accessibilityHidden(!store.isSidebarVisible)
                 .overlay(alignment: .trailing) {
-                    if sidebarVisible {
+                    if store.isSidebarVisible {
                         Color.clear
                             .frame(width: 6)
                             .contentShape(Rectangle())
@@ -75,10 +74,10 @@ struct ContentView: View {
                     .allowsHitTesting(false)
             }
             .shadow(color: .black.opacity(0.08), radius: 3, y: 1)
-            .padding(sidebarVisible ? 8 : 0)
-            .ignoresSafeArea(.container, edges: sidebarVisible ? .top : [])
+            .padding(store.isSidebarVisible ? 8 : 0)
+            .ignoresSafeArea(.container, edges: store.isSidebarVisible ? .top : [])
         }
-        .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: sidebarVisible)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: store.isSidebarVisible)
         .background(AppTheme.chrome)
         .disabled(!store.canUseLibrary)
         .overlay(alignment: .top) {
@@ -117,16 +116,15 @@ struct ContentView: View {
     private var sidebarToggle: some ToolbarContent {
         ToolbarItem(placement: .navigation) {
             Button {
-                sidebarVisible.toggle()
+                store.isSidebarVisible.toggle()
             } label: {
                 Image(systemName: "sidebar.left")
                     .font(.system(size: 18, weight: .medium))
                     .frame(width: 30, height: 30)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(sidebarVisible ? "Collapse Sidebar" : "Show Sidebar")
-            .help(sidebarVisible ? "Collapse sidebar" : "Show sidebar")
-            .keyboardShortcut("s", modifiers: [.command, .control])
+            .accessibilityLabel(store.isSidebarVisible ? "Collapse Sidebar" : "Show Sidebar")
+            .help(store.isSidebarVisible ? "Collapse sidebar" : "Show sidebar")
         }
     }
 }
