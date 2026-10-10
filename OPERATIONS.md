@@ -16,10 +16,11 @@ checks cancellation between directory entries and immediately before database
 publication. Restarting the operation resumes safely from the previous live
 snapshot; semantic and acoustic derived indexes independently resume from their
 persisted pending rows. The macOS app uses `WS_INDEX_FAST`, refreshes lexical
-results immediately after publication, then alternates one acoustic file and
-one semantic file on a single background worker. The worker uses one CLAP
-intra-op thread by default, yields while interactive search is active, pauses
-under serious thermal pressure, and sleeps between files. Accuracy algorithms
+results immediately after publication, then refines acoustic and semantic work
+in bounded 16-file batches on a single background worker, subject to the modes
+below. Schema 13 reads [durable pending indexes](documentation/REFINEMENT_QUEUES.md)
+so new calls and reopen avoid rescanning completed files. The worker yields
+while interactive search is active and pauses under serious thermal pressure. Accuracy algorithms
 remain unchanged: full-timeline acoustic fingerprints and up to five CLAP
 windows are eventually produced.
 
@@ -37,7 +38,9 @@ int rc = ws_integrity_check(WS_INTEGRITY_FULL, &report);
 ```
 
 Checks include SQLite integrity, foreign keys, FTS row synchronization, vector
-blob dimensions, fingerprint token/blob consistency, and schema version.
+blob dimensions, fingerprint token/blob consistency, and schema version. Full
+checks also verify pending queue completeness against canonical analysis and
+source identities.
 `rc == 0` means no errors; `rc == 1` means the report found inconsistencies;
 negative values are API failures.
 
@@ -109,6 +112,8 @@ only then publishes through SQLite's backup API. WAL state is handled correctly
 and a malformed legacy backup cannot replace the live index. Schema v7-to-v8 group migration, v8-to-v9 waveform-analysis migration,
 v9-to-v10 two-tier waveform-cache migration, and legacy-schema preservation, backup/restore, cancellation rollback, and
 integrity checks have automated regression tests.
+Schema 13 backfills pending queues during migration and rebuilds them from
+canonical data during restore, preserving existing analysis and unfinished work.
 
 ## Background refinement modes
 
@@ -120,10 +125,10 @@ The mode never gates selected-file waveform or loudness analysis.
   universal-waveform work or invoke acoustic/semantic indexing. Existing derived
   rows remain intact. CLAP is unloaded to release model memory.
 - **Balanced** waits for 30 seconds of system-wide keyboard/mouse idle time and
-  AC power. It processes one item at a time, prioritizing universal waveforms and
-  then alternating acoustic fingerprints and semantic embeddings.
-- **Complete** drains every currently available queue one item at a time without
-  requiring idle time or AC power.
+  AC power. It prioritizes universal waveforms and then alternates bounded
+  16-file acoustic and semantic batches. Files are analyzed serially.
+- **Complete** drains every currently available queue with the same bounded
+  batches without requiring idle time or AC power.
 
 Balanced and Complete both pause for explicit user pause, metadata scans,
 search, playback, selected waveform analysis, serious/critical thermal state,
@@ -145,6 +150,6 @@ Settings.
 - Semantic exact search uses an independent read-only WAL snapshot, streams one vector at a time, and retains only top K, so indexing and unrelated database operations are not held behind the scan.
 - Fingerprint candidate generation uses 96 selectors and verifies at most 128
   full fingerprints per query.
-- Folder publication remains atomic; the filesystem manifest is currently held
-  in memory until publication. The published million-row metadata benchmark in
+- Folder publication remains atomic; the filesystem manifest is staged in
+  disk-backed SQLite tables until publication. The published million-row metadata benchmark in
   `BENCHMARKS.md` is the regression gate for current scaling behavior.

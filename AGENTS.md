@@ -38,6 +38,7 @@ Read these references when touching the corresponding behavior:
 | --- | --- |
 | Playback, waveforms, selected-range imports | [Audio preview](documentation/WAVEFORM_AND_AUDIO_PREVIEW.md); [algorithm](documentation/WAVEFORM_ALGORITHM.md); [cache](documentation/WAVEFORM_CACHE_V10.md) |
 | Search ranking, storage, or performance | [Search optimizations](documentation/SEARCH_OPTIMIZATION_RESULTS.md); [benchmarks](BENCHMARKS.md) |
+| Refinement queues, retries, or queue migration | [Durable refinement](documentation/REFINEMENT_QUEUES.md) |
 | CLAP loading, installation, or preprocessing | [Model contract](core/models/README.md); [relevance acceptance](core/models/RELEVANCE.md) |
 | Fingerprints, duplicate families, or example search | [Acoustic search](ACOUSTIC_SEARCH.md) |
 | Database lifecycle, backups, recovery, or library moves | [Operations](OPERATIONS.md) |

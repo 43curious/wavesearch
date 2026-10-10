@@ -42,6 +42,11 @@ changelog/agent documentation added afterward.
 
 ### Fixed
 
+- Semantic and acoustic refinement now resume from indexed, durable pending
+  queues across bounded calls and restarts, avoiding repeated scans of completed
+  files. Schema 13 migrates and restores queues from existing analysis; changed
+  sources and cleared failures re-enqueue work. Acoustic fingerprints, postings,
+  and verified edges publish together so an interrupted publication stays pending.
 - Waveform drags no longer create an Exports file unconditionally, allowing
   editors to reference the source media in its original location by default.
 - Removed the duplicate **Settings…** command from the WaveSearch menu.

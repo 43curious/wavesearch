@@ -69,10 +69,6 @@ pub fn indexPendingExpected(allocator: std.mem.Allocator, folder_id: ?i32, max_f
             defer allocator.free(blob);
             const selected = try fingerprint.selectors(allocator, landmarks);
             defer allocator.free(selected);
-            db.upsertFingerprint(algorithm_id, file.id, file.source_content_hash, blob, selected) catch |err| {
-                if (err == error.StaleContentHash or err == error.FileNotFound) continue;
-                return err;
-            };
             const neighbors = try searchLandmarks(allocator, landmarks, folder_id, EDGE_CANDIDATE_LIMIT);
             defer allocator.free(neighbors);
             var edges: std.ArrayList(db.AcousticEdge) = .empty;
@@ -85,7 +81,11 @@ pub fn indexPendingExpected(allocator: std.mem.Allocator, folder_id: ?i32, max_f
                     .aligned = neighbor.fingerprint_votes,
                 });
             }
-            try db.replaceAcousticEdges(algorithm_id, file.id, edges.items);
+            if (cancel.isCancelled()) return error.Cancelled;
+            db.upsertFingerprintWithEdges(algorithm_id, file.id, file.source_content_hash, blob, selected, edges.items) catch |err| {
+                if (err == error.StaleContentHash or err == error.FileNotFound) continue;
+                return err;
+            };
             groups_dirty = true;
             result.successful += 1;
             if (max_files != 0) remaining -= 1;

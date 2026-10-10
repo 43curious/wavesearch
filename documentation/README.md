@@ -5,6 +5,8 @@ current WaveSearch application.
 
 ## Performance and portability
 
+- [Durable refinement queues](REFINEMENT_QUEUES.md) — indexed semantic/acoustic
+  work, publication, retries, migration, recovery, and discovery measurements.
 - [Performance and portability plan](PERFORMANCE_AND_PORTABILITY_PLAN.md) — prioritized issue inventory, responsiveness and resource recommendations, portable `libwavesearch` architecture, implementation status, and validation checklist.
 
 ## Audio preview and waveform

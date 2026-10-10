@@ -3,6 +3,13 @@
 Benchmarks are explicit developer operations. Normal builds and tests never
 generate large corpora or download fixtures.
 
+## Refinement queue discovery (schema 13)
+
+`make check-core` measures 16-file queue discovery over 1,600 synthetic files
+at 0%, 50%, and 99% completion, including reopen. It reports SQLite VM steps and
+mean elapsed time over 30 calls; VM work is the deterministic regression gate.
+See [the queue contract, baseline, and limits](documentation/REFINEMENT_QUEUES.md).
+
 ## Search optimization comparison (schema 12)
 
 [Results and reproduction](documentation/SEARCH_OPTIMIZATION_RESULTS.md) cover

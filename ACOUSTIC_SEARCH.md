@@ -14,7 +14,10 @@ the end of an indexing operation rather than after every file batch.
 ## Behavior
 
 - `ws_acoustic_index_pending` is resumable and invalidates changed files while
-  preserving unchanged and relocated files.
+  preserving unchanged and relocated files. Schema 13 uses
+  [durable pending queues](documentation/REFINEMENT_QUEUES.md) across bounded
+  calls and reopen; refinement publishes fingerprints, postings, and edges in
+  one transaction.
 - `ws_search_by_example` uses versioned integer confidence calibration to weight
   high-confidence fingerprint families ahead of CLAP audio-embedding neighbors and remains useful when CLAP is unavailable.
 - `ws_acoustic_group` returns persisted transitive family identity/count and a

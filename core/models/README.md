@@ -73,7 +73,9 @@ PCM for search-by-example through the additive C ABI.
 The compiled audio and tokenizer implementation revisions are included in the
 model identity, so preprocessing changes force a fresh semantic generation.
 Only deterministic unsupported/corrupt audio failures are persisted; transient
-I/O/runtime/database failures remain pending for retry.
+I/O/runtime/database failures remain pending for retry. Schema 13 uses
+[durable pending queues](../../documentation/REFINEMENT_QUEUES.md) across bounded
+calls and reopen; registering a new model creates independent pending work.
 
 The lower-level external embedding ABI remains available for compatible custom
 providers: `ws_semantic_model_set`, `ws_semantic_embedding_upsert`, and

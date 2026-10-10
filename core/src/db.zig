@@ -6,6 +6,7 @@ const sync = @import("sync.zig");
 const query_cancel = @import("query.zig");
 const text_mod = @import("text.zig");
 const optimization_schema = @import("schema_optimizations.zig");
+const refinement_schema = @import("refinement_schema.zig");
 
 // SQLite invokes progress on the executing thread. TLS selects only that
 // request; never sqlite3_interrupt the shared connection from a canceller.
@@ -16,7 +17,7 @@ fn queryProgress(_: ?*anyopaque) callconv(.c) c_int {
 pub const c = @import("c");
 extern fn ws_sqlite_transient() c.sqlite3_destructor_type;
 
-pub const SCHEMA_VERSION: i32 = 12;
+pub const SCHEMA_VERSION: i32 = 13;
 pub const PAGE_SIZE: usize = 16384;
 pub const CACHE_KIB: usize = 8192;
 const QUANTIZED_BACKFILL_SQL = "INSERT OR REPLACE INTO semantic_sq8 SELECT model_id,file_id,source_content_hash,ws_sq8_v1(vector) FROM file_embeddings;";
@@ -92,6 +93,13 @@ var semantic_reader: ?*c.sqlite3 = null;
 var semantic_reader_serial: u64 = 0;
 var connection_serial: u64 = 0;
 var acoustic_group_rebuild_serial: u64 = 0;
+var pending_query_steps: [2]u64 = .{ 0, 0 };
+
+pub fn pendingQueryStepsForTests() [2]u64 {
+    lock();
+    defer mutex.unlock();
+    return pending_query_steps;
+}
 pub fn catalogRevision() ![2]u64 {
     lock();
     defer mutex.unlock();
@@ -343,6 +351,15 @@ fn migrateLocked() !void {
     const version = try userVersionLocked();
     if (version > SCHEMA_VERSION) return error.FutureSchemaVersion;
     if (version == SCHEMA_VERSION) return validateRestoreSchema(try handleLocked(), version, true);
+    if (version == 12) {
+        try execLocked("BEGIN IMMEDIATE;");
+        errdefer execLocked("ROLLBACK;") catch {};
+        try execLocked(refinement_schema.create);
+        try execLocked("PRAGMA user_version=13;");
+        try validateRestoreSchema(try handleLocked(), SCHEMA_VERSION, true);
+        try execLocked("COMMIT;");
+        return;
+    }
     if (version >= 10) {
         try execLocked("BEGIN IMMEDIATE;");
         errdefer execLocked("ROLLBACK;") catch {};
@@ -367,7 +384,8 @@ fn migrateLocked() !void {
         execLocked("CREATE TRIGGER IF NOT EXISTS waveform_claim_file_ad AFTER DELETE ON files BEGIN UPDATE waveform_cache_state SET waveform_claimed_file_id=0,waveform_claim_token=0,waveform_claim_until_ns=0 WHERE singleton=1 AND waveform_claimed_file_id=old.id; END;") catch {};
         if (version == 10) try execLocked(QUANTIZED_INDEX_SQL);
         try execLocked(optimization_schema.create);
-        try execLocked("PRAGMA user_version=12;");
+        try execLocked(refinement_schema.create);
+        try execLocked("PRAGMA user_version=13;");
         try validateRestoreSchema(try handleLocked(), SCHEMA_VERSION, true);
         try execLocked("COMMIT;");
         return;
@@ -415,7 +433,8 @@ fn migrateLocked() !void {
     try execLocked("DELETE FROM waveform_analyses;");
     try execLocked(QUANTIZED_INDEX_SQL);
     try execLocked(optimization_schema.create);
-    try execLocked("PRAGMA user_version=12;");
+    try execLocked(refinement_schema.create);
+    try execLocked("PRAGMA user_version=13;");
     try execLocked("COMMIT;");
 }
 
@@ -1810,14 +1829,14 @@ fn upsertSemanticEmbeddingLocked(allocator: std.mem.Allocator, model_id: i64, di
     const bytes = try vector.serializeNormalized(allocator, values);
     defer allocator.free(bytes);
 
+    try execLocked("BEGIN IMMEDIATE;");
+    errdefer execLocked("ROLLBACK;") catch {};
     const file = try prepareLocked("SELECT content_hash FROM files WHERE id=?");
     defer _ = c.sqlite3_finalize(file);
     try bindInt(file, 1, file_id);
     if (c.sqlite3_step(file) != c.SQLITE_ROW) return error.FileNotFound;
     if (c.sqlite3_column_int64(file, 0) != source_content_hash) return error.StaleContentHash;
 
-    try execLocked("BEGIN IMMEDIATE;");
-    errdefer execLocked("ROLLBACK;") catch {};
     const stmt = try prepareLocked("INSERT INTO file_embeddings(model_id,file_id,source_content_hash,vector) VALUES(?,?,?,?) " ++
         "ON CONFLICT(model_id,file_id) DO UPDATE SET source_content_hash=excluded.source_content_hash,vector=excluded.vector");
     defer _ = c.sqlite3_finalize(stmt);
@@ -1858,26 +1877,23 @@ fn pendingSemanticFilesAfter(allocator: std.mem.Allocator, folder_id: ?i32, limi
 
 fn pendingSemanticFilesLocked(allocator: std.mem.Allocator, model_id: i64, folder_id: ?i32, limit: usize, after_id: i32) ![]PendingSemanticFile {
     if (limit == 0) return allocator.alloc(PendingSemanticFile, 0);
-    const all_sql = "SELECT f.id,f.path,f.content_hash FROM files f WHERE f.id>? AND " ++
-        "NOT EXISTS(SELECT 1 FROM file_embeddings e WHERE e.model_id=? AND e.file_id=f.id AND e.source_content_hash=f.content_hash) AND " ++
-        "NOT EXISTS(SELECT 1 FROM embedding_failures x WHERE x.model_id=? AND x.file_id=f.id AND x.source_content_hash=f.content_hash) " ++
-        "ORDER BY f.id LIMIT ?";
-    const folder_sql = "SELECT f.id,f.path,f.content_hash FROM files f WHERE f.folder_id=? AND f.id>? AND " ++
-        "NOT EXISTS(SELECT 1 FROM file_embeddings e WHERE e.model_id=? AND e.file_id=f.id AND e.source_content_hash=f.content_hash) AND " ++
-        "NOT EXISTS(SELECT 1 FROM embedding_failures x WHERE x.model_id=? AND x.file_id=f.id AND x.source_content_hash=f.content_hash) " ++
-        "ORDER BY f.id LIMIT ?";
+    // Drive retrieval from the pending index, including folder-scoped calls.
+    // Completed catalog rows are never revisited by the next bounded batch.
+    const all_sql = "SELECT f.id,f.path,f.content_hash FROM pending_embeddings p CROSS JOIN files f ON f.id=p.file_id WHERE p.model_id=? AND p.file_id>? ORDER BY p.file_id LIMIT ?";
+    const folder_sql = "SELECT f.id,f.path,f.content_hash FROM pending_embeddings p INDEXED BY idx_pending_embeddings_folder CROSS JOIN files f ON f.id=p.file_id WHERE p.model_id=? AND p.folder_id=? AND p.file_id>? ORDER BY p.file_id LIMIT ?";
     const stmt = try prepareLocked(if (folder_id == null) all_sql else folder_sql);
     defer _ = c.sqlite3_finalize(stmt);
+    defer if (builtin.is_test) {
+        pending_query_steps[0] += @intCast(c.sqlite3_stmt_status(stmt, c.SQLITE_STMTSTATUS_VM_STEP, 0));
+    };
     var index: c_int = 1;
+    try bindInt64(stmt, index, model_id);
+    index += 1;
     if (folder_id) |folder| {
         try bindInt(stmt, index, folder);
         index += 1;
     }
     try bindInt(stmt, index, after_id);
-    index += 1;
-    try bindInt64(stmt, index, model_id);
-    index += 1;
-    try bindInt64(stmt, index, model_id);
     index += 1;
     try bindInt(stmt, index, @intCast(@min(limit, @as(usize, std.math.maxInt(i32)))));
 
@@ -2382,24 +2398,21 @@ pub fn pendingFingerprintFilesAfter(allocator: std.mem.Allocator, algorithm_id: 
     lock();
     defer mutex.unlock();
     if (limit == 0) return allocator.alloc(PendingSemanticFile, 0);
-    const all_sql = "SELECT f.id,f.path,f.content_hash FROM files f WHERE f.id>? AND " ++
-        "NOT EXISTS(SELECT 1 FROM file_fingerprints p WHERE p.algorithm_id=? AND p.file_id=f.id AND p.source_content_hash=f.content_hash) AND " ++
-        "NOT EXISTS(SELECT 1 FROM fingerprint_failures x WHERE x.algorithm_id=? AND x.file_id=f.id AND x.source_content_hash=f.content_hash) ORDER BY f.id LIMIT ?";
-    const folder_sql = "SELECT f.id,f.path,f.content_hash FROM files f WHERE f.folder_id=? AND f.id>? AND " ++
-        "NOT EXISTS(SELECT 1 FROM file_fingerprints p WHERE p.algorithm_id=? AND p.file_id=f.id AND p.source_content_hash=f.content_hash) AND " ++
-        "NOT EXISTS(SELECT 1 FROM fingerprint_failures x WHERE x.algorithm_id=? AND x.file_id=f.id AND x.source_content_hash=f.content_hash) ORDER BY f.id LIMIT ?";
+    const all_sql = "SELECT f.id,f.path,f.content_hash FROM pending_fingerprints p CROSS JOIN files f ON f.id=p.file_id WHERE p.algorithm_id=? AND p.file_id>? ORDER BY p.file_id LIMIT ?";
+    const folder_sql = "SELECT f.id,f.path,f.content_hash FROM pending_fingerprints p INDEXED BY idx_pending_fingerprints_folder CROSS JOIN files f ON f.id=p.file_id WHERE p.algorithm_id=? AND p.folder_id=? AND p.file_id>? ORDER BY p.file_id LIMIT ?";
     const stmt = try prepareLocked(if (folder_id == null) all_sql else folder_sql);
     defer _ = c.sqlite3_finalize(stmt);
+    defer if (builtin.is_test) {
+        pending_query_steps[1] += @intCast(c.sqlite3_stmt_status(stmt, c.SQLITE_STMTSTATUS_VM_STEP, 0));
+    };
     var index: c_int = 1;
+    try bindInt64(stmt, index, algorithm_id);
+    index += 1;
     if (folder_id) |folder| {
         try bindInt(stmt, index, folder);
         index += 1;
     }
     try bindInt(stmt, index, after_id);
-    index += 1;
-    try bindInt64(stmt, index, algorithm_id);
-    index += 1;
-    try bindInt64(stmt, index, algorithm_id);
     index += 1;
     try bindInt(stmt, index, @intCast(@min(limit, @as(usize, std.math.maxInt(i32)))));
     var files: std.ArrayList(PendingSemanticFile) = .empty;
@@ -2423,16 +2436,26 @@ pub fn pendingFingerprintFilesAfter(allocator: std.mem.Allocator, algorithm_id: 
 }
 
 pub fn upsertFingerprint(algorithm_id: i64, file_id: i32, source_content_hash: i64, blob: []const u8, selectors_list: []const u32) !void {
+    return publishFingerprint(algorithm_id, file_id, source_content_hash, blob, selectors_list, null);
+}
+
+/// Refinement commits the fingerprint, postings and verified edges together.
+/// A failed/cancelled caller before this commit leaves the file pending.
+pub fn upsertFingerprintWithEdges(algorithm_id: i64, file_id: i32, source_content_hash: i64, blob: []const u8, selectors_list: []const u32, edges: []const AcousticEdge) !void {
+    return publishFingerprint(algorithm_id, file_id, source_content_hash, blob, selectors_list, edges);
+}
+
+fn publishFingerprint(algorithm_id: i64, file_id: i32, source_content_hash: i64, blob: []const u8, selectors_list: []const u32, edges: ?[]const AcousticEdge) !void {
     if (blob.len == 0 or blob.len % 8 != 0 or blob.len / 8 > fingerprint.MAX_LANDMARKS or selectors_list.len > fingerprint.SELECTOR_COUNT) return error.InvalidFingerprint;
     lock();
     defer mutex.unlock();
+    try execLocked("BEGIN IMMEDIATE;");
+    errdefer execLocked("ROLLBACK;") catch {};
     const file = try prepareLocked("SELECT content_hash FROM files WHERE id=?");
     defer _ = c.sqlite3_finalize(file);
     try bindInt(file, 1, file_id);
     if (c.sqlite3_step(file) != c.SQLITE_ROW) return error.FileNotFound;
     if (c.sqlite3_column_int64(file, 0) != source_content_hash) return error.StaleContentHash;
-    try execLocked("BEGIN IMMEDIATE;");
-    errdefer execLocked("ROLLBACK;") catch {};
     const clear_edges = try prepareLocked("DELETE FROM acoustic_edges WHERE algorithm_id=? AND (file_id_a=? OR file_id_b=?)");
     defer _ = c.sqlite3_finalize(clear_edges);
     try bindInt64(clear_edges, 1, algorithm_id);
@@ -2483,6 +2506,7 @@ pub fn upsertFingerprint(algorithm_id: i64, file_id: i32, source_content_hash: i
     try bindInt64(clear_failure, 1, algorithm_id);
     try bindInt(clear_failure, 2, file_id);
     if (c.sqlite3_step(clear_failure) != c.SQLITE_DONE) return error.DeleteFailed;
+    if (edges) |verified| try replaceAcousticEdgesLocked(algorithm_id, file_id, verified);
     try execLocked("COMMIT;");
 }
 
@@ -2710,6 +2734,11 @@ pub fn replaceAcousticEdges(algorithm_id: i64, file_id: i32, edges: []const Acou
     defer mutex.unlock();
     try execLocked("BEGIN IMMEDIATE;");
     errdefer execLocked("ROLLBACK;") catch {};
+    try replaceAcousticEdgesLocked(algorithm_id, file_id, edges);
+    try execLocked("COMMIT;");
+}
+
+fn replaceAcousticEdgesLocked(algorithm_id: i64, file_id: i32, edges: []const AcousticEdge) !void {
     const clear = try prepareLocked("DELETE FROM acoustic_edges WHERE algorithm_id=? AND (file_id_a=? OR file_id_b=?)");
     defer _ = c.sqlite3_finalize(clear);
     try bindInt64(clear, 1, algorithm_id);
@@ -2731,7 +2760,6 @@ pub fn replaceAcousticEdges(algorithm_id: i64, file_id: i32, edges: []const Acou
         try bindInt64(insert, 5, edge.aligned);
         if (c.sqlite3_step(insert) != c.SQLITE_DONE) return error.InsertFailed;
     }
-    try execLocked("COMMIT;");
 }
 
 pub fn rebuildAcousticGroups(allocator: std.mem.Allocator, algorithm_id: i64) !void {
@@ -2971,6 +2999,11 @@ pub fn integrityCheck(full: bool) !IntegrityReport {
     if (c.sqlite3_step(waveform_claim) != c.SQLITE_ROW) return error.IntegrityCheckFailed;
     report.errors_found += @intCast(c.sqlite3_column_int(waveform_claim, 0));
     if (full) {
+        const queues = try prepareLocked(refinement_schema.check);
+        defer _ = c.sqlite3_finalize(queues);
+        if (c.sqlite3_step(queues) != c.SQLITE_ROW) return error.IntegrityCheckFailed;
+        report.errors_found += @intCast(c.sqlite3_column_int(queues, 0));
+        report.checks_run += 1;
         report.checks_run += 2;
         execLocked("INSERT INTO files_fts(files_fts,rank) VALUES('integrity-check',1);") catch {
             report.errors_found += 1;
@@ -3114,6 +3147,7 @@ fn validateRestoreSchema(handle: *c.sqlite3, version: i32, canonical: bool) !voi
         10 => "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('files','files_fts','files_trigram','embedding_models','file_embeddings','semantic_state','embedding_failures','fingerprint_algorithms','file_fingerprints','fingerprint_postings','fingerprint_failures','acoustic_edges','acoustic_groups','acoustic_group_state','waveform_analyses','waveform_tiers','waveform_cache_state','waveform_failures')",
         11 => "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('files','files_fts','files_trigram','embedding_models','file_embeddings','semantic_state','embedding_failures','fingerprint_algorithms','file_fingerprints','fingerprint_postings','fingerprint_failures','acoustic_edges','acoustic_groups','acoustic_group_state','waveform_analyses','waveform_tiers','waveform_cache_state','waveform_failures','semantic_sq8')",
         12 => "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('files','files_fts','files_trigram','embedding_models','file_embeddings','semantic_state','embedding_failures','fingerprint_algorithms','file_fingerprints','fingerprint_postings','fingerprint_failures','acoustic_edges','acoustic_groups','acoustic_group_state','waveform_analyses','waveform_tiers','waveform_cache_state','waveform_failures','semantic_sq8','file_search_keys','files_vocab','catalog_stats','fingerprint_df')",
+        13 => "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('files','files_fts','files_trigram','embedding_models','file_embeddings','semantic_state','embedding_failures','fingerprint_algorithms','file_fingerprints','fingerprint_postings','fingerprint_failures','acoustic_edges','acoustic_groups','acoustic_group_state','waveform_analyses','waveform_tiers','waveform_cache_state','waveform_failures','semantic_sq8','file_search_keys','files_vocab','catalog_stats','fingerprint_df','pending_embeddings','pending_fingerprints')",
         else => return error.UnsupportedSchemaVersion,
     };
     const expected_tables: c_int = switch (version) {
@@ -3127,6 +3161,7 @@ fn validateRestoreSchema(handle: *c.sqlite3, version: i32, canonical: bool) !voi
         10 => 18,
         11 => 19,
         12 => 23,
+        13 => 25,
         else => unreachable,
     };
     var tables: ?*c.sqlite3_stmt = null;
@@ -3214,6 +3249,15 @@ fn validateRestoreSchema(handle: *c.sqlite3, version: i32, canonical: bool) !voi
         defer _ = c.sqlite3_finalize(triggers);
         if (c.sqlite3_step(triggers) != c.SQLITE_ROW or c.sqlite3_column_int(triggers, 0) != 25) return error.InvalidBackupSchema;
     }
+    if (version >= 13) {
+        const semantic_queue = prepareOn(handle, "SELECT model_id,file_id,folder_id FROM pending_embeddings INDEXED BY idx_pending_embeddings_folder LIMIT 0") catch return error.InvalidBackupSchema;
+        defer _ = c.sqlite3_finalize(semantic_queue);
+        const acoustic_queue = prepareOn(handle, "SELECT algorithm_id,file_id,folder_id FROM pending_fingerprints INDEXED BY idx_pending_fingerprints_folder LIMIT 0") catch return error.InvalidBackupSchema;
+        defer _ = c.sqlite3_finalize(acoustic_queue);
+        const triggers = prepareOn(handle, "SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND name IN ('pending_embeddings_owner_ai','pending_embeddings_file_ai','pending_embeddings_file_au','pending_embeddings_result_ai','pending_embeddings_result_au','pending_embeddings_result_ad','pending_embeddings_failure_ai','pending_embeddings_failure_au','pending_embeddings_failure_ad','pending_fingerprints_owner_ai','pending_fingerprints_file_ai','pending_fingerprints_file_au','pending_fingerprints_result_ai','pending_fingerprints_result_au','pending_fingerprints_result_ad','pending_fingerprints_failure_ai','pending_fingerprints_failure_au','pending_fingerprints_failure_ad')") catch return error.InvalidBackupSchema;
+        defer _ = c.sqlite3_finalize(triggers);
+        if (c.sqlite3_step(triggers) != c.SQLITE_ROW or c.sqlite3_column_int(triggers, 0) != 18) return error.InvalidBackupSchema;
+    }
 }
 
 fn migrateRestoredLocked() !void {
@@ -3230,6 +3274,9 @@ fn migrateRestoredLocked() !void {
     try execLocked("BEGIN IMMEDIATE;");
     errdefer execLocked("ROLLBACK;") catch {};
     try execLocked(optimization_schema.reconcile);
+    // Pending rows are derived from canonical sources/results/failures. Rebuild
+    // backup input so a stale or missing work row cannot strand refinement.
+    try execLocked(refinement_schema.rebuild);
     try execLocked("DELETE FROM file_search_keys; INSERT INTO file_search_keys SELECT id,ws_name_key(name),ws_stem_key(name) FROM files;");
     try execLocked("COMMIT;");
     // A claim belongs to the process working against the source database, not
@@ -3271,6 +3318,9 @@ pub fn compactTo(path: []const u8) !void {
     const stats = try prepareOn(handle, optimization_schema.check);
     defer _ = c.sqlite3_finalize(stats);
     if (c.sqlite3_step(stats) != c.SQLITE_ROW or c.sqlite3_column_int(stats, 0) != 0) return error.DerivedStatsMismatch;
+    const queues = try prepareOn(handle, refinement_schema.check);
+    defer _ = c.sqlite3_finalize(queues);
+    if (c.sqlite3_step(queues) != c.SQLITE_ROW or c.sqlite3_column_int(queues, 0) != 0) return error.RefinementQueueMismatch;
 }
 
 pub fn restoreFrom(path: []const u8) !void {
@@ -3300,7 +3350,7 @@ pub fn restoreFrom(path: []const u8) !void {
     if (c.sqlite3_step(version_stmt) != c.SQLITE_ROW) return error.InvalidBackup;
     const source_version = c.sqlite3_column_int(version_stmt, 0);
     if (source_version > SCHEMA_VERSION) return error.FutureSchemaVersion;
-    if (source_version != 3 and source_version != 4 and source_version != 5 and source_version != 6 and source_version != 7 and source_version != 8 and source_version != 9 and source_version != 10 and source_version != 11 and source_version != 12) return error.UnsupportedSchemaVersion;
+    if (source_version < 3) return error.UnsupportedSchemaVersion;
     try validateRestoreSchema(source.?, source_version, false);
     // Stage and migrate the backup before touching the live connection. This
     // prevents a valid-SQLite but malformed legacy schema from destroying a
@@ -3499,7 +3549,7 @@ test "SQ8 indexed retrieval reranks exactly, filters early, maintains identity, 
     _ = try setSemanticModel("test/sq8-v1", 16);
     try execLocked("DELETE FROM files WHERE id=1;");
     // Existing v10 catalogs are backfilled atomically without re-running CLAP.
-    try execLocked(optimization_schema.dropForTests ++ DROP_QUANTIZED_INDEX_SQL ++ "PRAGMA user_version=10;");
+    try execLocked(refinement_schema.dropForTests ++ optimization_schema.dropForTests ++ DROP_QUANTIZED_INDEX_SQL ++ "PRAGMA user_version=10;");
     close();
     try open(allocator, path);
     try std.testing.expectEqual(SCHEMA_VERSION, try schemaVersion());
