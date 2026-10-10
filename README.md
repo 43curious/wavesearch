@@ -1,32 +1,77 @@
-# WaveSearch
+<h1 align="center">
+  <img src="macos/WaveSearch/WaveSearch/Assets.xcassets/AppIcon.appiconset/WaveSearch_Icon_Default_256.png" alt="WaveSearch app icon" width="128" height="128">
+  <br>
+  WaveSearch
+</h1>
 
-Zig + SwiftUI sound effect search app for macOS.
-SQLite FTS5 index, optional local CLAP hybrid search, native Tahoe sidebar, and waveform player panel.
+<p align="center">
+  Find, preview, and bring sound effects into your edit.
+  <br>
+  A native macOS app powered by a portable Zig and SQLite core.
+  <br>
+  <a href="#about">About</a>
+  ·
+  <a href="#build">Build</a>
+  ·
+  <a href="#using-wavesearch">Usage</a>
+  ·
+  <a href="#documentation">Documentation</a>
+  ·
+  <a href="CHANGELOG.md">Changelog</a>
+  ·
+  <a href="#developing">Developing</a>
+</p>
 
-## Prerequisites
+## About
 
-- macOS 14+ (Sonoma or Tahoe)
-- Xcode 26+ for the macOS app and Swift checks
-- Zig 0.17.0 (pinned in `.zig-version`)
+WaveSearch searches your sound effect libraries where they already live. Add a
+folder, find a sound, preview its waveform, and drag it into your DAW or video
+editor. Imports reference the original file by default; copying media is an
+explicit choice in Settings.
 
----
+The SwiftUI/AppKit macOS interface connects to `libwavesearch`, a Zig core for
+indexing, SQLite FTS5 search, audio analysis, acoustic fingerprints, and optional
+local CLAP semantic search.
+
+- **Search your libraries.** Search filenames and WAV metadata, filter by
+  duration, browse folders, and keep favourites.
+- **Preview and compare.** Play audio, seek through channel waveforms, inspect
+  loudness, and find similar sounds or duplicate families.
+- **Keep working while indexing.** Searchable snapshots appear before optional
+  background refinement finishes.
+- **Keep control of your files.** Choose original-file imports or persistent
+  copies, and manage catalog backups, recovery, and waveform caches in Settings.
+
+The first version is **0.1_alpha**. Later changes are recorded under
+[Unreleased in the changelog](CHANGELOG.md#unreleased).
 
 ## Build
 
-The build pipeline is automated from the repo root:
+### Requirements
+
+- macOS 14 or later for the desktop app.
+- Xcode 26 or later for the app and Swift checks.
+- Zig 0.17.0, pinned in [.zig-version](.zig-version).
+
+Build from the repository root:
 
 ```bash
-make build   # Zig core + macOS app
-make core    # Zig core / XCFramework only
-make macos   # full macOS debug build
-make clean   # remove local build caches
+make build   # Build the Zig core and macOS app
+make core    # macOS XCFramework, or the native core library on Linux
+make macos   # Full macOS debug build, including the core
 ```
 
-Opening `macos/WaveSearch/wavesearch.xcodeproj` and pressing **Cmd+R** also
-works: Xcode runs a pre-build phase that rebuilds the Zig XCFramework before the
-Swift app links.
+You can also open [wavesearch.xcodeproj](macos/WaveSearch/wavesearch.xcodeproj)
+in Xcode and press **Command–R**. Its pre-build phase rebuilds the core before
+linking the Swift app. Local builds use ad-hoc signing and need no developer
+account.
 
-Portable core development on macOS or Linux:
+The macOS core build compiles arm64 and x86_64 libraries, combines them with
+`lipo`, creates `WaveSearchKit.xcframework`, and copies it into the app sources.
+SQLite is vendored; `build.sh` downloads the amalgamation only if it is missing.
+Normal builds never download semantic models or ONNX Runtime.
+
+For the portable core on macOS or Linux:
 
 ```bash
 cd core
@@ -34,165 +79,139 @@ zig build test -Doptimize=safe
 zig build lib -Doptimize=safe
 ```
 
-`zig build xcframework -Doptimize=safe` is intentionally macOS-only.
-
-## Local checks
-
-```bash
-make check        # Run before committing: formatting, scripts, core tests/build
-                  # and, on macOS, the app build and existing Swift checks
-make check-core   # Portable checks on either macOS or Linux
-make check-linux  # Cross-compile the Linux x86_64 library from macOS
-```
-
-On macOS, `make check` requires a logged-in desktop session for the settings
-appearance check. App builds use local ad-hoc signing and need no developer
-account. Optional model downloads and performance benchmarks are separate.
-Use `make check ZIG=/path/to/zig` to select the pinned compiler explicitly.
-
-The repository contains the portable core and macOS app together. A Linux UI
-can use the C API in `core/include/wavesearch.h`; the SwiftUI app remains macOS
-only. Cross-compilation checks library compatibility, while `make check-core`
-on Linux runs the portable tests on that platform.
-
-Build caches, generated XCFramework copies, personal Xcode state and optional
-model/runtime artifacts are ignored. A clean checkout regenerates frameworks
-through `make build` or the Xcode build phase.
-
-Schema-12 search/resource changes, measured before/after results, and validation
-limits: [search optimization results](documentation/SEARCH_OPTIMIZATION_RESULTS.md).
-Existing catalog page sizes are preserved; checked 16 KiB compaction is an
-explicit new-copy operation, never a startup vacuum.
-
-The XCFramework build will:
-1. Download the SQLite amalgamation into `core/vendor/` (requires internet, one-time)
-2. Compile the Zig core for arm64 + x86_64
-3. Rebuild Apple archive symbol tables with `ranlib`
-4. Run `lipo` → universal binary
-5. Run `xcodebuild -create-xcframework` → `WaveSearchKit.xcframework`
-6. Copy it into `macos/WaveSearch/WaveSearch/` for the Xcode project
-
----
+The `xcframework` build step requires a macOS host. Linux currently has a core
+library and checks; Linux and Windows desktop apps are future work.
 
 ## Using WaveSearch
 
-1. Click **+** at the bottom of the sidebar to add a library folder
-2. WaveSearch publishes a fast searchable snapshot; progress is available from
-   the indicator at the top right
-3. Type in the search bar immediately; Balanced refinement waits until the Mac
-   is idle and on AC power
-4. Click a result to load it into the player panel
-5. Press **Space** to play/pause (when search bar is not focused)
-6. Choose **Fast only**, **Balanced** (default), or **Complete** background refinement from the top-right status popover
-7. Click the waveform to seek
-8. Right-click a folder in the sidebar to re-index or remove it
-9. Use **Settings → Storage & Recovery** for catalog backups, restore, full
-   integrity checks, and storage sizes. **Reconnect Library…** in a folder's
-   context menu reconnects a moved library by re-scanning its new root.
-10. Press **⌘,** to open Settings. **General** controls editor imports, preview volume,
-    and background refinement. Imports default to **Keep the files in place**:
-    dragging a result or waveform selection passes the full original file from
-    its library location, with trimming and media copying managed by your editor.
-    Choose **Copy files to Exports** to copy whole files unchanged or export
-    waveform selections as trimmed PCM24 WAVs to WaveSearch's persistent Exports folder.
-    **Appearance** controls light/dark mode, app accent,
-    and waveform colors. **Storage & Recovery** shows cache locations and can
-    delete generated waveform caches.
+1. Click **+** in the sidebar to add a library folder.
+2. Search as soon as the initial snapshot is available. Choose **Fast only**,
+   **Balanced**, or **Complete** refinement in the top-right status popover.
+   Balanced waits until the Mac is idle and on AC power.
+3. Select a result to preview it. Click the waveform to seek, or press
+   **Space** to play/pause when the search field is not focused.
+4. Drag a result into your editor. To drag a waveform range, select it first,
+   release the mouse, then drag from inside the selection.
+5. Open **Settings → General** to choose how editor imports handle files:
+   **Keep the files in place** passes the full original file, including when
+   dragging a selected range; trimming and any editor-managed copies happen in
+   your editor. **Copy files to Exports** copies whole files unchanged and
+   renders partial selections as trimmed PCM24 WAVs in a persistent folder.
 
-Keyboard shortcuts:
+Right-click a result to find similar sounds, manage favourites, or reveal the
+source in Finder. The waveform search icon beside the search field lets you
+choose an audio file as a search example.
 
-- **⌘K** or **/** — focus search
-- **⌃⌘S** — show/hide the sidebar (also available in the View menu)
-- **Esc** — leave search
-- **j / k** — next / previous result
-- **gg / G** — first / last result
-- **Return** — play selected result from the in point
-- **h / l** — step backward / forward
-- **i / o** — set DaVinci-style in / out points
-- **b** — reveal selected file in Finder
+Right-click a library to re-index, remove, or reconnect a moved folder. If a
+drive disconnects, the library shows **Missing drive** and its indexed files
+remain searchable.
 
-Search supports duration filters:
+**Settings** also provides preview volume and background refinement controls,
+system/light/dark appearance, accent and waveform colors, catalog backup and
+restore, integrity checks, storage sizes, and generated waveform cache deletion.
+Exported media remains available because editing projects may reference it.
 
-- `whoosh <2s` — shorter than 2 seconds
-- `riser >5s` — longer than 5 seconds
-- `impact =1.5s` — around 1.5 seconds
-- `click <500ms` — shorter than 500 ms
+### Keyboard shortcuts
 
-WaveSearch also indexes WAV metadata when present (`bext`, `iXML`, and
-`LIST/INFO`) and labels duplicate-looking results in the current result set.
+| Shortcut | Action |
+| --- | --- |
+| **⌘K** or **/** | Focus search |
+| **⌃⌘S** | Show/hide the sidebar |
+| **⌘,** | Open Settings |
+| **Esc** | Leave search |
+| **j / k** | Next / previous result |
+| **gg / G** | First / last result |
+| **Return** | Play the selected result from the in point |
+| **Space** | Play/pause outside text input |
+| **h / l** | Step backward / forward |
+| **i / o** | Set in / out points |
+| **b** | Reveal the selected file in Finder |
 
-Optional offline CLAP semantic search is available on macOS arm64 and Linux
-x86_64. It requires an explicit, verified model/runtime installation (about
-800 MB); normal builds never download models:
+### Duration filters
+
+| Search | Meaning |
+| --- | --- |
+| `whoosh <2s` | Shorter than two seconds |
+| `riser >5s` | Longer than five seconds |
+| `impact =1.5s` | Around 1.5 seconds |
+| `click <500ms` | Shorter than 500 milliseconds |
+
+WAV metadata search includes `bext`, `iXML`, and `LIST/INFO` when present.
+
+## Optional semantic search
+
+CLAP adds offline semantic search to the existing lexical and acoustic search.
+It requires an explicit, verified model/runtime installation of about 800 MB:
 
 ```bash
 ./scripts/install-clap-model.sh
 ```
 
-See `core/models/README.md` for platform, licensing, custom-path, and built-in
-WAV/AIFF semantic indexing details. Lexical search remains available when CLAP is not
-installed or cannot load.
+The pinned installer supports macOS arm64 and Linux x86_64. It installs the
+verified `muzaiten/clap-htsat-base-onnx` pack and a dynamically loaded ONNX
+Runtime. The app performs no model downloads, and lexical search remains
+available when the provider is absent or cannot load.
 
-Phase 3 adds robust WAV/AIFF acoustic families and search-by-example, available from
-result context menus and the **Find Similar** toolbar action. Phase 4 adds
-cancellable/deep indexing, bounded-memory waveform and semantic scans, integrity
-checks, and online backup/recovery. See `documentation/README.md` for the
-current documentation index, including the full waveform algorithm reference;
-additional operational references are `ACOUSTIC_SEARCH.md`, `OPERATIONS.md`,
-`BENCHMARKS.md`, `WAVEFORM.md`, and `ROADMAP.md`.
+Built-in semantic indexing supports WAV and uncompressed AIFF/AIFC.
+Host-decoded compressed audio can use the interleaved-PCM search API;
+unsupported formats retain lexical indexing and search.
 
-Optional semantic search uses the verified `muzaiten/clap-htsat-base-onnx`
-pack and a dynamically loaded ONNX Runtime. It is never downloaded by the app.
-See [`core/models/README.md`](core/models/README.md) for the explicit installer,
-environment variables, integrity contract, and limitations. Built-in semantic indexing supports WAV and uncompressed AIFF/AIFC. Host-decoded
-compressed formats can use the additive interleaved-PCM search ABI; unsupported
-formats retain lexical indexing/search.
+Read the [model setup and integrity contract](core/models/README.md) for paths,
+environment variables, and limitations, and review
+[third-party notices](THIRD_PARTY_NOTICES.md) before installing.
 
-If a hard drive is disconnected, the folder shows **"Missing drive"** in red
-and its files remain searchable from the index.
+## Documentation
 
----
+Start with the [documentation index](documentation/README.md), or go directly to:
 
-## Architecture
+- [Audio preview and editor imports](documentation/WAVEFORM_AND_AUDIO_PREVIEW.md).
+- [Waveform algorithm](documentation/WAVEFORM_ALGORITHM.md) and
+  [cache design](documentation/WAVEFORM_CACHE_V10.md).
+- [Acoustic search and duplicate families](ACOUSTIC_SEARCH.md).
+- [Backup, recovery, and operations](OPERATIONS.md).
+- [Search optimizations](documentation/SEARCH_OPTIMIZATION_RESULTS.md) and
+  [benchmarks](BENCHMARKS.md), including measured results and validation limits.
+- [Changelog](CHANGELOG.md) and [roadmap](ROADMAP.md).
 
-```
-wavesearch/
-├── build.sh
-├── core/                         ← portable Zig indexing/search/DSP core
-│   ├── build.zig                 ← arm64 + x86_64 → lipo → xcframework
-│   ├── vendor/
-│   │   ├── sqlite3.c             ← downloaded by build.sh
-│   │   └── sqlite3.h
-│   ├── include/
-│   │   ├── wavesearch.h          ← C API
-│   │   └── module.modulemap
-│   └── src/
-│       ├── main_c.zig            ← exported C functions
-│       ├── db.zig                ← SQLite wrapper
-│       ├── search.zig            ← FTS5 + hybrid retrieval
-│       ├── clap_provider.zig     ← verified/refcounted CLAP lifecycle
-│       ├── model_manifest.zig    ← model integrity contract
-│       ├── audio.zig             ← built-in WAV/AIFF decoding
-│       └── waveform.zig          ← streaming PCM analysis, tiers, μ-law, WVT3
-└── macos/                        ← Swift UI and platform adapters
-    └── WaveSearch/
-        ├── wavesearch.xcodeproj
-        └── WaveSearch/
-            ├── WaveSearchKit.xcframework ← generated
-            ├── WaveSearchApp.swift
-            ├── AppStore.swift            ← state + Zig bridge
-            ├── ZigWaveformAnalysis.swift ← AVFoundation-to-core PCM adapter
-            ├── AudioAnalysis.swift       ← AVFoundation/Accelerate host path
-            ├── ContentView.swift
-            ├── SidebarView.swift         ← Tahoe sidebar
-            ├── MainView.swift            ← search + results list
-            └── PlayerPanel.swift         ← waveform + playback
+## Developing
+
+The repository keeps the portable core and native frontend together:
+
+```text
+core/
+  build.zig                 Native library, tests, benchmarks, macOS XCFramework
+  include/wavesearch.h       Public C API
+  src/                      Catalog, search, fingerprints, audio, waveform DSP
+  vendor/                   SQLite and ONNX Runtime headers
+macos/WaveSearch/
+  wavesearch.xcodeproj       Xcode project
+  WaveSearch/                SwiftUI interface and native platform adapters
+  Tools/                    Swift checks and waveform benchmarks
+scripts/                    Build support, checks, and opt-in installers
 ```
 
-## Inner development loop
+After editing Zig code, run `./build.sh` on macOS to refresh the XCFramework,
+then run the app from Xcode. A clean checkout regenerates the frameworks;
+build caches, personal Xcode state, and optional model/runtime artifacts are
+ignored. `make clean` removes local build caches and output.
+
+### Checks
 
 ```bash
-# Edit Zig code, then:
-./build.sh          # recompiles + copies xcframework
-# Xcode auto-picks up the new framework → Cmd+R
+make check        # Full core checks, plus app build and Swift checks on macOS
+make check-core   # Portable formatting, script checks, tests, and library build
+make check-linux  # Cross-compile the Linux x86_64 core library from macOS
 ```
+
+The macOS window and Settings checks require a logged-in desktop session.
+Optional model downloads and benchmarks are separate from normal checks.
+Use `make check ZIG=/path/to/zig` to select the pinned compiler explicitly.
+Cross-compilation checks compatibility; run `make check-core` on Linux to
+execute the portable tests there.
+
+Read [AGENTS.md](AGENTS.md) before agent-assisted changes. It records coding
+preferences, validation workflows, and the requirement to keep the changelog
+and repository guidance current.
+
+For platform work or changes to concurrency and resource scheduling, read the
+[performance and portability plan](documentation/PERFORMANCE_AND_PORTABILITY_PLAN.md).

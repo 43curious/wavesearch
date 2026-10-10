@@ -1,0 +1,119 @@
+# Working in WaveSearch
+
+## Jon's preferences
+
+- Keep solutions simple and use type safety to make invalid states harder to
+  represent. Propose substantial simplifications when they benefit the task.
+- Questions are read-only. If Jon asks about feasibility, opinions, or why
+  something happens, answer without editing files. Even a trivial change needs
+  a follow-up instruction to implement it.
+- Preserve unrelated work, including staged files. Inspect `git status` and the
+  relevant diff before making changes. Destructive actions require explicit
+  authorization; commit and push when instructed.
+- Keep comments concise and useful, and update them when behavior changes.
+- Use focused tests that exercise real behavior. Avoid repetitive smoke tests
+  and tests whose only purpose is to assert that deleted UI/code is absent.
+
+## Orientation
+
+Read [README.md](README.md) for setup, supported platforms, build commands, and
+user workflows. Check [CHANGELOG.md](CHANGELOG.md) for recent behavior changes.
+
+- `core/src/`: Zig catalog, indexing, search, fingerprints, semantic providers,
+  and waveform/audio processing. `core/include/wavesearch.h` is the frontend C
+  API; `core/build.zig` defines the build and tests.
+- `macos/WaveSearch/WaveSearch/`: SwiftUI/AppKit interface, application state,
+  native audio decoding/playback, settings, permissions, and platform adapters.
+- `macos/WaveSearch/Tools/` and `scripts/test-*.sh`: existing Swift checks.
+- `Makefile`, `build.sh`, and `.zig-version`: build entry points and the pinned
+  Zig toolchain. Use this repository's Zig flags rather than assuming another
+  compiler version's syntax.
+- The macOS app requires macOS 14+ and Xcode 26+. The core has macOS/Linux build
+  paths. A Linux desktop frontend and Windows support remain future work;
+  cross-compilation does not prove native runtime behavior.
+
+Read these references when touching the corresponding behavior:
+
+| Change area | Reference |
+| --- | --- |
+| Playback, waveforms, selected-range imports | [Audio preview](documentation/WAVEFORM_AND_AUDIO_PREVIEW.md); [algorithm](documentation/WAVEFORM_ALGORITHM.md); [cache](documentation/WAVEFORM_CACHE_V10.md) |
+| Search ranking, storage, or performance | [Search optimizations](documentation/SEARCH_OPTIMIZATION_RESULTS.md); [benchmarks](BENCHMARKS.md) |
+| CLAP loading, installation, or preprocessing | [Model contract](core/models/README.md); [relevance acceptance](core/models/RELEVANCE.md) |
+| Fingerprints, duplicate families, or example search | [Acoustic search](ACOUSTIC_SEARCH.md) |
+| Database lifecycle, backups, recovery, or library moves | [Operations](OPERATIONS.md) |
+| Platform boundaries, concurrency, or resource scheduling | [Performance and portability plan](documentation/PERFORMANCE_AND_PORTABILITY_PLAN.md) |
+
+Use [documentation/README.md](documentation/README.md) to find further references.
+Treat unchecked roadmap/plan items as proposals, and verify historical notes
+against the implementation before relying on them.
+
+## Implementation boundaries
+
+- Keep indexing, search, schema, fingerprints, and canonical analysis behavior
+  in the Zig core. Native hosts own interface, file permissions, playback,
+  platform decoding, and OS signals. Preserve existing C API compatibility when
+  extending the core.
+- Keep blocking filesystem, database, decoding, and inference work off the
+  main actor. Follow `BlockingWorkRegistry` admission/drain rules for host work
+  and `LatestRequestWorker` for replaceable foreground requests. Capture work
+  generation before scheduling deferred file preparation. Drain actual work
+  before closing the core or releasing security-scoped access.
+- Preserve atomic catalog updates, source/model identity checks, bounded
+  memory use, and cooperative cancellation. An OS or runtime call may finish
+  before cancellation takes effect; a canceled caller is not proof of draining.
+- Keep optional model/runtime downloads explicit and opt-in. Normal builds and
+  tests must work without installing models.
+- Editor imports default to **Keep the files in place**, passing the full
+  original URL even for a selected range. **Copy files to Exports** copies whole
+  files unchanged and renders partial selections as PCM24 WAVs. Exports are
+  persistent media that projects may reference; source files must survive
+  cancellation, and completed exports are not disposable caches.
+- Keep generated build products, XCFramework copies, personal Xcode state, and
+  model/runtime artifacts out of commits. Vendor updates should be deliberate
+  dependency changes.
+
+## Validation
+
+Use existing checks appropriate to the change; fix failures before finishing.
+
+- Core changes: `make check-core`. Changes to platform code also need native
+  execution on the affected OS; `make check-linux` only checks compilation.
+- Swift changes: `make macos`, plus the relevant existing lifecycle, refinement,
+  window, or Settings script. Window/Settings checks need a desktop session;
+  run GUI checks sequentially so they do not compete for focus.
+- Before committing code, run `make check` for the repository's full check
+  entry point. If the host cannot run part of it, report exactly what remains
+  unverified. For documentation-only changes, check facts, local links, and
+  `git diff --check`; an application rebuild is unnecessary.
+- When core code changes, rebuild the library used by Swift checks rather than
+  testing against a stale XCFramework. `scripts/test-app-lifecycle.sh` supports
+  `WS_CORE_LIBRARY` and `WS_CORE_HEADERS` overrides.
+- Run benchmarks and real-audio acceptance only when relevant. Use disposable
+  fixtures/catalogs, and keep synthetic, cold-storage, real-audio, and GUI
+  results distinct. An emitted drag URL does not prove a DAW imported it.
+
+Finish by reporting the behavior changed, checks run, and material limits.
+
+## Keep documentation current
+
+- Update **CHANGELOG.md in the same changeset** for every meaningful feature,
+  fix, removal, behavior change, or documentation/workflow change. Add concise
+  entries to **Unreleased** under Added, Changed, Fixed, or Removed; consolidate
+  related entries rather than recording every edit or test run.
+- Preserve `0.1_alpha` as the first commit's version (`1165343`). Assign a new
+  version/date only when Jon specifies a release. Historical sections describe
+  what shipped at that point, and should change only to correct factual errors.
+- **Review this AGENTS.md before finishing every task.** Update it in the same
+  changeset when you discover or change a durable repository rule, architecture
+  boundary, build/check workflow, recurring pitfall, or explicit preference.
+  Correct or remove stale guidance. If none changed, leave it as is.
+- Keep this file short and actionable. Put detailed implementation explanations
+  in the relevant reference document and link them with the condition for
+  reading them. Use the changelog for history, not AGENTS.md.
+- Preserve the README's centered app icon, title, introduction, and navigation
+  layout. Keep its overview and usage approachable, with detailed design and
+  performance records in linked reference documents.
+- Preserve Jon's preferences and authorization rules unless Jon changes them.
+  Record project facts and workflows without inventing new approval gates.
+- Update related README/reference documentation and comments whenever the
+  implementation changes their claims. Verify local links before finishing.

@@ -20,9 +20,13 @@ current WaveSearch application.
 
 ## Related repository documents
 
-The following older top-level documents cover other parts of WaveSearch:
+The following top-level documents cover other parts of WaveSearch:
 
 - [`../README.md`](../README.md) — project overview and build instructions.
+- [`../CHANGELOG.md`](../CHANGELOG.md) — release history beginning with `0.1_alpha`
+  and subsequent unreleased changes.
+- [`../AGENTS.md`](../AGENTS.md) — repository workflows and documentation
+  maintenance instructions for agents.
 - [`../ACOUSTIC_SEARCH.md`](../ACOUSTIC_SEARCH.md) — acoustic similarity and
   duplicate-family behavior.
 - [`../OPERATIONS.md`](../OPERATIONS.md) — index recovery, backup, restore, and
