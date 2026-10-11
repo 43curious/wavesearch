@@ -12,6 +12,23 @@ See [the queue contract, baseline, and limits](documentation/REFINEMENT_QUEUES.m
 
 ## Search optimization comparison (schema 12)
 
+The [compact-staging and filtered-retrieval follow-up](documentation/SEARCH_OPTIMIZATION_RESULTS.md#compact-scan-staging-and-filtered-retrieval-2026-10-11)
+records paired local measurements and limits. Reproduce staging separately from
+filesystem work, using new disposable paths:
+
+```sh
+cd core
+zig build optimization-bench -Doptimize=safe -- stage /tmp/ws-stage.sqlite 10000
+zig build optimization-bench -Doptimize=safe -- scan /tmp/ws-scan.sqlite 10000
+```
+
+`stage` reports allocated SQLite staging pages, staging cache page writes,
+publication time, WAL file growth, and process RSS for unchanged and 10%-changed
+snapshots. These are distinct from physical storage-device I/O. Semantic
+`compare` now measures the automatic planner against exact; optional duration
+bounds follow the query-file argument (`-` means generated queries). See the
+[semantic harness](documentation/SEMANTIC_RETRIEVAL_BENCHMARK.md#filtered-population-selection-2026-10-11).
+
 [Results and reproduction](documentation/SEARCH_OPTIMIZATION_RESULTS.md) cover
 recommendations 1–9: exact-name coverage, request reuse, waveform counters,
 SQLite layout, semantic/acoustic retrieval, fingerprint memory, disk-backed

@@ -2374,16 +2374,100 @@ test "disk staging cancels atomically and rejects competing publication" {
     try std.testing.expectEqual(@as(?db.FileInfo, null), try db.inspectFile("new.wav"));
     var competing = try db.IndexStage.init(1, null);
     defer competing.deinit();
-    try competing.append(old);
+    try competing.retainUnchanged(old.relative_path);
     try db.applyFolderIndex(2, &.{.{ .path = "/other.wav", .relative_path = "other.wav", .name = "Other.wav", .search_text = "other", .duration_ms = 10, .content_hash = 30, .file_size = 1, .mtime_ns = 1 }});
-    try std.testing.expectError(error.IndexSnapshotChanged, competing.publish(null));
+    try std.testing.expectError(error.IndexSnapshotChanged, competing.publishAtRoot("/moved", null));
     try std.testing.expectEqual(identity.id, (try db.inspectFile(old.relative_path)).?.id);
 
     var reopened = try db.IndexStage.init(1, null);
     defer reopened.deinit();
-    try reopened.append(old);
+    try reopened.retainUnchanged(old.relative_path);
     try openFixture(&fixture);
-    try std.testing.expectError(error.IndexSnapshotChanged, reopened.publish(null));
+    try std.testing.expectError(error.IndexSnapshotChanged, reopened.publishAtRoot("/moved", null));
+}
+
+test "compact staging preserves retained analysis, moves roots and removes only missing identities" {
+    var fixture = try Fixture.init();
+    defer fixture.deinit();
+    try openFixture(&fixture);
+    const rows = [_]db.ScannedFile{
+        .{ .path = "/old/nested/keep.wav", .relative_path = "nested/keep.wav", .name = "Keep.wav", .search_text = "bronze bell", .duration_ms = 1000, .content_hash = 10, .file_size = 20, .mtime_ns = 1 },
+        .{ .path = "/old/change.wav", .relative_path = "change.wav", .name = "Change.wav", .search_text = "old effect", .duration_ms = 2000, .content_hash = 11, .file_size = 20, .mtime_ns = 1 },
+        .{ .path = "/old/missing.wav", .relative_path = "missing.wav", .name = "Missing.wav", .search_text = "missing", .duration_ms = 3000, .content_hash = 12, .file_size = 20, .mtime_ns = 1 },
+    };
+    try db.applyFolderIndex(1, &rows);
+    const keep = (try db.inspectFile(rows[0].relative_path)).?;
+    const change = (try db.inspectFile(rows[1].relative_path)).?;
+    try db.applyFolderIndex(2, &.{.{ .path = "/other.wav", .relative_path = "other.wav", .name = "Other.wav", .search_text = "other", .duration_ms = 10, .content_hash = 13, .file_size = 20, .mtime_ns = 1 }});
+    _ = try db.setSemanticModel("test/compact-stage", 2);
+    for ([_]db.FileInfo{ keep, change }) |file| {
+        try db.upsertSemanticEmbedding(allocator, @intCast(file.id), file.content_hash, &.{ 1, 0 });
+        try db.storeWaveformTiers(@intCast(file.id), file.content_hash, file.file_size, file.mtime_ns, 3, "universal", null);
+    }
+    var stage = try db.IndexStage.init(1, null);
+    defer stage.deinit();
+    try stage.retainUnchanged(rows[0].relative_path);
+    var changed = rows[1];
+    changed.path = "/new/change.wav";
+    changed.content_hash = 99;
+    changed.mtime_ns = 2;
+    changed.search_text = "new effect";
+    try stage.append(changed);
+    try stage.append(.{ .path = "/new/added.wav", .relative_path = "added.wav", .name = "Added.wav", .search_text = "new", .duration_ms = 10, .content_hash = 100, .file_size = 20, .mtime_ns = 1 });
+    try stage.publishAtRoot("/new/", null);
+    const kept = (try db.inspectFile(rows[0].relative_path)).?;
+    const updated = (try db.inspectFile(rows[1].relative_path)).?;
+    try std.testing.expectEqual(keep.id, kept.id);
+    try std.testing.expectEqual(change.id, updated.id);
+    try std.testing.expectEqual(@as(i64, 99), updated.content_hash);
+    try std.testing.expectEqual(@as(?db.FileInfo, null), try db.inspectFile("missing.wav"));
+    try std.testing.expectEqual(@as(c_int, 3), try db.countForFolder(1));
+    try std.testing.expectEqual(@as(c_int, 1), try db.countForFolder(2));
+    try std.testing.expectEqual(@as(i64, 1), (try db.semanticStatus()).embedded_count);
+    try std.testing.expectEqual(@as(i64, 1), (try db.waveformCacheStatus()).universal_count);
+    var results: [1]main_c.WSResult = undefined;
+    try std.testing.expectEqual(@as(usize, 1), try search.search(allocator, "bronze bell", 1, &results, results.len));
+    try std.testing.expectEqualStrings("/new/nested/keep.wav", std.mem.sliceTo(&results[0].path, 0));
+    try std.testing.expectEqual(@as(i32, 1000), results[0].duration_ms);
+    var ambiguous = try db.IndexStage.init(1, null);
+    defer ambiguous.deinit();
+    try ambiguous.retainUnchanged(rows[0].relative_path);
+    try std.testing.expectError(error.DuplicateRelativePath, ambiguous.retainUnchanged(rows[0].relative_path));
+    try std.testing.expectEqual(@as(u32, 0), (try db.integrityCheck(true)).errors_found);
+}
+
+test "cancellation during retained path publication rolls back moves and removals" {
+    const Hooks = struct {
+        var cancel: std.atomic.Value(bool) = .init(false);
+        fn install(handle: ?*db.c.sqlite3, _: [*c][*c]u8, _: ?*const db.c.sqlite3_api_routines) callconv(.c) c_int {
+            return db.c.sqlite3_create_function_v2(handle, "ws_test_stage_cancel", 0, db.c.SQLITE_UTF8, null, stop, null, null, null);
+        }
+        fn stop(context: ?*db.c.sqlite3_context, _: c_int, _: [*c]?*db.c.sqlite3_value) callconv(.c) void {
+            cancel.store(true, .release);
+            db.c.sqlite3_result_null(context);
+        }
+    };
+    Hooks.cancel.store(false, .release);
+    const extension: *const fn () callconv(.c) void = @ptrCast(&Hooks.install);
+    try std.testing.expectEqual(@as(c_int, db.c.SQLITE_OK), db.c.sqlite3_auto_extension(extension));
+    defer _ = db.c.sqlite3_cancel_auto_extension(extension);
+    var fixture = try Fixture.init();
+    defer fixture.deinit();
+    try openFixture(&fixture);
+    try db.applyFolderIndex(1, &.{
+        .{ .path = "/old/a.wav", .relative_path = "a.wav", .name = "A.wav", .search_text = "alpha", .duration_ms = 10, .content_hash = 1, .file_size = 1, .mtime_ns = 1 },
+        .{ .path = "/old/b.wav", .relative_path = "b.wav", .name = "B.wav", .search_text = "beta", .duration_ms = 10, .content_hash = 2, .file_size = 1, .mtime_ns = 1 },
+    });
+    try rawExec(fixture.db_path, "CREATE TRIGGER ws_test_stage_cancel AFTER UPDATE OF path ON files BEGIN SELECT ws_test_stage_cancel(); END;");
+    var stage = try db.IndexStage.init(1, null);
+    defer stage.deinit();
+    try stage.retainUnchanged("a.wav");
+    try std.testing.expectError(error.Cancelled, stage.publishAtRoot("/moved", &Hooks.cancel));
+    try std.testing.expect(Hooks.cancel.load(.acquire));
+    try std.testing.expectEqual(@as(c_int, 2), try db.countForFolder(1));
+    var results: [1]main_c.WSResult = undefined;
+    try std.testing.expectEqual(@as(usize, 1), try search.search(allocator, "alpha", 1, &results, results.len));
+    try std.testing.expectEqualStrings("/old/a.wav", std.mem.sliceTo(&results[0].path, 0));
 }
 
 test "lexical search reads the committed snapshot while index publication is paused" {

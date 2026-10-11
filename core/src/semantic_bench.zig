@@ -1,6 +1,6 @@
 //! End-to-end SQLite retrieval, not an in-memory dot-product microbenchmark.
 //! create PATH COUNT uniform|clustered|dense [corpus.f32]
-//! compare|exact|quantized|auto PATH QUERIES [K=20] [FOLDER=-1] [queries.f32]
+//! compare|exact|quantized|auto PATH QUERIES [K=20] [FOLDER=-1] [queries.f32|-] [MIN_MS=0] [MAX_MS=0]
 //! Optional files contain consecutive normalized 512-D little-endian Float32 rows.
 const std = @import("std");
 const db = @import("db.zig");
@@ -30,9 +30,12 @@ pub fn main(init: std.process.Init) !void {
         const mode = if (std.mem.eql(u8, command, "compare")) null else std.meta.stringToEnum(db.VectorRetrievalMode, command) orelse return error.InvalidMode;
         const k = try std.fmt.parseInt(usize, args.next() orelse "20", 10);
         const folder = try std.fmt.parseInt(i32, args.next() orelse "-1", 10);
-        const queries = args.next();
-        if (args.next() != null or k == 0 or k > db.SQ8_MAX_SEED / 4 or count > 10_000) return error.InvalidArguments;
-        try evaluate(io, path, count, k, if (folder < 0) null else folder, mode, queries);
+        const query_arg = args.next();
+        const queries = if (query_arg != null and !std.mem.eql(u8, query_arg.?, "-")) query_arg else null;
+        const min_ms = try std.fmt.parseInt(i32, args.next() orelse "0", 10);
+        const max_ms = try std.fmt.parseInt(i32, args.next() orelse "0", 10);
+        if (args.next() != null or k == 0 or k > db.SQ8_MAX_SEED / 4 or count > 10_000 or min_ms < 0 or max_ms < 0 or (max_ms != 0 and max_ms < min_ms)) return error.InvalidArguments;
+        try evaluate(io, path, count, k, .{ .folder_id = if (folder < 0) null else folder, .min_duration_ms = min_ms, .max_duration_ms = max_ms }, mode, queries);
     }
 }
 
@@ -136,7 +139,7 @@ fn create(io: std.Io, path: []const u8, count: usize, distribution: Distribution
     });
 }
 
-fn evaluate(io: std.Io, path: []const u8, runs: usize, k: usize, folder: ?i32, mode: ?db.VectorRetrievalMode, query_path: ?[]const u8) !void {
+fn evaluate(io: std.Io, path: []const u8, runs: usize, k: usize, filter: vector.Filter, mode: ?db.VectorRetrievalMode, query_path: ?[]const u8) !void {
     // Require the benchmark marker before db.open can migrate anything.
     const metadata = blk: {
         const handle = try openRaw(path, c.SQLITE_OPEN_READONLY);
@@ -166,6 +169,7 @@ fn evaluate(io: std.Io, path: []const u8, runs: usize, k: usize, folder: ?i32, m
     var reranked: usize = 0;
     var refinement_scanned: usize = 0;
     var used_quantized = false;
+    var payload_bytes: [2]usize = .{ 0, 0 };
     var values: [dimension]f32 = undefined;
     for (0..runs + 1) |run| {
         if (input) |f| try readVector(f, io, if (run == 0) 0 else run - 1, &values) else try generate(count + run, distribution, &values);
@@ -175,10 +179,10 @@ fn evaluate(io: std.Io, path: []const u8, runs: usize, k: usize, folder: ?i32, m
         defer if (compact) |result| allocator.free(result.matches);
         // Alternate order in paired comparisons; report first query separately.
         for (0..2) |turn| {
-            const selected: db.VectorRetrievalMode = if (mode) |m| m else if ((turn + run) % 2 == 0) .exact else .quantized;
+            const selected: db.VectorRetrievalMode = if (mode) |m| m else if ((turn + run) % 2 == 0) .exact else .auto;
             if (mode != null and turn == 1) break;
             const start = std.Io.Clock.awake.now(io);
-            const result = (try db.streamActiveVectorTopKWithMode(allocator, &values, .{ .folder_id = folder }, k, selected)) orelse return error.NoModel;
+            const result = (try db.streamActiveVectorTopKWithMode(allocator, &values, filter, k, selected)) orelse return error.NoModel;
             const ns: u64 = @intCast(start.durationTo(std.Io.Clock.awake.now(io)).toNanoseconds());
             if (selected == .exact) {
                 exact = result;
@@ -191,6 +195,12 @@ fn evaluate(io: std.Io, path: []const u8, runs: usize, k: usize, folder: ?i32, m
             reranked = @max(reranked, result.reranked);
             refinement_scanned = @max(refinement_scanned, result.refinement_scanned);
             used_quantized = used_quantized or result.quantized;
+            const payload = if (result.quantized)
+                (result.scanned + result.refinement_scanned) * (dimension + 8) + result.reranked * dimension * 4
+            else
+                result.scanned * dimension * 4;
+            const index: usize = if (selected == .exact) 0 else 1;
+            payload_bytes[index] = @max(payload_bytes[index], payload);
         }
         if (mode == null and run > 0) {
             var found: usize = 0;
@@ -209,11 +219,13 @@ fn evaluate(io: std.Io, path: []const u8, runs: usize, k: usize, folder: ?i32, m
             minimum_recall = @min(minimum_recall, recall);
         }
     }
-    std.debug.print("count={d} distribution={s} queries={d} k={d} folder={d} mode={s} used_sq8={} scanned={d} max_reranked={d} max_refinement_scanned={d} query_peak_rss_bytes={d}\n", .{
-        count, @tagName(distribution), runs, k, folder orelse -1, if (mode) |m| @tagName(m) else "compare", used_quantized, scanned, reranked, refinement_scanned, perf.peakRssBytes(),
+    std.debug.print("count={d} distribution={s} queries={d} k={d} folder={d} min_ms={d} max_ms={d} mode={s} used_sq8={} scanned={d} max_reranked={d} max_refinement_scanned={d} query_peak_rss_bytes={d}\n", .{
+        count, @tagName(distribution), runs, k, filter.folder_id orelse -1, filter.min_duration_ms, filter.max_duration_ms, if (mode) |m| @tagName(m) else "compare", used_quantized, scanned, reranked, refinement_scanned, perf.peakRssBytes(),
     });
     if (mode == null or mode.? == .exact) report("exact", first_exact, exact_times);
     if (mode == null or mode.? != .exact) report("selected", first_compact, compact_times);
+    // Logical code/vector blob bytes, not physical disk or SQLite page traffic.
+    std.debug.print("max_vector_payload_bytes exact={d} selected={d}\n", .{ payload_bytes[0], payload_bytes[1] });
     if (mode == null) {
         std.debug.print("recall@{d} mean={d:.6} min={d:.6}\n", .{ k, recall_sum / @as(f64, @floatFromInt(runs)), minimum_recall });
         if (minimum_recall < 1) return error.RecallRegression;

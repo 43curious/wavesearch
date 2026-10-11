@@ -33,6 +33,7 @@ pub fn main(init: std.process.Init) !void {
     defer db.close();
     if (std.mem.eql(u8, mode, "fingerprint")) return fingerprintBench(io, count);
     if (std.mem.eql(u8, mode, "scan")) return scanBench(io, path, count);
+    if (std.mem.eql(u8, mode, "stage")) return stageBench(io, path, count);
     if (std.mem.eql(u8, mode, "index-contention")) return indexContentionBench(io, count);
     if (std.mem.eql(u8, mode, "quality")) {
         const score = try qualityBench(io);
@@ -245,6 +246,58 @@ fn scanBench(io: std.Io, path: []const u8, count: usize) !void {
     try search.indexFolderWithOptions(allocator, 1, absolute, .{ .fast = true });
     if (try db.countForFolder(1) != count) return error.ScanRegression;
     std.debug.print("unchanged_scan_ms={d:.3} peak_rss_bytes={d}\n", .{ perf.milliseconds(elapsed(io, start)), perf.peakRssBytes() });
+}
+
+// Isolates staging/publication costs from directory creation and audio reads.
+fn stageBench(io: std.Io, path: []const u8, count: usize) !void {
+    const root = "/benchmark/Professional Sound Effects Library/Collections/Field Recordings";
+    const rows = try allocator.alloc(db.ScannedFile, count);
+    defer allocator.free(rows);
+    var initialized: usize = 0;
+    defer for (rows[0..initialized]) |row| {
+        allocator.free(row.path);
+        allocator.free(row.relative_path);
+    };
+    for (rows, 0..) |*row, i| {
+        const relative = try std.fmt.allocPrint(allocator, "Ambiences and Impacts/Session-{d:0>8}/impact-{d:0>8}.wav", .{ i, i });
+        errdefer allocator.free(relative);
+        const full = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ root, relative });
+        row.* = .{ .path = full, .relative_path = relative, .name = std.fs.path.basename(relative), .search_text = "impact field recording", .duration_ms = 1000, .content_hash = @intCast(i + 1), .file_size = 2000, .mtime_ns = 1 };
+        initialized += 1;
+    }
+    try db.applyFolderIndex(1, rows);
+    const wal = try std.fmt.allocPrint(allocator, "{s}-wal", .{path});
+    defer allocator.free(wal);
+    for ([_]bool{ false, true }) |changed| {
+        const wal_before = (try std.Io.Dir.cwd().statFile(io, wal, .{})).size;
+        var start = std.Io.Clock.awake.now(io);
+        var stage = try db.IndexStage.init(1, null);
+        defer stage.deinit();
+        for (rows, 0..) |row, i| {
+            if (changed and i % 10 == 0) {
+                var update = row;
+                update.content_hash += @intCast(count);
+                update.mtime_ns = 2;
+                try stage.append(update);
+            } else if (!try stage.retainIfUnchanged(row.relative_path, row.file_size, row.mtime_ns)) return error.StageRegression;
+        }
+        const staged_ns = elapsed(io, start);
+        var pages: ?*db.c.sqlite3_stmt = null;
+        if (db.c.sqlite3_prepare_v2(stage.handle, "SELECT page_count*page_size FROM pragma_page_count(),pragma_page_size()", -1, &pages, null) != db.c.SQLITE_OK) return error.PrepareFailed;
+        defer _ = db.c.sqlite3_finalize(pages);
+        if (db.c.sqlite3_step(pages) != db.c.SQLITE_ROW) return error.StepFailed;
+        const stage_bytes = db.c.sqlite3_column_int64(pages, 0);
+        _ = db.c.sqlite3_reset(pages);
+        start = std.Io.Clock.awake.now(io);
+        try stage.publishAtRoot(root, null);
+        const published_ns = elapsed(io, start);
+        var writes: c_int = 0;
+        var unused: c_int = 0;
+        if (db.c.sqlite3_db_status(stage.handle, db.c.SQLITE_DBSTATUS_CACHE_WRITE, &writes, &unused, 0) != db.c.SQLITE_OK) return error.StepFailed;
+        const wal_after = (try std.Io.Dir.cwd().statFile(io, wal, .{})).size;
+        if (try db.countForFolder(1) != count) return error.StageRegression;
+        std.debug.print("stage changed={} count={d} stage_ms={d:.3} publication_ms={d:.3} stage_bytes={d} stage_page_writes={d} wal_file_growth_bytes={d} peak_rss_bytes={d}\n", .{ changed, count, perf.milliseconds(staged_ns), perf.milliseconds(published_ns), stage_bytes, writes, wal_after -| wal_before, perf.peakRssBytes() });
+    }
 }
 
 // Controlled professional-effect descriptors and deliberately imperfect vectors.

@@ -12,7 +12,12 @@ historical schema-11 measurements; million-scale results were not rerun.
 
 ## Decision and implementation
 
-Use the compact SQ8 path automatically for unfiltered collections with at least 4,096 active-model embeddings and K ≤ 1,024. Small collections, folder/duration-filtered queries, and larger K retain exact Float32 retrieval. Filtered queries start from the existing folder/duration indexes, before reading vectors.
+Use the compact SQ8 path automatically for at least 4,096 matching active-model
+embeddings with complete model-wide SQ8 coverage and K ≤ 1,024. For folder or
+duration filters, an indexed identity probe stops at 4,096 matches without
+reading vector blobs. Small matching sets, incomplete coverage, and larger K
+retain exact Float32 retrieval. Both filtered paths start from the existing
+folder/duration indexes before reading vector/code payloads.
 
 Schema 11 adds `semantic_sq8`: one normalized Int8 code per canonical embedding, plus Float32 inverse norm and a conservative L2 reconstruction-error bound. A 512-D code occupies 520 bytes versus 2,048 bytes for its original vector. SQLite triggers maintain inserts/updates in the same transaction; foreign keys cascade deletions. Existing catalogs are backfilled transactionally on open, without re-running CLAP. Restore rebuilds derived codes before publishing the staged database. Canonical Float32 vectors remain unchanged.
 
@@ -115,3 +120,58 @@ The supplied distribution label is unused when importing vectors. Evaluation req
 ## Remaining limits
 
 These synthetic measurements are **not real-audio relevance or end-to-end UI latency claims**. Run the imported-CLAP benchmark and controlled cold-SSD/HDD/network tests before establishing broader latency targets. Compact scans remain O(N×dimension), and difficult neighborhoods can require additional Float32 reads. If representative million-vector queries need consistently sub-250 ms retrieval, evaluate IVF/HNSW plus exact reranking against this baseline with the same recall, RSS, disk, build, cancellation, and update-consistency measurements—not an assumption that ANN must win.
+
+## Filtered population selection (2026-10-11)
+
+Automatic selection now uses matching population rather than filter presence.
+The identity probe reads no vector blobs and stops at 4,096 matching embeddings;
+it can inspect more catalog identities when the active model is sparse. Coverage
+remains a conservative model-wide check: missing SQ8 rows anywhere select exact.
+No extra persistent index, migration, model inference, or ANN is introduced.
+
+A disposable 100,000-vector, 512-D uniform corpus used 30 held-out queries,
+K=256, the existing 16 KiB layout, Zig 0.17.0 `safe`, macOS arm64, and local
+storage. The first 50,000 files were assigned to folder 0; another 50 already
+belonged to that folder. Paired comparisons alternate exact/automatic order:
+
+| Filter / matching vectors | Exact p50 / p95 ms | Automatic p50 / p95 ms | SQ8 | Mean / minimum recall@256 |
+| --- | ---: | ---: | --- | ---: |
+| Folder 0 / 50,050 | 58.774 / 65.152 | 26.723 / 29.484 | Yes | 1.000 / 1.000 |
+| Folder 1 / 50 | 0.159 / 0.171 | 0.223 / 0.238 | No | 1.000 / 1.000 |
+| Duration <= 100,000 ms / 100,000 | 121.250 / 124.864 | 53.637 / 55.781 | Yes | 1.000 / 1.000 |
+
+Broad-folder logical payload reads fell from 102,502,400 to 28,123,152 bytes;
+broad-duration reads fell from 204,800,000 to 54,097,152 bytes. These totals
+count code scans, refinement passes, and Float32 reranks, excluding metadata,
+probe work, B-tree overhead, and page-cache effects; they are not physical disk
+I/O. Broad cases reranked 1,024 original vectors without a refinement pass.
+Paired-process peak RSS was 26,542,080 bytes for broad cases and 9,207,808 for
+selective work; this does not establish a per-backend memory saving.
+
+The selective case adds about 0.067 ms at p95 for the population probe. Separate
+first queries were cache-influenced (broad folder exact/auto 216.361/115.215 ms;
+broad duration 1,219.897/327.510 ms) and are not controlled cold-storage results.
+The previous planner's broad-folder automatic path selected exact, with
+57.923/61.255 ms p50/p95 in its standalone baseline.
+
+Reproduce using exclusively created benchmark catalogs:
+
+```sh
+cd core
+zig build semantic-bench -Doptimize=safe -- create /tmp/ws-filtered.sqlite 100000 uniform
+sqlite3 /tmp/ws-filtered.sqlite 'BEGIN; UPDATE files SET folder_id=0 WHERE id<=50000; COMMIT;'
+zig build semantic-bench -Doptimize=safe -- compare /tmp/ws-filtered.sqlite 30 256 0
+zig build semantic-bench -Doptimize=safe -- compare /tmp/ws-filtered.sqlite 30 256 1
+zig build semantic-bench -Doptimize=safe -- compare /tmp/ws-filtered.sqlite 30 256 -1 - 0 100000
+```
+
+The optional positional duration bounds follow `queries.f32`, or `-` for
+synthetic queries. Imported real vectors and held-out query files remain
+supported. `compare` uses the automatic planner; `quantized` still forces the
+compact path for diagnostic comparisons. Run `exact` and `auto` separately for
+backend-specific RSS, and keep fixture construction/storage costs separate.
+
+Core tests compare exact IDs, order, and scores for broad/selective filters,
+partial coverage and dense ties, and interrupt the population probe inside
+SQLite. Real CLAP vectors, inference/lexical/hydration/UI end-to-end latency,
+million-file filtered workloads, and controlled cold-storage tests were not run.

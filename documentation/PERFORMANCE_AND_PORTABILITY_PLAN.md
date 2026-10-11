@@ -96,7 +96,7 @@ OS file operations and native runtime calls may be uninterruptible while inside 
 - [ ] Avoid invalidating coherent snapshot results for unrelated embedding insertions. Connection/model/generation validation is implemented, but every generation change still rejects a completed scan.
 - [x] Reuse one bounded read-only connection for semantic scans; cancellation rolls back the read transaction and the next scan reuses the connection safely.
 - [x] Avoid an unnecessary vector-row sort and hydrate semantic result metadata in one bounded `IN` query instead of one SQLite query per result.
-- [x] Use selective vector retrieval for large collections. Evaluated SQ8 plus exact reranking against the exact baseline at up to one million vectors, measuring recall, latency, process RSS, disk overhead, and build time. Small/filtered queries remain exact; ambiguous SQ8 candidates receive additional exact scoring rather than sacrificing near-duplicate recall. No unmeasured ANN dependency was introduced.
+- [x] Use selective vector retrieval for large collections. Evaluated SQ8 plus exact reranking against the exact baseline at up to one million vectors, measuring recall, latency, process RSS, disk overhead, and build time. Small matching sets remain exact; broad folder/duration filters now select SQ8 using a bounded population probe. Ambiguous candidates receive additional exact scoring rather than sacrificing near-duplicate recall. See [filtered measurements](SEMANTIC_RETRIEVAL_BENCHMARK.md#filtered-population-selection-2026-10-11).
 
 Compact scans still do O(N×dimension) work and may need a second pass; selective Float32 reads do not make this ANN. Migration backfills codes atomically off-main, delaying library readiness once. Representative CLAP and controlled cold-storage benchmarks remain follow-up acceptance work.
 
@@ -115,7 +115,7 @@ Compact scans still do O(N×dimension) work and may need a second pass; selectiv
 **Current implementation:** `search.indexFolderWithOptions` stages discovery and old identities in disposable SQLite tables. Changed files share one open descriptor and a bounded cached prefix across metadata, duration and hashing. Manifest copying and atomic publication use a separate WAL connection, allowing metadata searches to read the committed catalog. Default metadata extraction still examines up to 2 MiB; fast extraction skips PCM chunks.
 
 - [x] Stage large scans in disk-backed tables/a staging database while preserving atomic old-or-new publication and cancellation rollback.
-- [ ] Represent unchanged entries compactly and reduce duplicate string storage.
+- [x] Retain unchanged identities in the copied old manifest and stage full records only for new/changed files; reuse old observation flags for deletion reconciliation instead of a second seen-path table. See [space, timing, and cancellation checks](SEARCH_OPTIMIZATION_RESULTS.md#compact-scan-staging-and-filtered-retrieval-2026-10-11).
 - [x] Reuse open descriptors and cached header bytes across metadata/duration/identity extraction, retaining the existing duration parser and path identity checks.
 - [ ] Extend sparse metadata extraction where appropriate.
 - [ ] Introduce only measured, storage-sensitive concurrency: SSD, HDD, removable, and network storage have different optimal access patterns.

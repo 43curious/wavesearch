@@ -42,6 +42,13 @@ changelog/agent documentation added afterward.
 
 ### Fixed
 
+- Unchanged-file rescans retain compact identity references instead of staging
+  full paths and metadata again, and reconcile removals from the original
+  snapshot without a second seen-path table. Relocation, cancellation, and
+  atomic publication preserve valid analysis and file IDs.
+- Broad folder/duration semantic searches now choose SQ8 from the matching
+  population, preserving exact Float32 reranking. Small matching sets and
+  incomplete SQ8 coverage retain exact retrieval.
 - Semantic and acoustic refinement now resume from indexed, durable pending
   queues across bounded calls and restarts, avoiding repeated scans of completed
   files. Schema 13 migrates and restores queues from existing analysis; changed

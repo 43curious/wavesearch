@@ -67,44 +67,35 @@ pub fn indexFolderWithOptions(allocator: std.mem.Allocator, folder_id: i32, path
 
         const file_size: i64 = @intCast(@min(stat.size, @as(u64, std.math.maxInt(i64))));
         const mtime_ns: i64 = @intCast(stat.mtime.nanoseconds);
-        const previous = try stage.previous(entry.path);
-        const unchanged = if (previous) |old|
-            !options.deep and old.file_size >= 0 and old.file_size == file_size and old.mtime_ns == mtime_ns
-        else
-            false;
         if (options.discovered) |counter| _ = counter.fetchAdd(1, .monotonic);
+        if (!options.deep and try stage.retainIfUnchanged(entry.path, file_size, mtime_ns)) continue;
 
         text.clearRetainingCapacity();
-        var duration_ms: i32 = 0;
-        var content_hash: i64 = if (previous) |old| old.content_hash else 0;
-        if (!unchanged) {
-            try appendNormalizedPathText(allocator, &text, entry.path);
-            const wav = std.ascii.eqlIgnoreCase(std.fs.path.extension(entry.path), ".wav");
-            const prefix_limit: u64 = if (wav and !options.fast) 2 * 1024 * 1024 else FAST_HASH_BLOCK_SIZE;
-            try prefix.resize(allocator, @intCast(@min(stat.size, prefix_limit)));
-            if (try file.readPositionalAll(io, prefix.items, 0) != prefix.items.len) return error.FileChangedDuringScan;
-            const reader = audio_file.Reader{ .handle = &file, .io = io, .size = stat.size, .prefix = prefix.items };
-            if (wav) {
-                if (options.fast)
-                    audio.appendMetadataTextFromFileSparse(allocator, &text, reader, 256 * 1024) catch {}
-                else
-                    audio.appendMetadataTextFromFileLimit(allocator, &text, reader, 2 * 1024 * 1024) catch {};
-            }
-            duration_ms = audio.durationMsFromFile(reader, full_path.items) catch 0;
-            content_hash = try contentHash(reader, options.deep, options.fast, file_size, mtime_ns, options.cancel);
-            // Reusing a descriptor must not hide a file replaced at its path
-            // while we inspected it, even if its size and mtime were preserved.
-            const current = std.Io.Dir.cwd().statFile(io, full_path.items, .{}) catch return error.FileChangedDuringScan;
-            if (current.inode != stat.inode or current.size != stat.size or
-                current.mtime.nanoseconds != stat.mtime.nanoseconds or
-                current.ctime.nanoseconds != stat.ctime.nanoseconds) return error.FileChangedDuringScan;
+        try appendNormalizedPathText(allocator, &text, entry.path);
+        const wav = std.ascii.eqlIgnoreCase(std.fs.path.extension(entry.path), ".wav");
+        const prefix_limit: u64 = if (wav and !options.fast) 2 * 1024 * 1024 else FAST_HASH_BLOCK_SIZE;
+        try prefix.resize(allocator, @intCast(@min(stat.size, prefix_limit)));
+        if (try file.readPositionalAll(io, prefix.items, 0) != prefix.items.len) return error.FileChangedDuringScan;
+        const reader = audio_file.Reader{ .handle = &file, .io = io, .size = stat.size, .prefix = prefix.items };
+        if (wav) {
+            if (options.fast)
+                audio.appendMetadataTextFromFileSparse(allocator, &text, reader, 256 * 1024) catch {}
+            else
+                audio.appendMetadataTextFromFileLimit(allocator, &text, reader, 2 * 1024 * 1024) catch {};
         }
+        const duration_ms = audio.durationMsFromFile(reader, full_path.items) catch 0;
+        const content_hash = try contentHash(reader, options.deep, options.fast, file_size, mtime_ns, options.cancel);
+        // Reusing a descriptor must not hide a file replaced at its path
+        // while we inspected it, even if its size and mtime were preserved.
+        const current = std.Io.Dir.cwd().statFile(io, full_path.items, .{}) catch return error.FileChangedDuringScan;
+        if (current.inode != stat.inode or current.size != stat.size or
+            current.mtime.nanoseconds != stat.mtime.nanoseconds or
+            current.ctime.nanoseconds != stat.ctime.nanoseconds) return error.FileChangedDuringScan;
 
         try stage.append(.{
             .path = full_path.items,
             .relative_path = entry.path,
             .name = entry.basename,
-            // Publication ignores these derived fields for unchanged identities.
             .search_text = text.items,
             .duration_ms = duration_ms,
             .content_hash = content_hash,
@@ -116,7 +107,7 @@ pub fn indexFolderWithOptions(allocator: std.mem.Allocator, folder_id: i32, path
     // Stage's primary-key traversal gives deterministic fresh IDs without a
     // second manifest, duplicated strings, publication array or in-memory sort.
     if (options.cancel) |token| if (token.load(.acquire)) return error.Cancelled;
-    try stage.publish(options.cancel);
+    try stage.publishAtRoot(path, options.cancel);
 }
 
 pub const QueryBuf = text_mod.QueryBuf;

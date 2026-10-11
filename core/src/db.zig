@@ -702,7 +702,11 @@ pub const IndexStage = struct {
     revision: [2]u64,
     lookup: *c.sqlite3_stmt,
     insert: *c.sqlite3_stmt,
+    retain: *c.sqlite3_stmt,
+    observed: *c.sqlite3_stmt,
+    old_count: usize,
     read: ?*c.sqlite3_stmt = null,
+    root: ?[]const u8 = null,
 
     pub fn init(folder_id: i32, cancel: ?*const std.atomic.Value(bool)) !IndexStage {
         index_connection_mutex.lock();
@@ -720,15 +724,16 @@ pub const IndexStage = struct {
         errdefer _ = c.sqlite3_close_v2(h);
         // ponytail: disposable staging needs no crash recovery; the live index
         // still publishes atomically with its normal WAL transaction.
-        if (c.sqlite3_exec(h, "PRAGMA journal_mode=OFF; PRAGMA cache_size=-2048; PRAGMA temp_store=FILE; CREATE TABLE old_files(relative_path TEXT PRIMARY KEY,file_size INTEGER,mtime_ns INTEGER,content_hash INTEGER) WITHOUT ROWID; CREATE TABLE scanned(relative_path TEXT PRIMARY KEY,path TEXT,name TEXT,search_text TEXT,duration_ms INTEGER,content_hash INTEGER,file_size INTEGER,mtime_ns INTEGER) WITHOUT ROWID; BEGIN;", null, null, null) != c.SQLITE_OK) return error.StageOpenFailed;
-        const copy = try prepareOn(h, "INSERT INTO old_files VALUES(?,?,?,?)");
+        if (c.sqlite3_exec(h, "PRAGMA journal_mode=OFF; PRAGMA cache_size=-2048; PRAGMA temp_store=FILE; CREATE TABLE old_files(relative_path TEXT PRIMARY KEY,file_size INTEGER,mtime_ns INTEGER,content_hash INTEGER,file_id INTEGER NOT NULL,seen INTEGER NOT NULL DEFAULT 0 CHECK(seen IN (0,1,2))) WITHOUT ROWID; CREATE TABLE scanned(relative_path TEXT PRIMARY KEY,path TEXT,name TEXT,search_text TEXT,duration_ms INTEGER,content_hash INTEGER,file_size INTEGER,mtime_ns INTEGER) WITHOUT ROWID; BEGIN;", null, null, null) != c.SQLITE_OK) return error.StageOpenFailed;
+        const copy = try prepareOn(h, "INSERT INTO old_files(relative_path,file_size,mtime_ns,content_hash,file_id) VALUES(?,?,?,?,?)");
         defer _ = c.sqlite3_finalize(copy);
         try execOn(live.handle, "BEGIN DEFERRED;");
         errdefer execOn(live.handle, "ROLLBACK;") catch {};
         const revision = try catalogRevisionOn(live.handle, live.serial);
-        const old = try prepareOn(live.handle, "SELECT relative_path,file_size,mtime_ns,content_hash FROM files WHERE folder_id=? ORDER BY relative_path");
+        const old = try prepareOn(live.handle, "SELECT relative_path,file_size,mtime_ns,content_hash,id FROM files WHERE folder_id=? ORDER BY relative_path");
         defer _ = c.sqlite3_finalize(old);
         try bindInt(old, 1, folder_id);
+        var old_count: usize = 0;
         while (true) {
             if (cancel) |token| if (token.load(.acquire)) return error.Cancelled;
             const rc = c.sqlite3_step(old);
@@ -736,14 +741,21 @@ pub const IndexStage = struct {
             if (rc != c.SQLITE_ROW) return error.StepFailed;
             _ = c.sqlite3_reset(copy);
             try bindText(copy, 1, columnSlice(old, 0));
-            for (1..4) |i| try bindInt64(copy, @intCast(i + 1), c.sqlite3_column_int64(old, @intCast(i)));
+            for (1..5) |i| try bindInt64(copy, @intCast(i + 1), c.sqlite3_column_int64(old, @intCast(i)));
             if (c.sqlite3_step(copy) != c.SQLITE_DONE) return error.StageWriteFailed;
+            old_count += 1;
         }
         try execOn(live.handle, "COMMIT;");
         const lookup = try prepareOn(h, "SELECT file_size,mtime_ns,content_hash FROM old_files WHERE relative_path=?");
         errdefer _ = c.sqlite3_finalize(lookup);
         const insert = try prepareOn(h, "INSERT INTO scanned VALUES(?,?,?,?,?,?,?,?)");
-        return .{ .handle = h, .folder_id = folder_id, .revision = revision, .lookup = lookup, .insert = insert };
+        errdefer _ = c.sqlite3_finalize(insert);
+        // 0 = absent from walk, 1 = retained unchanged, 2 = full staged record.
+        // A repeated observation violates CHECK rather than accepting ambiguity.
+        const retain = try prepareOn(h, "UPDATE old_files SET seen=CASE WHEN seen=0 THEN 1 ELSE 3 END WHERE relative_path=?1 AND (?2<0 OR (file_size>=0 AND file_size=?2 AND mtime_ns=?3))");
+        errdefer _ = c.sqlite3_finalize(retain);
+        const observed = try prepareOn(h, "UPDATE old_files SET seen=CASE WHEN seen=0 THEN 2 ELSE 3 END WHERE relative_path=?");
+        return .{ .handle = h, .folder_id = folder_id, .revision = revision, .lookup = lookup, .insert = insert, .retain = retain, .observed = observed, .old_count = old_count };
     }
 
     pub fn deinit(self: *IndexStage) void {
@@ -752,6 +764,8 @@ pub const IndexStage = struct {
         }
         _ = c.sqlite3_finalize(self.lookup);
         _ = c.sqlite3_finalize(self.insert);
+        _ = c.sqlite3_finalize(self.retain);
+        _ = c.sqlite3_finalize(self.observed);
         _ = c.sqlite3_close_v2(self.handle);
     }
 
@@ -775,14 +789,88 @@ pub const IndexStage = struct {
         try bindInt64(self.insert, 7, file.file_size);
         try bindInt64(self.insert, 8, file.mtime_ns);
         if (c.sqlite3_step(self.insert) != c.SQLITE_DONE) return error.StageWriteFailed;
+        if (self.old_count == 0) return;
+        _ = c.sqlite3_reset(self.observed);
+        try bindText(self.observed, 1, file.relative_path);
+        if (c.sqlite3_step(self.observed) != c.SQLITE_DONE) return error.DuplicateRelativePath;
+    }
+
+    /// Retain an already validated size/mtime identity without copying its paths
+    /// or derived metadata. The scan root is supplied once at publication.
+    pub fn retainUnchanged(self: *IndexStage, relative_path: []const u8) !void {
+        if (!try self.retainIdentity(relative_path, -1, 0)) return error.StageReadFailed;
+    }
+
+    /// Fuse the identity lookup and observation for the common unchanged case.
+    pub fn retainIfUnchanged(self: *IndexStage, relative_path: []const u8, file_size: i64, mtime_ns: i64) !bool {
+        if (self.old_count == 0) return false;
+        return self.retainIdentity(relative_path, file_size, mtime_ns);
+    }
+
+    fn retainIdentity(self: *IndexStage, relative_path: []const u8, file_size: i64, mtime_ns: i64) !bool {
+        _ = c.sqlite3_reset(self.retain);
+        try bindText(self.retain, 1, relative_path);
+        try bindInt64(self.retain, 2, file_size);
+        try bindInt64(self.retain, 3, mtime_ns);
+        const rc = c.sqlite3_step(self.retain);
+        if (rc != c.SQLITE_DONE) return error.DuplicateRelativePath;
+        return c.sqlite3_changes(self.handle) == 1;
     }
 
     pub fn publish(self: *IndexStage, cancel: ?*const std.atomic.Value(bool)) !void {
+        return self.publishAtRoot(null, cancel);
+    }
+
+    pub fn publishAtRoot(self: *IndexStage, root: ?[]const u8, cancel: ?*const std.atomic.Value(bool)) !void {
+        self.root = root; // Borrowed only for this synchronous publication call.
+        defer self.root = null;
         _ = c.sqlite3_reset(self.lookup);
         _ = c.sqlite3_reset(self.insert);
+        _ = c.sqlite3_reset(self.retain);
+        _ = c.sqlite3_reset(self.observed);
         if (c.sqlite3_exec(self.handle, "COMMIT;", null, null, null) != c.SQLITE_OK) return error.StageWriteFailed;
         self.read = try prepareOn(self.handle, "SELECT path,relative_path,name,search_text,duration_ms,content_hash,file_size,mtime_ns FROM scanned ORDER BY relative_path");
         return applyFolderIndexRows(self.folder_id, &.{}, self, cancel);
+    }
+
+    fn publishRetained(self: *IndexStage, live: *c.sqlite3, cancel: ?*const std.atomic.Value(bool)) !void {
+        const retained = try prepareOn(self.handle, "SELECT file_id,relative_path FROM old_files WHERE seen=1 ORDER BY relative_path");
+        defer _ = c.sqlite3_finalize(retained);
+        const update = try prepareOn(live, "UPDATE files SET path=?1||?2 WHERE id=?3 AND path!=?1||?2");
+        defer _ = c.sqlite3_finalize(update);
+        const prefix = if (self.root) |root|
+            try std.fmt.allocPrint(std.heap.c_allocator, "{s}{s}", .{ root, if (std.mem.endsWith(u8, root, "/")) "" else "/" })
+        else
+            null;
+        defer if (prefix) |p| std.heap.c_allocator.free(p);
+        if (prefix) |p| try bindText(update, 1, p);
+        while (true) {
+            if (cancel) |token| if (token.load(.acquire)) return error.Cancelled;
+            const rc = c.sqlite3_step(retained);
+            if (rc == c.SQLITE_DONE) break;
+            if (rc != c.SQLITE_ROW) return error.StageReadFailed;
+            if (prefix == null) return error.MissingScanRoot;
+            _ = c.sqlite3_reset(update);
+            try bindText(update, 2, columnSlice(retained, 1));
+            try bindInt64(update, 3, c.sqlite3_column_int64(retained, 0));
+            if (c.sqlite3_step(update) != c.SQLITE_DONE) return error.UpdateFailed;
+        }
+    }
+
+    fn removeMissing(self: *IndexStage, live: *c.sqlite3, cancel: ?*const std.atomic.Value(bool)) !void {
+        const missing = try prepareOn(self.handle, "SELECT file_id FROM old_files WHERE seen=0 ORDER BY relative_path");
+        defer _ = c.sqlite3_finalize(missing);
+        const remove = try prepareOn(live, "DELETE FROM files WHERE id=?");
+        defer _ = c.sqlite3_finalize(remove);
+        while (true) {
+            if (cancel) |token| if (token.load(.acquire)) return error.Cancelled;
+            const rc = c.sqlite3_step(missing);
+            if (rc == c.SQLITE_DONE) break;
+            if (rc != c.SQLITE_ROW) return error.StageReadFailed;
+            _ = c.sqlite3_reset(remove);
+            try bindInt64(remove, 1, c.sqlite3_column_int64(missing, 0));
+            if (c.sqlite3_step(remove) != c.SQLITE_DONE) return error.DeleteFailed;
+        }
     }
 
     fn next(self: *IndexStage) !?ScannedFile {
@@ -819,11 +907,14 @@ fn applyFolderIndexRows(folder_id: i32, files: []const ScannedFile, stage: ?*Ind
     try execOn(h, "BEGIN IMMEDIATE;");
     errdefer execOn(h, "ROLLBACK;") catch {};
     if (stage) |s| if (!std.meta.eql(s.revision, try catalogRevisionOn(h, live.serial))) return error.IndexSnapshotChanged;
-    try execOn(h, "DROP TABLE IF EXISTS temp.ws_seen;");
-    try execOn(h, "CREATE TEMP TABLE ws_seen(relative_path TEXT PRIMARY KEY) WITHOUT ROWID;");
-
-    const seen = try prepareOn(h, "INSERT INTO ws_seen(relative_path) VALUES(?)");
-    defer _ = c.sqlite3_finalize(seen);
+    const seen = if (stage == null) blk: {
+        try execOn(h, "CREATE TEMP TABLE ws_seen(relative_path TEXT PRIMARY KEY) WITHOUT ROWID;");
+        break :blk try prepareOn(h, "INSERT INTO ws_seen(relative_path) VALUES(?)");
+    } else null;
+    defer if (seen) |stmt| {
+        _ = c.sqlite3_finalize(stmt);
+    };
+    if (stage) |s| try s.publishRetained(h, cancel);
     const lookup = try prepareOn(h, "SELECT id,file_size,mtime_ns,path,content_hash FROM files WHERE folder_id=? AND relative_path=?");
     defer _ = c.sqlite3_finalize(lookup);
     const insert = try prepareOn(h, "INSERT INTO files(folder_id,path,relative_path,name,search_text,duration_ms,content_hash,file_size,mtime_ns) VALUES(?,?,?,?,?,?,?,?,?)");
@@ -848,10 +939,11 @@ fn applyFolderIndexRows(folder_id: i32, files: []const ScannedFile, stage: ?*Ind
         const file = if (stage) |s| (try s.next()) orelse break else if (file_index < files.len) files[file_index] else break;
         file_index += 1;
         if (cancel) |token| if (token.load(.acquire)) return error.Cancelled;
-        _ = c.sqlite3_reset(seen);
-        _ = c.sqlite3_clear_bindings(seen);
-        try bindText(seen, 1, file.relative_path);
-        if (c.sqlite3_step(seen) != c.SQLITE_DONE) return error.DuplicateRelativePath;
+        if (seen) |stmt| {
+            _ = c.sqlite3_reset(stmt);
+            try bindText(stmt, 1, file.relative_path);
+            if (c.sqlite3_step(stmt) != c.SQLITE_DONE) return error.DuplicateRelativePath;
+        }
 
         _ = c.sqlite3_reset(lookup);
         _ = c.sqlite3_clear_bindings(lookup);
@@ -927,12 +1019,14 @@ fn applyFolderIndexRows(folder_id: i32, files: []const ScannedFile, stage: ?*Ind
     }
 
     if (cancel) |token| if (token.load(.acquire)) return error.Cancelled;
-    const remove = try prepareOn(h, "DELETE FROM files WHERE folder_id=? AND NOT EXISTS (SELECT 1 FROM ws_seen WHERE ws_seen.relative_path=files.relative_path)");
-    defer _ = c.sqlite3_finalize(remove);
-    try bindInt(remove, 1, folder_id);
-    if (c.sqlite3_step(remove) != c.SQLITE_DONE) return error.DeleteFailed;
-    // Prepared statements still reference the TEMP table until function exit;
-    // it is cleared at the start of the next index operation.
+    if (stage) |s| {
+        try s.removeMissing(h, cancel);
+    } else {
+        const remove = try prepareOn(h, "DELETE FROM files WHERE folder_id=? AND NOT EXISTS (SELECT 1 FROM ws_seen WHERE ws_seen.relative_path=files.relative_path)");
+        defer _ = c.sqlite3_finalize(remove);
+        try bindInt(remove, 1, folder_id);
+        if (c.sqlite3_step(remove) != c.SQLITE_DONE) return error.DeleteFailed;
+    }
     if (cancel) |token| if (token.load(.acquire)) return error.Cancelled;
     try execOn(h, "COMMIT;");
 }
@@ -2144,7 +2238,7 @@ fn retrieveVectors(allocator: std.mem.Allocator, reader: *c.sqlite3, info: Seman
     const read_generation = c.sqlite3_column_int64(state, 0);
     const filtered = filter.folder_id != null or filter.min_duration_ms > 0 or filter.max_duration_ms != 0;
     var use_quantized = mode == .quantized and k <= SQ8_MAX_SEED / 4;
-    if (mode == .auto and !filtered and k <= SQ8_MAX_SEED / 4) {
+    if (mode == .auto and k <= SQ8_MAX_SEED / 4) {
         const counts = try prepareOn(reader, "SELECT embedded_count,quantized_count FROM embedding_models WHERE id=?");
         defer _ = c.sqlite3_finalize(counts);
         try bindInt64(counts, 1, info.model_id);
@@ -2152,6 +2246,21 @@ fn retrieveVectors(allocator: std.mem.Allocator, reader: *c.sqlite3, info: Seman
         const count = c.sqlite3_column_int64(counts, 0);
         // A damaged/incomplete derived index falls back to canonical exact.
         use_quantized = count >= SQ8_MIN_ROWS and count == c.sqlite3_column_int64(counts, 1);
+        if (use_quantized and filtered) {
+            // Stop at the crossover instead of counting a whole matching corpus.
+            // Read only identities, never canonical Float32 payloads, in this probe.
+            const population = try prepareOn(reader, if (filter.folder_id != null)
+                "SELECT COUNT(*) FROM (SELECT f.id FROM files f INDEXED BY idx_files_folder_duration CROSS JOIN file_embeddings e ON e.file_id=f.id WHERE f.folder_id=?2 AND f.duration_ms>=?3 AND f.duration_ms<=?4 AND e.model_id=?1 AND e.source_content_hash=f.content_hash LIMIT ?5)"
+            else
+                "SELECT COUNT(*) FROM (SELECT f.id FROM files f INDEXED BY idx_files_duration CROSS JOIN file_embeddings e ON e.file_id=f.id WHERE f.duration_ms>=?3 AND f.duration_ms<=?4 AND e.model_id=?1 AND e.source_content_hash=f.content_hash AND ?2<0 LIMIT ?5)");
+            defer _ = c.sqlite3_finalize(population);
+            try bindVectorFilter(population, info.model_id, filter);
+            try bindInt(population, 5, SQ8_MIN_ROWS);
+            const rc = c.sqlite3_step(population);
+            try query_cancel.check();
+            if (rc != c.SQLITE_ROW) return error.StepFailed;
+            use_quantized = c.sqlite3_column_int64(population, 0) >= SQ8_MIN_ROWS;
+        }
     }
     // ponytail: SQ8 still scans O(N*d) compact codes. Seed a bounded heap, then
     // use conservative error bounds to score any ambiguous candidates exactly.
@@ -2165,21 +2274,13 @@ fn retrieveVectors(allocator: std.mem.Allocator, reader: *c.sqlite3, info: Seman
     var maximum_error: f32 = 0;
     var discarded_score = -std.math.inf(f32);
     const rounding_margin = vector.dotRoundingMargin(info.dimension);
-    const predicate = " WHERE e.model_id=?1 AND e.source_content_hash=f.content_hash AND (?2<0 OR f.folder_id=?2) AND f.duration_ms>=?3 AND f.duration_ms<=?4";
     const sql = if (use_quantized)
-        "SELECT e.file_id,e.code,f.content_hash FROM semantic_sq8 e CROSS JOIN files f ON f.id=e.file_id" ++ predicate
-    else if (filter.folder_id != null)
-        "SELECT f.id,e.vector,f.content_hash FROM files f INDEXED BY idx_files_folder_duration CROSS JOIN file_embeddings e ON e.file_id=f.id WHERE f.folder_id=?2 AND f.duration_ms>=?3 AND f.duration_ms<=?4 AND e.model_id=?1 AND e.source_content_hash=f.content_hash"
-    else if (filtered)
-        "SELECT f.id,e.vector,f.content_hash FROM files f INDEXED BY idx_files_duration CROSS JOIN file_embeddings e ON e.file_id=f.id" ++ predicate
+        vectorScanSql("semantic_sq8", "code", filter)
     else
-        "SELECT f.id,e.vector,f.content_hash FROM file_embeddings e NOT INDEXED CROSS JOIN files f ON f.id=e.file_id" ++ predicate;
+        vectorScanSql("file_embeddings", "vector", filter);
     const stmt = try prepareOn(reader, sql);
     defer _ = c.sqlite3_finalize(stmt);
-    try bindInt64(stmt, 1, info.model_id);
-    try bindInt(stmt, 2, filter.folder_id orelse -1);
-    try bindInt(stmt, 3, filter.min_duration_ms);
-    try bindInt(stmt, 4, if (filter.max_duration_ms == 0) std.math.maxInt(i32) else filter.max_duration_ms);
+    try bindVectorFilter(stmt, info.model_id, filter);
     const decoded = try allocator.alloc(f32, info.dimension);
     defer allocator.free(decoded);
     while (true) {
@@ -2268,6 +2369,23 @@ fn retrieveVectors(allocator: std.mem.Allocator, reader: *c.sqlite3, info: Seman
         }
     }.lessThan);
     return .{ .model_id = info.model_id, .connection_serial = info.connection_serial, .generation = read_generation, .matches = try allocator.realloc(top, @min(count, k)), .quantized = use_quantized, .scanned = scanned, .reranked = reranked, .refinement_scanned = refinement_scanned };
+}
+
+fn bindVectorFilter(stmt: *c.sqlite3_stmt, model_id: i64, filter: vector.Filter) !void {
+    try bindInt64(stmt, 1, model_id);
+    try bindInt(stmt, 2, filter.folder_id orelse -1);
+    try bindInt(stmt, 3, filter.min_duration_ms);
+    try bindInt(stmt, 4, if (filter.max_duration_ms == 0) std.math.maxInt(i32) else filter.max_duration_ms);
+}
+
+fn vectorScanSql(comptime table: []const u8, comptime payload: []const u8, filter: vector.Filter) [:0]const u8 {
+    const projection = "SELECT f.id,e." ++ payload ++ ",f.content_hash FROM ";
+    const predicate = " WHERE e.model_id=?1 AND e.source_content_hash=f.content_hash AND f.duration_ms>=?3 AND f.duration_ms<=?4";
+    if (filter.folder_id != null)
+        return projection ++ "files f INDEXED BY idx_files_folder_duration CROSS JOIN " ++ table ++ " e ON e.file_id=f.id" ++ predicate ++ " AND f.folder_id=?2";
+    if (filter.min_duration_ms > 0 or filter.max_duration_ms != 0)
+        return projection ++ "files f INDEXED BY idx_files_duration CROSS JOIN " ++ table ++ " e ON e.file_id=f.id" ++ predicate ++ " AND ?2<0";
+    return projection ++ table ++ " e NOT INDEXED CROSS JOIN files f ON f.id=e.file_id" ++ predicate ++ " AND ?2<0";
 }
 
 fn rerankVector(stmt: *c.sqlite3_stmt, id: i32, query: []const f32, decoded: []f32) !f32 {
@@ -3529,6 +3647,25 @@ test "SQ8 indexed retrieval reranks exactly, filters early, maintains identity, 
         try std.testing.expectEqual(@as(usize, 5), filtered.scanned);
         try Hooks.compare(filtered.matches, filtered_sq8.matches);
     }
+    // A broad duration or folder filter must use compact retrieval, while a
+    // small matching population still benefits from exact canonical reads.
+    const broad_duration: vector.Filter = .{ .min_duration_ms = 100, .max_duration_ms = 100_000 };
+    const broad = (try streamActiveVectorTopK(allocator, &query, broad_duration, 20)).?;
+    defer allocator.free(broad.matches);
+    try std.testing.expect(broad.quantized);
+    try Hooks.compare(exact.matches, broad.matches);
+    try execLocked("UPDATE files SET folder_id=7;");
+    const broad_folder: vector.Filter = .{ .folder_id = 7, .max_duration_ms = 100_000 };
+    const scoped = (try streamActiveVectorTopK(allocator, &query, broad_folder, 20)).?;
+    defer allocator.free(scoped.matches);
+    try std.testing.expect(scoped.quantized);
+    try Hooks.compare(exact.matches, scoped.matches);
+    try execLocked("DELETE FROM semantic_sq8 WHERE file_id=1;");
+    const incomplete = (try streamActiveVectorTopK(allocator, &query, broad_folder, 20)).?;
+    defer allocator.free(incomplete.matches);
+    try std.testing.expect(!incomplete.quantized);
+    try Hooks.compare(exact.matches, incomplete.matches);
+    try upsertSemanticEmbedding(allocator, 1, 1, &query);
     // SQLite maintains codes on UPDATE and backup/restore, not application hooks.
     try upsertSemanticEmbedding(allocator, 1, 1, &query);
     // Derived codes from a backup are rebuilt rather than trusted.
@@ -3582,6 +3719,20 @@ test "SQ8 indexed retrieval reranks exactly, filters early, maintains identity, 
     try std.testing.expectEqual(SQ8_MIN_ROWS - 1, dense_sq8.refinement_scanned);
     try std.testing.expectEqual(SQ8_MIN_ROWS - 1, dense_sq8.reranked);
     try Hooks.compare(dense_exact.matches, dense_sq8.matches);
+    const dense_filtered = (try streamActiveVectorTopKWithMode(allocator, &values, broad_folder, 20, .quantized)).?;
+    defer allocator.free(dense_filtered.matches);
+    try std.testing.expectEqual(SQ8_MIN_ROWS - 1, dense_filtered.refinement_scanned);
+    try Hooks.compare(dense_exact.matches, dense_filtered.matches);
+    // Interrupt the bounded population probe itself, before vector retrieval.
+    try execLocked("INSERT INTO files(folder_id,path,relative_path,name,search_text,duration_ms,content_hash,file_size,mtime_ns) VALUES(7,'/probe.wav','probe.wav','probe.wav','probe',1000,999,1,1);");
+    try upsertSemanticEmbedding(allocator, SQ8_MIN_ROWS + 1, 999, &values);
+    request = .{};
+    query_cancel.current = &request;
+    c.sqlite3_progress_handler(reused_reader, 100, Hooks.cancelDuringScan, null);
+    try std.testing.expectError(error.Cancelled, streamActiveVectorTopK(allocator, &values, broad_folder, 20));
+    try std.testing.expect(c.sqlite3_get_autocommit(reused_reader) != 0);
+    try std.testing.expect(c.sqlite3_next_stmt(reused_reader, null) == null);
+    query_cancel.current = null;
 }
 
 test "SQLite progress interrupts only the executing query and leaves the connection usable" {

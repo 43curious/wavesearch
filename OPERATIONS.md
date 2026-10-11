@@ -24,6 +24,13 @@ while interactive search is active and pauses under serious thermal pressure. Ac
 remain unchanged: full-timeline acoustic fingerprints and up to five CLAP
 windows are eventually produced.
 
+Unchanged entries retain compact references to the captured catalog identities;
+only new/changed entries stage full records. After a complete walk, publication
+updates moved paths and removes missing captured IDs in the same transaction.
+The revision guard rejects competing catalog publication or reopen. Full walks
+and per-file open/stat checks remain necessary; OS directory watching is not
+part of this optimization. See [staging measurements](documentation/SEARCH_OPTIMIZATION_RESULTS.md#compact-scan-staging-and-filtered-retrieval-2026-10-11).
+
 `ws_operation_status` reports active/deep/cancel state, discovered files, and
 completed/cancelled/failed operation counters. The macOS app exposes Cancel and
 Deep Re-index actions.
@@ -148,6 +155,10 @@ Settings.
 
 - Waveform analysis streams decoded Float32 PCM in at most 32,768-frame pushes and retains only up to 4,096 stereo extrema plus bounded loudness state. Acoustic fingerprinting separately retains at most five minutes of canonical 16 kHz mono samples (about 19.2 MiB).
 - Semantic exact search uses an independent read-only WAL snapshot, streams one vector at a time, and retains only top K, so indexing and unrelated database operations are not held behind the scan.
+- Automatic semantic retrieval uses SQ8 for at least 4,096 matching embeddings
+  with complete active-model coverage and K <= 1,024. A bounded identity probe
+  decides filtered queries; small matching sets and incomplete coverage use
+  exact. Both paths apply folder/duration/source checks within one snapshot.
 - Fingerprint candidate generation uses 96 selectors and verifies at most 128
   full fingerprints per query.
 - Folder publication remains atomic; the filesystem manifest is staged in

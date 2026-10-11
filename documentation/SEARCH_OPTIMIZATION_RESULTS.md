@@ -154,3 +154,74 @@ WS_CORE_LIBRARY="$PWD/core/zig-out/lib/libwavesearch.a" ./scripts/test-app-lifec
 ```
 
 Remaining acceptance: real CLAP/graded professional judgments, acoustic transformation recall, million-scale final retrieval, large/cold/contended filesystem scans, and end-to-end UI/inference latency. Smaller-cache/layout improvements and synthetic nDCG do not establish those results.
+
+## Compact scan staging and filtered retrieval (2026-10-11)
+
+Issues [#4](https://github.com/43curious/wavesearch/issues/4) and
+[#8](https://github.com/43curious/wavesearch/issues/8) retain the existing schema
+13 and C ABI. No model or canonical representation changes are required.
+
+### Scan staging
+
+The old-identity manifest stores file IDs and observation flags alongside its
+existing relative path, size, mtime, and hash. Normal/fast scans fuse the
+size/mtime lookup and unchanged observation in one SQLite operation. Unchanged
+files add no full record to the `scanned` table; deep scans still inspect every
+file. New/changed files stage their complete records, and observation flags
+reject duplicate relative paths.
+
+Publication validates the captured catalog revision, reconstructs retained
+absolute paths from the root supplied once, and updates only moved paths.
+Unobserved old IDs identify removals, so staged publication needs no second
+seen-path table. All retained updates, full records, and removals commit
+atomically. Generic array publication retains its existing seen-set behavior.
+Cancellation during path updates rolls back moves and removals; cancelled or
+incomplete walks, competing publication, and reopen cannot delete prior data.
+Memory remains bounded by SQLite caches and a single file/row.
+
+Serial paired runs used the original staging path and the final path, identical
+10,000-row long-path fixtures, Zig 0.17.0 `safe`, and local macOS arm64 storage:
+
+| Workload | Before | After |
+| --- | ---: | ---: |
+| Unchanged staging + publication | 21.044 + 23.377 ms | 30.892 + 9.238 ms |
+| Unchanged allocated staging pages | 3,760,128 bytes | 868,352 bytes |
+| Unchanged staging cache page writes | 918 | 0 |
+| 10%-changed staging + publication | 20.658 + 91.275 ms | 30.510 + 76.649 ms |
+| 10%-changed allocated staging pages | 3,756,032 bytes | 1,163,264 bytes |
+| 10%-changed WAL file growth | 6,694,464 bytes | 6,694,464 bytes |
+
+Allocated staging space fell 77% for unchanged and 69% for 10%-changed work.
+Observation updates cost more than the old staging inserts in this fixture;
+publication savings outweigh that difference modestly. The compact manifest
+fits the 2 MiB staging cache, with no cache eviction writes observed. Page
+allocation is logical SQLite space, not a measurement of physical device bytes;
+WAL file growth is also distinct from total bytes written.
+
+The separate production scanner used 10,000 generated tiny WAVs. Initial scan
+measured 5,086.770 → 4,277.274 ms; unchanged scan measured
+1,619.286 → 1,619.075 ms. These single runs do not establish a first-scan speedup
+or a meaningful total unchanged-scan improvement: directory traversal and
+per-file open/stat remain. Peak scan-process RSS was 19,185,664 → 18,399,232
+bytes. Native watch signals, large professional libraries, controlled cold,
+removable, and network storage remain follow-up profiling; normal scans still
+perform complete reconciliation.
+
+### Filtered semantic selection
+
+A filter no longer unconditionally selects exact retrieval. With complete
+active-model SQ8 coverage, an indexed source/model identity probe counts at most
+4,096 matching embeddings. Larger populations use compact codes; smaller ones
+use canonical vectors. Both paths apply the filter before payload retrieval,
+retain exact-score reranking/error bounds, and share one read snapshot. A
+cancelled population probe finalizes and rolls back before reader reuse.
+
+The semantic harness now compares automatic selection against exact, supports
+optional duration bounds, and reports logical vector/code payload bytes. See
+[paired filtered results and reproduction](SEMANTIC_RETRIEVAL_BENCHMARK.md#filtered-population-selection-2026-10-11).
+
+Focused checks cover broad/selective and combined filters, incomplete coverage,
+dense near-duplicates, exact scores/order, cancellation, compact retained
+analysis, mixed additions/changes/removals, root relocation, duplicate
+observations, and rollback during retained path publication. Optional real-CLAP
+and storage-dependent acceptance remain separate from these synthetic checks.
