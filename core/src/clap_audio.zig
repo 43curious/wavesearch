@@ -198,10 +198,47 @@ pub const WindowReader = struct {
         if (output.len != WINDOW_SAMPLES) return error.InvalidWindowSize;
         if (self.next_window >= self.window_count) return false;
         const start = audioWindowStart(self.destination_frames, self.window_count, self.next_window);
-        const input: Input = .{ .file = .{ .handle = &self.file, .io = self.io, .size = self.size } };
-        try renderWindow(self.allocator, input, self.parsed, self.destination_frames, start, output, self.coefficients);
+        try self.readAt(start, output);
         self.next_window += 1;
         return true;
+    }
+
+    /// Render an explicitly planned window without advancing the baseline reader.
+    /// Short sources retain the canonical repeat/zero-pad contract.
+    pub fn readAt(self: *WindowReader, start: usize, output: []f32) !void {
+        try query_cancel.check();
+        if (output.len != WINDOW_SAMPLES) return error.InvalidWindowSize;
+        if (start > self.destination_frames -| WINDOW_SAMPLES) return error.InvalidFrameRange;
+        const input: Input = .{ .file = .{ .handle = &self.file, .io = self.io, .size = self.size } };
+        try renderWindow(self.allocator, input, self.parsed, self.destination_frames, start, output, self.coefficients);
+    }
+
+    /// Whole-source mono energy for the opt-in coverage experiment. Callers
+    /// supply a bounded bin array; decode buffers never grow with duration.
+    pub fn energyBins(self: *WindowReader, bins: []f64) !void {
+        if (bins.len == 0 or bins.len > 4096) return error.InvalidEnergyBins;
+        @memset(bins, 0);
+        const mono = try self.allocator.alloc(f32, 8192);
+        defer self.allocator.free(mono);
+        const scratch = try self.allocator.alloc(u8, SCRATCH_BYTES);
+        defer self.allocator.free(scratch);
+        const input: Input = .{ .file = .{ .handle = &self.file, .io = self.io, .size = self.size } };
+        var offset: usize = 0;
+        while (offset < self.parsed.frames) {
+            const amount = @min(mono.len, self.parsed.frames - offset);
+            try decodeMonoInto(input, self.parsed, offset, mono[0..amount], scratch);
+            for (mono[0..amount], 0..) |value, index| {
+                const bin: usize = @intCast((@as(u128, offset + index) * bins.len) / self.parsed.frames);
+                bins[bin] += @as(f64, value) * value;
+            }
+            offset += amount;
+        }
+        for (bins, 0..) |*value, index| {
+            // ceil boundaries match floor(frame * bin_count / frame_count).
+            const first = (@as(u128, index) * self.parsed.frames + bins.len - 1) / bins.len;
+            const end = (@as(u128, index + 1) * self.parsed.frames + bins.len - 1) / bins.len;
+            if (end > first) value.* /= @as(f64, @floatFromInt(end - first));
+        }
     }
 };
 
@@ -957,6 +994,35 @@ fn putInt(comptime T: type, dest: []u8, value: T, endian: std.builtin.Endian) vo
 
 fn expectNear(expected: f32, actual: f32, tolerance: f32) !void {
     try std.testing.expectApproxEqAbs(expected, actual, tolerance);
+}
+
+test "explicit windows and energy bins preserve canonical decoding" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const samples = try allocator.alloc(f64, 8003);
+    defer allocator.free(samples);
+    @memset(samples, 0.5);
+    const wav = try makeTestWav(allocator, .{ .encoding = .float, .bits = 32, .rate = 8000 }, samples);
+    defer allocator.free(wav);
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "energy.wav", .data = wav });
+    const path = try tmp.dir.realPathFileAlloc(std.testing.io, "energy.wav", allocator);
+    defer allocator.free(path);
+    var reader = try WindowReader.initFile(allocator, std.testing.io, path);
+    defer reader.deinit();
+    var bins: [7]f64 = undefined;
+    try reader.energyBins(&bins);
+    for (bins) |bin| try std.testing.expectApproxEqAbs(@as(f64, 0.25), bin, 1e-12);
+    const planned = try allocator.alloc(f32, WINDOW_SAMPLES);
+    defer allocator.free(planned);
+    const sequential = try allocator.alloc(f32, WINDOW_SAMPLES);
+    defer allocator.free(sequential);
+    try reader.readAt(0, planned);
+    try std.testing.expectEqual(@as(usize, 0), reader.next_window);
+    try std.testing.expect(try reader.next(sequential));
+    try std.testing.expectEqualSlices(f32, planned, sequential);
+    try std.testing.expectError(error.InvalidFrameRange, reader.readAt(1, planned));
+    try std.testing.expectError(error.InvalidEnergyBins, reader.energyBins(&.{}));
 }
 
 test "PCM, IEEE float, extensible, and RIFX encodings preprocess deterministically" {

@@ -92,6 +92,13 @@ pub const Provider = struct {
         defer threaded.deinit();
         var reader = try clap_audio.WindowReader.initFile(self.allocator, threaded.io(), path);
         defer reader.deinit();
+        return self.embedAudioReader(&reader, cancel, output);
+    }
+
+    /// Canonical mean pooling shared by indexing and the coverage baseline.
+    /// The caller owns a fresh reader and keeps its I/O alive through inference.
+    pub fn embedAudioReader(self: *Provider, reader: *clap_audio.WindowReader, cancel: ?cancellation.Token, output: []f32) !void {
+        if (output.len != onnx.EMBEDDING_DIMENSION) return error.InvalidEmbeddingDimension;
         const waveform = try self.allocator.alloc(f32, clap_audio.WINDOW_SAMPLES);
         defer self.allocator.free(waveform);
         var sum: [onnx.EMBEDDING_DIMENSION]f64 = @splat(0);

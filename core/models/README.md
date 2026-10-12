@@ -60,6 +60,11 @@ there are no placeholder embeddings. Built-in decoding supports WAV and
 uncompressed AIFF/AIFC; optional host decoders can provide finite interleaved
 PCM for search-by-example through the additive C ABI.
 
+An opt-in [coverage experiment](../../documentation/SEMANTIC_COVERAGE_EXPERIMENT.md)
+compares that baseline with bounded timestamped segments and energy-aware
+selection. Experimental vectors stay outside persistent catalogs; the default
+representation and its identity remain unchanged.
+
 ## C provider flow
 
 - `ws_clap_load(runtime_library_path, model_dir, intra_op_threads)` verifies,

@@ -162,6 +162,20 @@ pub fn build(b: *std.Build) void {
     const relevance_step = b.step("relevance", "Run the opt-in real-audio CLAP relevance acceptance set");
     relevance_step.dependOn(&run_relevance.step);
 
+    const coverage_mod = b.createModule(.{
+        .root_source_file = b.path("src/coverage_relevance.zig"),
+        .target = target,
+        .optimize = .safe,
+        .link_libc = true,
+    });
+    configureModule(b, coverage_mod);
+    const coverage_exe = b.addExecutable(.{ .name = "coverage-relevance", .root_module = coverage_mod });
+    const run_coverage = b.addRunArtifact(coverage_exe);
+    run_coverage.addPassthruArgs();
+    b.step("coverage-relevance", "Opt-in mean/segment CLAP coverage comparison with held-out judgments").dependOn(&run_coverage.step);
+    // Compile the optional harness in ordinary checks; never load/download models.
+    test_step.dependOn(&coverage_exe.step);
+
     const acoustic_acceptance_mod = b.createModule(.{
         .root_source_file = b.path("src/acoustic_acceptance.zig"),
         .target = target,

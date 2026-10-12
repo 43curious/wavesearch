@@ -5,6 +5,10 @@ current WaveSearch application.
 
 ## Performance and portability
 
+- [Long-recording semantic coverage experiment](SEMANTIC_COVERAGE_EXPERIMENT.md)
+  — opt-in segment/mean comparisons, held-out judgments, localization, costs,
+  and the distinction between window coverage and real retrieval acceptance.
+
 - [Streaming fingerprints, storage, and identity](INDEXING_STORAGE_IDENTITIES.md)
   — bounded extraction, lossless repacking, exact duplicates, migration, and measurements.
 - [Durable refinement queues](REFINEMENT_QUEUES.md) — indexed semantic/acoustic

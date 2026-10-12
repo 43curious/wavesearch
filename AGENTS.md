@@ -40,7 +40,7 @@ Read these references when touching the corresponding behavior:
 | Search ranking, storage, or performance | [Search optimizations](documentation/SEARCH_OPTIMIZATION_RESULTS.md); [benchmarks](BENCHMARKS.md) |
 | Filesystem scans or snapshot publication | [Compact staging](documentation/SEARCH_OPTIMIZATION_RESULTS.md#compact-scan-staging-and-filtered-retrieval-2026-10-11); [Operations](OPERATIONS.md) |
 | Refinement queues, retries, or queue migration | [Durable refinement](documentation/REFINEMENT_QUEUES.md) |
-| CLAP loading, installation, or preprocessing | [Model contract](core/models/README.md); [relevance acceptance](core/models/RELEVANCE.md) |
+| CLAP loading, installation, preprocessing, or semantic coverage | [Model contract](core/models/README.md); [relevance acceptance](core/models/RELEVANCE.md); [coverage experiment](documentation/SEMANTIC_COVERAGE_EXPERIMENT.md) |
 | Fingerprints, duplicate families, or example search | [Acoustic search](ACOUSTIC_SEARCH.md) |
 | Fingerprint storage, decoding, or source hash strength | [Storage and identity](documentation/INDEXING_STORAGE_IDENTITIES.md) |
 | Database lifecycle, backups, recovery, or library moves | [Operations](OPERATIONS.md) |

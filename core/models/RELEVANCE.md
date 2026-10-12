@@ -1,5 +1,12 @@
 # CLAP relevance acceptance
 
+For the opt-in comparison of five-window mean pooling, timestamped segments,
+and energy-rise window selection, see the
+[long-recording coverage experiment](../../documentation/SEMANTIC_COVERAGE_EXPERIMENT.md).
+It has separate tuning/held-out judgments, negative-query and localization
+metrics, and a dependency-free window-planning mode. It does not change the
+application's default representation or establish a new relevance result.
+
 WaveSearch's Phase 2 relevance gate uses a pinned subset of the
 [ESC-50 dataset](https://github.com/karolpiczak/ESC-50), commit
 `33c8ce9eb2cf0b1c2f8bcf322eb349b6be34dbb6`. ESC-50 is distributed under

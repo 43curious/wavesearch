@@ -12,6 +12,12 @@ changelog/agent documentation added afterward.
 
 ### Added
 
+- Opt-in long-recording CLAP coverage experiment comparing canonical five-window
+  mean pooling with bounded timestamped segments and energy-rise selection.
+  Includes held-out graded evaluation, negatives/localization/cost reporting,
+  and controlled fixture preparation from installed ESC-50 audio. Default
+  indexing remains unchanged pending real-library relevance acceptance.
+
 - Explicit source hash kind/algorithm inspection and cancellable complete-byte
   duplicate verification through additive C APIs. Schema 14 labels historical
   identities unknown until a successful scan refreshes them.
