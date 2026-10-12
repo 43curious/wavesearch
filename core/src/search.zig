@@ -27,6 +27,7 @@ pub fn indexFolder(allocator: std.mem.Allocator, folder_id: i32, path: []const u
 }
 
 pub fn indexFolderWithOptions(allocator: std.mem.Allocator, folder_id: i32, path: []const u8, options: IndexOptions) !void {
+    if (options.deep and options.fast) return error.InvalidIndexMode;
     // The expensive and failure-prone filesystem/audio scan happens before the
     // write transaction. WAL readers see an atomic old-or-new catalog throughout
     // publication, without waiting for the indexing connection's transaction.
@@ -84,7 +85,7 @@ pub fn indexFolderWithOptions(allocator: std.mem.Allocator, folder_id: i32, path
                 audio.appendMetadataTextFromFileLimit(allocator, &text, reader, 2 * 1024 * 1024) catch {};
         }
         const duration_ms = audio.durationMsFromFile(reader, full_path.items) catch 0;
-        const content_hash = try contentHash(reader, options.deep, options.fast, file_size, mtime_ns, options.cancel);
+        const identity = try file_identity.compute(reader, if (options.deep) .deep else if (options.fast) .fast else .normal, file_size, mtime_ns, options.cancel);
         // Reusing a descriptor must not hide a file replaced at its path
         // while we inspected it, even if its size and mtime were preserved.
         const current = std.Io.Dir.cwd().statFile(io, full_path.items, .{}) catch return error.FileChangedDuringScan;
@@ -98,7 +99,9 @@ pub fn indexFolderWithOptions(allocator: std.mem.Allocator, folder_id: i32, path
             .name = entry.basename,
             .search_text = text.items,
             .duration_ms = duration_ms,
-            .content_hash = content_hash,
+            .content_hash = identity.value,
+            .identity_kind = identity.kind,
+            .hash_algorithm = identity.algorithm,
             .file_size = file_size,
             .mtime_ns = mtime_ns,
         });
@@ -692,61 +695,10 @@ fn appendNormalizedPathText(allocator: std.mem.Allocator, out: *std.ArrayList(u8
     if (out.items.len > 0 and out.items[out.items.len - 1] == ' ') _ = out.pop();
 }
 
-pub const FAST_HASH_BLOCK_SIZE: u64 = 64 * 1024;
-pub const FAST_HASH_MAX_READ: u64 = FAST_HASH_BLOCK_SIZE * 5;
-
-pub fn fastHashSampleOffsets(file_size: u64, storage: *[5]u64) []const u64 {
-    if (file_size <= FAST_HASH_MAX_READ) return storage[0..0];
-    const span = file_size - FAST_HASH_BLOCK_SIZE;
-    storage.* = .{ 0, span / 4, span / 2, span - span / 4, span };
-    return storage;
-}
-
-fn contentHash(reader: audio_file.Reader, deep: bool, fast: bool, expected_size: i64, expected_mtime_ns: i64, cancel: ?*const std.atomic.Value(bool)) !i64 {
-    if (deep and fast) return error.InvalidIndexMode;
-    const stat = try reader.handle.stat(reader.io);
-    if (stat.size != expected_size or stat.mtime.nanoseconds != expected_mtime_ns) return error.FileChangedDuringScan;
-    var hasher = std.hash.Wyhash.init(0);
-    var size_buf: [8]u8 = undefined;
-    std.mem.writeInt(u64, &size_buf, stat.size, .little);
-    hasher.update(&size_buf);
-    var buf: [FAST_HASH_BLOCK_SIZE]u8 = undefined;
-    if (deep or (!fast and stat.size <= 16 * 1024 * 1024) or (fast and stat.size <= FAST_HASH_MAX_READ)) {
-        var offset: u64 = 0;
-        while (offset < stat.size) {
-            if (cancel) |token| if (token.load(.acquire)) return error.Cancelled;
-            const wanted: usize = @intCast(@min(@as(u64, buf.len), stat.size - offset));
-            const n = try reader.readAll(buf[0..wanted], offset);
-            if (n != wanted) return error.FileChangedDuringScan;
-            hasher.update(buf[0..n]);
-            offset += n;
-        }
-    } else if (fast) {
-        var offset_storage: [5]u64 = undefined;
-        for (fastHashSampleOffsets(stat.size, &offset_storage)) |offset| {
-            if (cancel) |token| if (token.load(.acquire)) return error.Cancelled;
-            std.mem.writeInt(u64, &size_buf, offset, .little);
-            hasher.update(&size_buf);
-            const n = try reader.readAll(&buf, offset);
-            if (n != buf.len) return error.FileChangedDuringScan;
-            hasher.update(&buf);
-        }
-    } else {
-        const first = try reader.readAll(&buf, 0);
-        if (first != buf.len) return error.FileChangedDuringScan;
-        hasher.update(buf[0..first]);
-        const last = try reader.readAll(&buf, stat.size - buf.len);
-        if (last != buf.len) return error.FileChangedDuringScan;
-        hasher.update(buf[0..last]);
-    }
-    const after = try reader.handle.stat(reader.io);
-    if (after.size != stat.size or after.mtime.nanoseconds != stat.mtime.nanoseconds) return error.FileChangedDuringScan;
-    const raw_digest = hasher.final() & 0x7fff_ffff_ffff_ffff;
-    const digest: i64 = @intCast(if (raw_digest == 0) 1 else raw_digest);
-    // Negative values explicitly mark bounded fast identities as provisional;
-    // legacy exact-hash duplicate APIs must not treat them as proof of equality.
-    return if (fast) -digest else digest;
-}
+const file_identity = @import("file_identity.zig");
+pub const FAST_HASH_BLOCK_SIZE = file_identity.FAST_HASH_BLOCK_SIZE;
+pub const FAST_HASH_MAX_READ = file_identity.FAST_HASH_MAX_READ;
+pub const fastHashSampleOffsets = file_identity.fastHashSampleOffsets;
 
 fn isAudioFile(name: []const u8) bool {
     for (AUDIO_EXTENSIONS) |ext| if (std.ascii.endsWithIgnoreCase(name, ext)) return true;

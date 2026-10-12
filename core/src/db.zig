@@ -17,7 +17,12 @@ fn queryProgress(_: ?*anyopaque) callconv(.c) c_int {
 pub const c = @import("c");
 extern fn ws_sqlite_transient() c.sqlite3_destructor_type;
 
-pub const SCHEMA_VERSION: i32 = 13;
+pub const SCHEMA_VERSION: i32 = 14;
+pub const Testing = if (builtin.is_test) struct {
+    pub threadlocal var before_fingerprint_repack_publish: ?*const fn () void = null;
+} else struct {};
+const file_identity = @import("file_identity.zig");
+const storage_schema = @import("storage_schema.zig");
 pub const PAGE_SIZE: usize = 16384;
 pub const CACHE_KIB: usize = 8192;
 const QUANTIZED_BACKFILL_SQL = "INSERT OR REPLACE INTO semantic_sq8 SELECT model_id,file_id,source_content_hash,ws_sq8_v1(vector) FROM file_embeddings;";
@@ -138,6 +143,8 @@ pub const ScannedFile = struct {
     content_hash: i64,
     file_size: i64,
     mtime_ns: i64,
+    identity_kind: file_identity.Kind = .unknown,
+    hash_algorithm: file_identity.Algorithm = .unknown,
 };
 
 pub const Candidate = @import("types.zig").SearchCandidate;
@@ -148,6 +155,8 @@ pub const FileInfo = struct {
     mtime_ns: i64,
     content_hash: i64,
     has_waveform: bool,
+    identity_kind: file_identity.Kind,
+    hash_algorithm: file_identity.Algorithm,
 };
 
 pub const LegacyWaveformIdentity = struct {
@@ -351,11 +360,21 @@ fn migrateLocked() !void {
     const version = try userVersionLocked();
     if (version > SCHEMA_VERSION) return error.FutureSchemaVersion;
     if (version == SCHEMA_VERSION) return validateRestoreSchema(try handleLocked(), version, true);
+    if (version == 13) {
+        try execLocked("BEGIN IMMEDIATE;");
+        errdefer execLocked("ROLLBACK;") catch {};
+        try createStorageSchemaLocked();
+        try execLocked("PRAGMA user_version=14;");
+        try validateRestoreSchema(try handleLocked(), SCHEMA_VERSION, true);
+        try execLocked("COMMIT;");
+        return;
+    }
     if (version == 12) {
         try execLocked("BEGIN IMMEDIATE;");
         errdefer execLocked("ROLLBACK;") catch {};
         try execLocked(refinement_schema.create);
-        try execLocked("PRAGMA user_version=13;");
+        try createStorageSchemaLocked();
+        try execLocked("PRAGMA user_version=14;");
         try validateRestoreSchema(try handleLocked(), SCHEMA_VERSION, true);
         try execLocked("COMMIT;");
         return;
@@ -385,7 +404,8 @@ fn migrateLocked() !void {
         if (version == 10) try execLocked(QUANTIZED_INDEX_SQL);
         try execLocked(optimization_schema.create);
         try execLocked(refinement_schema.create);
-        try execLocked("PRAGMA user_version=13;");
+        try createStorageSchemaLocked();
+        try execLocked("PRAGMA user_version=14;");
         try validateRestoreSchema(try handleLocked(), SCHEMA_VERSION, true);
         try execLocked("COMMIT;");
         return;
@@ -434,8 +454,27 @@ fn migrateLocked() !void {
     try execLocked(QUANTIZED_INDEX_SQL);
     try execLocked(optimization_schema.create);
     try execLocked(refinement_schema.create);
-    try execLocked("PRAGMA user_version=13;");
+    try createStorageSchemaLocked();
+    try execLocked("PRAGMA user_version=14;");
     try execLocked("COMMIT;");
+}
+
+fn addStorageColumnLocked(comptime table: []const u8, comptime name: []const u8, sql: [*:0]const u8) !void {
+    var stmt: ?*c.sqlite3_stmt = null;
+    const rc = c.sqlite3_prepare_v2(try handleLocked(), "SELECT " ++ name ++ " FROM " ++ table ++ " LIMIT 0", -1, &stmt, null);
+    defer if (stmt) |value| {
+        _ = c.sqlite3_finalize(value);
+    };
+    if (rc == c.SQLITE_OK) return;
+    if (rc != c.SQLITE_ERROR) return error.PrepareFailed;
+    try execLocked(sql);
+}
+
+fn createStorageSchemaLocked() !void {
+    try addStorageColumnLocked("files", "identity_kind", "ALTER TABLE files ADD COLUMN identity_kind INTEGER NOT NULL DEFAULT 0 CHECK(identity_kind IN(0,1,2,3));");
+    try addStorageColumnLocked("files", "hash_algorithm", "ALTER TABLE files ADD COLUMN hash_algorithm INTEGER NOT NULL DEFAULT 0 CHECK(hash_algorithm IN(0,1));");
+    try addStorageColumnLocked("file_fingerprints", "storage_version", "ALTER TABLE file_fingerprints ADD COLUMN storage_version INTEGER NOT NULL DEFAULT 0 CHECK(storage_version IN(0,1));");
+    try execLocked(storage_schema.create);
 }
 
 fn createDerivedSchemaLocked() !void {
@@ -724,13 +763,13 @@ pub const IndexStage = struct {
         errdefer _ = c.sqlite3_close_v2(h);
         // ponytail: disposable staging needs no crash recovery; the live index
         // still publishes atomically with its normal WAL transaction.
-        if (c.sqlite3_exec(h, "PRAGMA journal_mode=OFF; PRAGMA cache_size=-2048; PRAGMA temp_store=FILE; CREATE TABLE old_files(relative_path TEXT PRIMARY KEY,file_size INTEGER,mtime_ns INTEGER,content_hash INTEGER,file_id INTEGER NOT NULL,seen INTEGER NOT NULL DEFAULT 0 CHECK(seen IN (0,1,2))) WITHOUT ROWID; CREATE TABLE scanned(relative_path TEXT PRIMARY KEY,path TEXT,name TEXT,search_text TEXT,duration_ms INTEGER,content_hash INTEGER,file_size INTEGER,mtime_ns INTEGER) WITHOUT ROWID; BEGIN;", null, null, null) != c.SQLITE_OK) return error.StageOpenFailed;
-        const copy = try prepareOn(h, "INSERT INTO old_files(relative_path,file_size,mtime_ns,content_hash,file_id) VALUES(?,?,?,?,?)");
+        if (c.sqlite3_exec(h, "PRAGMA journal_mode=OFF; PRAGMA cache_size=-2048; PRAGMA temp_store=FILE; CREATE TABLE old_files(relative_path TEXT PRIMARY KEY,file_size INTEGER,mtime_ns INTEGER,content_hash INTEGER,file_id INTEGER NOT NULL,identity_kind INTEGER,hash_algorithm INTEGER,seen INTEGER NOT NULL DEFAULT 0 CHECK(seen IN (0,1,2))) WITHOUT ROWID; CREATE TABLE scanned(relative_path TEXT PRIMARY KEY,path TEXT,name TEXT,search_text TEXT,duration_ms INTEGER,content_hash INTEGER,file_size INTEGER,mtime_ns INTEGER,identity_kind INTEGER,hash_algorithm INTEGER) WITHOUT ROWID; BEGIN;", null, null, null) != c.SQLITE_OK) return error.StageOpenFailed;
+        const copy = try prepareOn(h, "INSERT INTO old_files(relative_path,file_size,mtime_ns,content_hash,file_id,identity_kind,hash_algorithm) VALUES(?,?,?,?,?,?,?)");
         defer _ = c.sqlite3_finalize(copy);
         try execOn(live.handle, "BEGIN DEFERRED;");
         errdefer execOn(live.handle, "ROLLBACK;") catch {};
         const revision = try catalogRevisionOn(live.handle, live.serial);
-        const old = try prepareOn(live.handle, "SELECT relative_path,file_size,mtime_ns,content_hash,id FROM files WHERE folder_id=? ORDER BY relative_path");
+        const old = try prepareOn(live.handle, "SELECT relative_path,file_size,mtime_ns,content_hash,id,identity_kind,hash_algorithm FROM files WHERE folder_id=? ORDER BY relative_path");
         defer _ = c.sqlite3_finalize(old);
         try bindInt(old, 1, folder_id);
         var old_count: usize = 0;
@@ -741,18 +780,18 @@ pub const IndexStage = struct {
             if (rc != c.SQLITE_ROW) return error.StepFailed;
             _ = c.sqlite3_reset(copy);
             try bindText(copy, 1, columnSlice(old, 0));
-            for (1..5) |i| try bindInt64(copy, @intCast(i + 1), c.sqlite3_column_int64(old, @intCast(i)));
+            for (1..7) |i| try bindInt64(copy, @intCast(i + 1), c.sqlite3_column_int64(old, @intCast(i)));
             if (c.sqlite3_step(copy) != c.SQLITE_DONE) return error.StageWriteFailed;
             old_count += 1;
         }
         try execOn(live.handle, "COMMIT;");
         const lookup = try prepareOn(h, "SELECT file_size,mtime_ns,content_hash FROM old_files WHERE relative_path=?");
         errdefer _ = c.sqlite3_finalize(lookup);
-        const insert = try prepareOn(h, "INSERT INTO scanned VALUES(?,?,?,?,?,?,?,?)");
+        const insert = try prepareOn(h, "INSERT INTO scanned VALUES(?,?,?,?,?,?,?,?,?,?)");
         errdefer _ = c.sqlite3_finalize(insert);
         // 0 = absent from walk, 1 = retained unchanged, 2 = full staged record.
         // A repeated observation violates CHECK rather than accepting ambiguity.
-        const retain = try prepareOn(h, "UPDATE old_files SET seen=CASE WHEN seen=0 THEN 1 ELSE 3 END WHERE relative_path=?1 AND (?2<0 OR (file_size>=0 AND file_size=?2 AND mtime_ns=?3))");
+        const retain = try prepareOn(h, "UPDATE old_files SET seen=CASE WHEN seen=0 THEN 1 ELSE 3 END WHERE relative_path=?1 AND (?2<0 OR (file_size>=0 AND file_size=?2 AND mtime_ns=?3 AND identity_kind!=0 AND hash_algorithm=1))");
         errdefer _ = c.sqlite3_finalize(retain);
         const observed = try prepareOn(h, "UPDATE old_files SET seen=CASE WHEN seen=0 THEN 2 ELSE 3 END WHERE relative_path=?");
         return .{ .handle = h, .folder_id = folder_id, .revision = revision, .lookup = lookup, .insert = insert, .retain = retain, .observed = observed, .old_count = old_count };
@@ -788,6 +827,8 @@ pub const IndexStage = struct {
         try bindInt64(self.insert, 6, file.content_hash);
         try bindInt64(self.insert, 7, file.file_size);
         try bindInt64(self.insert, 8, file.mtime_ns);
+        try bindInt(self.insert, 9, @intCast(@backingInt(file.identity_kind)));
+        try bindInt(self.insert, 10, @intCast(@backingInt(file.hash_algorithm)));
         if (c.sqlite3_step(self.insert) != c.SQLITE_DONE) return error.StageWriteFailed;
         if (self.old_count == 0) return;
         _ = c.sqlite3_reset(self.observed);
@@ -829,7 +870,7 @@ pub const IndexStage = struct {
         _ = c.sqlite3_reset(self.retain);
         _ = c.sqlite3_reset(self.observed);
         if (c.sqlite3_exec(self.handle, "COMMIT;", null, null, null) != c.SQLITE_OK) return error.StageWriteFailed;
-        self.read = try prepareOn(self.handle, "SELECT path,relative_path,name,search_text,duration_ms,content_hash,file_size,mtime_ns FROM scanned ORDER BY relative_path");
+        self.read = try prepareOn(self.handle, "SELECT path,relative_path,name,search_text,duration_ms,content_hash,file_size,mtime_ns,identity_kind,hash_algorithm FROM scanned ORDER BY relative_path");
         return applyFolderIndexRows(self.folder_id, &.{}, self, cancel);
     }
 
@@ -878,7 +919,7 @@ pub const IndexStage = struct {
         const rc = c.sqlite3_step(stmt);
         if (rc == c.SQLITE_DONE) return null;
         if (rc != c.SQLITE_ROW) return error.StageReadFailed;
-        return .{ .path = columnSlice(stmt, 0), .relative_path = columnSlice(stmt, 1), .name = columnSlice(stmt, 2), .search_text = columnSlice(stmt, 3), .duration_ms = c.sqlite3_column_int(stmt, 4), .content_hash = c.sqlite3_column_int64(stmt, 5), .file_size = c.sqlite3_column_int64(stmt, 6), .mtime_ns = c.sqlite3_column_int64(stmt, 7) };
+        return .{ .path = columnSlice(stmt, 0), .relative_path = columnSlice(stmt, 1), .name = columnSlice(stmt, 2), .search_text = columnSlice(stmt, 3), .duration_ms = c.sqlite3_column_int(stmt, 4), .content_hash = c.sqlite3_column_int64(stmt, 5), .file_size = c.sqlite3_column_int64(stmt, 6), .mtime_ns = c.sqlite3_column_int64(stmt, 7), .identity_kind = std.enums.fromInt(file_identity.Kind, c.sqlite3_column_int(stmt, 8)) orelse return error.InvalidStoredIdentity, .hash_algorithm = std.enums.fromInt(file_identity.Algorithm, c.sqlite3_column_int(stmt, 9)) orelse return error.InvalidStoredIdentity };
     }
 };
 
@@ -925,6 +966,8 @@ fn applyFolderIndexRows(folder_id: i32, files: []const ScannedFile, stage: ?*Ind
     defer _ = c.sqlite3_finalize(update_preserving_waveform);
     const update_path = try prepareOn(h, "UPDATE files SET path=? WHERE id=?");
     defer _ = c.sqlite3_finalize(update_path);
+    const update_identity = try prepareOn(h, "UPDATE files SET identity_kind=?1,hash_algorithm=?2 WHERE id=?3 AND (identity_kind!=?1 OR hash_algorithm!=?2)");
+    defer _ = c.sqlite3_finalize(update_identity);
     const invalidate_embeddings = try prepareOn(h, "DELETE FROM file_embeddings WHERE file_id=?");
     defer _ = c.sqlite3_finalize(invalidate_embeddings);
     const invalidate_failures = try prepareOn(h, "DELETE FROM embedding_failures WHERE file_id=?");
@@ -950,8 +993,10 @@ fn applyFolderIndexRows(folder_id: i32, files: []const ScannedFile, stage: ?*Ind
         try bindInt(lookup, 1, folder_id);
         try bindText(lookup, 2, file.relative_path);
         const lookup_rc = c.sqlite3_step(lookup);
+        var published_id: i64 = 0;
         if (lookup_rc == c.SQLITE_ROW) {
             const id = c.sqlite3_column_int64(lookup, 0);
+            published_id = id;
             const old_size = c.sqlite3_column_int64(lookup, 1);
             const old_mtime = c.sqlite3_column_int64(lookup, 2);
             const old_hash = c.sqlite3_column_int64(lookup, 4);
@@ -1015,7 +1060,13 @@ fn applyFolderIndexRows(folder_id: i32, files: []const ScannedFile, stage: ?*Ind
             try bindInt64(insert, 8, file.file_size);
             try bindInt64(insert, 9, file.mtime_ns);
             if (c.sqlite3_step(insert) != c.SQLITE_DONE) return error.InsertFailed;
+            published_id = c.sqlite3_last_insert_rowid(h);
         } else return error.StepFailed;
+        _ = c.sqlite3_reset(update_identity);
+        try bindInt(update_identity, 1, @intCast(@backingInt(file.identity_kind)));
+        try bindInt(update_identity, 2, @intCast(@backingInt(file.hash_algorithm)));
+        try bindInt64(update_identity, 3, published_id);
+        if (c.sqlite3_step(update_identity) != c.SQLITE_DONE) return error.UpdateFailed;
     }
 
     if (cancel) |token| if (token.load(.acquire)) return error.Cancelled;
@@ -1305,13 +1356,213 @@ pub fn removeFolder(folder_id: i32) !void {
 
 pub fn duplicateCount(content_hash: i64) !c_int {
     if (content_hash <= 0) return 0;
+    const group = blk: {
+        lock();
+        defer mutex.unlock();
+        const revision = try catalogRevisionLocked();
+        const stmt = try prepareLocked("SELECT id,identity_kind,hash_algorithm FROM files WHERE content_hash=? ORDER BY id");
+        defer _ = c.sqlite3_finalize(stmt);
+        try bindInt64(stmt, 1, content_hash);
+        var count: u32 = 0;
+        var first_id: i32 = 0;
+        while (true) {
+            try query_cancel.check();
+            const rc = c.sqlite3_step(stmt);
+            if (rc == c.SQLITE_DONE) break;
+            if (rc != c.SQLITE_ROW) return error.StepFailed;
+            if (c.sqlite3_column_int(stmt, 1) != @backingInt(file_identity.Kind.full) or c.sqlite3_column_int(stmt, 2) != @backingInt(file_identity.Algorithm.wyhash_size_le64_v1)) return 0;
+            if (count == 0) first_id = c.sqlite3_column_int(stmt, 0);
+            count += 1;
+        }
+        break :blk .{ .id = first_id, .count = count, .revision = revision };
+    };
+    if (group.count == 0) return 0;
+    const verified = try verifyDuplicates(group.id);
+    if (!std.meta.eql(group.revision, verified.revision)) return error.ConcurrentCatalogChange;
+    if (verified.verified_count != group.count) return 0;
+    return @intCast(verified.verified_count);
+}
+
+pub fn fileIdentity(file_id: i32) !file_identity.Recorded {
     lock();
     defer mutex.unlock();
-    const stmt = try prepareLocked("SELECT COUNT(*) FROM files WHERE content_hash=? AND content_hash!=0");
+    const stmt = try prepareLocked("SELECT content_hash,file_size,mtime_ns,identity_kind,hash_algorithm FROM files WHERE id=?");
     defer _ = c.sqlite3_finalize(stmt);
-    try bindInt64(stmt, 1, content_hash);
-    if (c.sqlite3_step(stmt) != c.SQLITE_ROW) return error.StepFailed;
-    return c.sqlite3_column_int(stmt, 0);
+    try bindInt(stmt, 1, file_id);
+    const rc = c.sqlite3_step(stmt);
+    if (rc == c.SQLITE_DONE) return error.FileNotFound;
+    if (rc != c.SQLITE_ROW) return error.StepFailed;
+    return columnIdentity(stmt, 0);
+}
+
+fn columnIdentity(stmt: *c.sqlite3_stmt, start: c_int) !file_identity.Recorded {
+    return .{
+        .hash = c.sqlite3_column_int64(stmt, start),
+        .size = c.sqlite3_column_int64(stmt, start + 1),
+        .mtime_ns = c.sqlite3_column_int64(stmt, start + 2),
+        .kind = std.enums.fromInt(file_identity.Kind, c.sqlite3_column_int(stmt, start + 3)) orelse return error.InvalidStoredIdentity,
+        .algorithm = std.enums.fromInt(file_identity.Algorithm, c.sqlite3_column_int(stmt, start + 4)) orelse return error.InvalidStoredIdentity,
+    };
+}
+
+// Independent read-only WAL snapshot. A final catalog revision check rejects
+// close/reopen or publication during filesystem I/O; no live DB mutex is held.
+const VerificationConnection = struct {
+    handle: *c.sqlite3,
+    serial: u64,
+
+    fn init() !VerificationConnection {
+        const identity = blk: {
+            lock();
+            defer mutex.unlock();
+            _ = try handleLocked();
+            break :blk .{ .path = try std.heap.c_allocator.dupeSentinel(u8, db_path_owned.?, 0), .serial = connection_serial };
+        };
+        defer std.heap.c_allocator.free(identity.path);
+        var opened: ?*c.sqlite3 = null;
+        if (c.sqlite3_open_v2(identity.path.ptr, &opened, c.SQLITE_OPEN_READONLY | c.SQLITE_OPEN_FULLMUTEX, null) != c.SQLITE_OK) {
+            if (opened) |handle| _ = c.sqlite3_close_v2(handle);
+            return error.DbOpenFailed;
+        }
+        const h = opened orelse return error.DbOpenFailed;
+        errdefer _ = c.sqlite3_close_v2(h);
+        try registerVectorFunctions(h);
+        if (c.sqlite3_busy_timeout(h, 5000) != c.SQLITE_OK) return error.PragmaFailed;
+        try execOn(h, "PRAGMA query_only=ON; PRAGMA cache_size=-2048; BEGIN DEFERRED;");
+        c.sqlite3_progress_handler(h, 1000, queryProgress, null);
+        return .{ .handle = h, .serial = identity.serial };
+    }
+
+    fn deinit(self: VerificationConnection) void {
+        c.sqlite3_progress_handler(self.handle, 0, null, null);
+        _ = c.sqlite3_exec(self.handle, "ROLLBACK;", null, null, null);
+        _ = c.sqlite3_close_v2(self.handle);
+    }
+};
+
+pub const DuplicateVerification = struct {
+    candidate_count: u32 = 0,
+    verified_count: u32 = 0,
+    bytes_read: u64 = 0,
+    revision: [2]u64 = @splat(0),
+};
+
+pub fn verifyDuplicates(file_id: i32) !DuplicateVerification {
+    try query_cancel.check();
+    const connection = try VerificationConnection.init();
+    defer connection.deinit();
+    var result = DuplicateVerification{ .revision = try catalogRevisionOn(connection.handle, connection.serial) };
+    const previous_counter = @import("audio_file.zig").bytes_read;
+    @import("audio_file.zig").bytes_read = &result.bytes_read;
+    defer {
+        @import("audio_file.zig").bytes_read = previous_counter;
+        if (previous_counter) |counter| counter.* += result.bytes_read;
+    }
+    var threaded: std.Io.Threaded = .init(std.heap.c_allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    const anchor_stmt = try prepareOn(connection.handle, "SELECT path,content_hash,file_size,mtime_ns,identity_kind,hash_algorithm FROM files WHERE id=?");
+    defer _ = c.sqlite3_finalize(anchor_stmt);
+    try bindInt(anchor_stmt, 1, file_id);
+    const rc = c.sqlite3_step(anchor_stmt);
+    if (rc == c.SQLITE_DONE) return error.FileNotFound;
+    if (rc != c.SQLITE_ROW) {
+        try query_cancel.check();
+        return error.StepFailed;
+    }
+    const recorded = try columnIdentity(anchor_stmt, 1);
+    var anchor = try file_identity.Source.init(io, columnSlice(anchor_stmt, 0), recorded);
+    defer anchor.deinit();
+    try anchor.validateHash();
+    const candidates = try prepareOn(connection.handle, "SELECT id,path,content_hash,file_size,mtime_ns,identity_kind,hash_algorithm FROM files WHERE content_hash=?1 AND identity_kind=?2 AND hash_algorithm=?3 AND file_size=?4 ORDER BY id");
+    defer _ = c.sqlite3_finalize(candidates);
+    try bindInt64(candidates, 1, recorded.hash);
+    try bindInt(candidates, 2, @intCast(@backingInt(recorded.kind)));
+    try bindInt(candidates, 3, @intCast(@backingInt(recorded.algorithm)));
+    try bindInt64(candidates, 4, recorded.size);
+    while (true) {
+        try query_cancel.check();
+        const step = c.sqlite3_step(candidates);
+        if (step == c.SQLITE_DONE) break;
+        if (step != c.SQLITE_ROW) {
+            try query_cancel.check();
+            return error.StepFailed;
+        }
+        result.candidate_count += 1;
+        if (c.sqlite3_column_int(candidates, 0) == file_id) {
+            result.verified_count += 1;
+            continue;
+        }
+        var source = try file_identity.Source.init(io, columnSlice(candidates, 1), try columnIdentity(candidates, 2));
+        defer source.deinit();
+        if (try anchor.equals(&source)) result.verified_count += 1;
+    }
+    try anchor.confirm();
+    try query_cancel.check();
+    lock();
+    defer mutex.unlock();
+    if (!std.meta.eql(result.revision, try catalogRevisionLocked())) return error.ConcurrentCatalogChange;
+    return result;
+}
+
+pub const FingerprintStorageResult = struct { processed_count: u32 = 0, bytes_before: u64 = 0, bytes_after: u64 = 0 };
+
+/// Repack outside the mutation mutex; publication guards the captured source,
+/// original bytes, storage revision and connection. A single SQL update is atomic.
+pub fn repackFingerprints(allocator: std.mem.Allocator, max_files: usize) !FingerprintStorageResult {
+    if (max_files == 0 or max_files > 1024) return error.InvalidBatchSize;
+    var result = FingerprintStorageResult{};
+    for (0..max_files) |_| {
+        try query_cancel.check();
+        const row = blk: {
+            lock();
+            defer mutex.unlock();
+            const stmt = try prepareLocked("SELECT algorithm_id,file_id,source_content_hash,token_count,landmarks FROM file_fingerprints INDEXED BY idx_fingerprint_storage_pending WHERE storage_version=0 ORDER BY algorithm_id,file_id LIMIT 1");
+            defer _ = c.sqlite3_finalize(stmt);
+            const rc = c.sqlite3_step(stmt);
+            if (rc == c.SQLITE_DONE) break;
+            if (rc != c.SQLITE_ROW) {
+                try query_cancel.check();
+                return error.StepFailed;
+            }
+            const ptr = c.sqlite3_column_blob(stmt, 4) orelse return error.InvalidFingerprintBlob;
+            const len: usize = @intCast(c.sqlite3_column_bytes(stmt, 4));
+            if (len == 0 or len > fingerprint.MAX_LANDMARKS * 11 + 32) return error.InvalidFingerprintBlob;
+            break :blk .{ .serial = connection_serial, .algorithm_id = c.sqlite3_column_int64(stmt, 0), .file_id = c.sqlite3_column_int(stmt, 1), .source_hash = c.sqlite3_column_int64(stmt, 2), .count = c.sqlite3_column_int64(stmt, 3), .bytes = try allocator.dupe(u8, @as([*]const u8, @ptrCast(ptr))[0..len]) };
+        };
+        defer allocator.free(row.bytes);
+        const landmarks = try fingerprint.deserialize(allocator, row.bytes);
+        defer allocator.free(landmarks);
+        if (landmarks.len != row.count) return error.InvalidFingerprintBlob;
+        const compact = try fingerprint.serialize(allocator, landmarks);
+        defer allocator.free(compact);
+        if (comptime builtin.is_test) if (Testing.before_fingerprint_repack_publish) |hook| hook();
+        try query_cancel.check();
+        {
+            lock();
+            defer mutex.unlock();
+            try query_cancel.check();
+            if (row.serial != connection_serial) return error.IndexSnapshotChanged;
+            const update = try prepareLocked("UPDATE file_fingerprints SET landmarks=?1,storage_version=1 WHERE algorithm_id=?2 AND file_id=?3 AND source_content_hash=?4 AND storage_version=0 AND landmarks=?5 AND token_count=?6 AND EXISTS(SELECT 1 FROM files WHERE id=?3 AND content_hash=?4)");
+            defer _ = c.sqlite3_finalize(update);
+            if (c.sqlite3_bind_blob(update, 1, compact.ptr, @intCast(compact.len), ws_sqlite_transient()) != c.SQLITE_OK) return error.BindFailed;
+            try bindInt64(update, 2, row.algorithm_id);
+            try bindInt(update, 3, row.file_id);
+            try bindInt64(update, 4, row.source_hash);
+            if (c.sqlite3_bind_blob(update, 5, row.bytes.ptr, @intCast(row.bytes.len), ws_sqlite_transient()) != c.SQLITE_OK) return error.BindFailed;
+            try bindInt64(update, 6, row.count);
+            if (c.sqlite3_step(update) != c.SQLITE_DONE) {
+                try query_cancel.check();
+                return error.UpdateFailed;
+            }
+            if (c.sqlite3_changes(try handleLocked()) != 1) return error.StaleContentHash;
+        }
+        result.processed_count += 1;
+        result.bytes_before += row.bytes.len;
+        result.bytes_after += compact.len;
+    }
+    try query_cancel.check();
+    return result;
 }
 
 fn scalarCount(sql: [*:0]const u8, value: i32) !c_int {
@@ -1832,7 +2083,7 @@ pub fn waveformCacheStatus() !WaveformCacheStatus {
 pub fn inspectFile(relative_path: []const u8) !?FileInfo {
     lock();
     defer mutex.unlock();
-    const stmt = try prepareLocked("SELECT id,file_size,mtime_ns,content_hash,waveform IS NOT NULL FROM files WHERE relative_path=? LIMIT 1");
+    const stmt = try prepareLocked("SELECT id,file_size,mtime_ns,content_hash,waveform IS NOT NULL,identity_kind,hash_algorithm FROM files WHERE relative_path=? LIMIT 1");
     defer _ = c.sqlite3_finalize(stmt);
     try bindText(stmt, 1, relative_path);
     if (c.sqlite3_step(stmt) != c.SQLITE_ROW) return null;
@@ -1842,6 +2093,8 @@ pub fn inspectFile(relative_path: []const u8) !?FileInfo {
         .mtime_ns = c.sqlite3_column_int64(stmt, 2),
         .content_hash = c.sqlite3_column_int64(stmt, 3),
         .has_waveform = c.sqlite3_column_int(stmt, 4) != 0,
+        .identity_kind = std.enums.fromInt(file_identity.Kind, c.sqlite3_column_int(stmt, 5)) orelse return error.InvalidStoredIdentity,
+        .hash_algorithm = std.enums.fromInt(file_identity.Algorithm, c.sqlite3_column_int(stmt, 6)) orelse return error.InvalidStoredIdentity,
     };
 }
 
@@ -2564,7 +2817,11 @@ pub fn upsertFingerprintWithEdges(algorithm_id: i64, file_id: i32, source_conten
 }
 
 fn publishFingerprint(algorithm_id: i64, file_id: i32, source_content_hash: i64, blob: []const u8, selectors_list: []const u32, edges: ?[]const AcousticEdge) !void {
-    if (blob.len == 0 or blob.len % 8 != 0 or blob.len / 8 > fingerprint.MAX_LANDMARKS or selectors_list.len > fingerprint.SELECTOR_COUNT) return error.InvalidFingerprint;
+    if (blob.len == 0 or selectors_list.len > fingerprint.SELECTOR_COUNT) return error.InvalidFingerprint;
+    const decoded = try fingerprint.deserialize(std.heap.c_allocator, blob);
+    defer std.heap.c_allocator.free(decoded);
+    if (decoded.len == 0) return error.InvalidFingerprint;
+    try query_cancel.check();
     lock();
     defer mutex.unlock();
     try execLocked("BEGIN IMMEDIATE;");
@@ -2585,13 +2842,13 @@ fn publishFingerprint(algorithm_id: i64, file_id: i32, source_content_hash: i64,
     try bindInt64(clear_group, 1, algorithm_id);
     try bindInt(clear_group, 2, file_id);
     if (c.sqlite3_step(clear_group) != c.SQLITE_DONE) return error.DeleteFailed;
-    const upsert = try prepareLocked("INSERT INTO file_fingerprints(algorithm_id,file_id,source_content_hash,token_count,landmarks) VALUES(?,?,?,?,?) " ++
-        "ON CONFLICT(algorithm_id,file_id) DO UPDATE SET source_content_hash=excluded.source_content_hash,token_count=excluded.token_count,landmarks=excluded.landmarks");
+    const upsert = try prepareLocked("INSERT INTO file_fingerprints(algorithm_id,file_id,source_content_hash,token_count,landmarks,storage_version) VALUES(?,?,?,?,?,1) " ++
+        "ON CONFLICT(algorithm_id,file_id) DO UPDATE SET source_content_hash=excluded.source_content_hash,token_count=excluded.token_count,landmarks=excluded.landmarks,storage_version=1");
     defer _ = c.sqlite3_finalize(upsert);
     try bindInt64(upsert, 1, algorithm_id);
     try bindInt(upsert, 2, file_id);
     try bindInt64(upsert, 3, source_content_hash);
-    try bindInt(upsert, 4, @intCast(blob.len / 8));
+    try bindInt(upsert, 4, @intCast(decoded.len));
     if (c.sqlite3_bind_blob(upsert, 5, blob.ptr, @intCast(blob.len), ws_sqlite_transient()) != c.SQLITE_OK) return error.BindFailed;
     if (c.sqlite3_step(upsert) != c.SQLITE_DONE) return error.InsertFailed;
     const dirty_group = try prepareLocked("INSERT INTO acoustic_group_state(algorithm_id,dirty) VALUES(?,1) ON CONFLICT(algorithm_id) DO UPDATE SET dirty=1");
@@ -2671,7 +2928,7 @@ pub fn loadFingerprintBatch(allocator: std.mem.Allocator, algorithm_id: i64, ids
         if (rc != c.SQLITE_ROW) return error.StepFailed;
         const raw = c.sqlite3_column_blob(stmt, 1) orelse return error.InvalidFingerprintBlob;
         const len: usize = @intCast(c.sqlite3_column_bytes(stmt, 1));
-        if (len == 0 or len % 8 != 0 or len / 8 > fingerprint.MAX_LANDMARKS) return error.InvalidFingerprintBlob;
+        if (len == 0 or len > fingerprint.MAX_LANDMARKS * 11 + 32) return error.InvalidFingerprintBlob;
         const blob = try allocator.dupe(u8, @as([*]const u8, @ptrCast(raw))[0..len]);
         errdefer allocator.free(blob);
         try rows.append(allocator, .{ .file_id = id, .source_content_hash = c.sqlite3_column_int64(stmt, 0), .landmarks = blob });
@@ -3091,10 +3348,11 @@ pub fn integrityCheck(full: bool) !IntegrityReport {
     defer _ = c.sqlite3_finalize(vector_check);
     if (c.sqlite3_step(vector_check) != c.SQLITE_ROW) return error.IntegrityCheckFailed;
     report.errors_found += @intCast(@min(c.sqlite3_column_int64(vector_check, 0), std.math.maxInt(u32)));
-    const fingerprint_check = try prepareLocked("SELECT COUNT(*) FROM file_fingerprints WHERE length(landmarks)!=token_count*8 OR length(landmarks)=0");
-    defer _ = c.sqlite3_finalize(fingerprint_check);
-    if (c.sqlite3_step(fingerprint_check) != c.SQLITE_ROW) return error.IntegrityCheckFailed;
-    report.errors_found += @intCast(@min(c.sqlite3_column_int64(fingerprint_check, 0), std.math.maxInt(u32)));
+    report.errors_found += try storedFingerprintErrorsOn(try handleLocked());
+    const identities = try prepareLocked(storage_schema.check);
+    defer _ = c.sqlite3_finalize(identities);
+    if (c.sqlite3_step(identities) != c.SQLITE_ROW) return error.IntegrityCheckFailed;
+    report.errors_found += @intCast(c.sqlite3_column_int64(identities, 0));
     const fts_count = try prepareLocked("SELECT (SELECT COUNT(*) FROM files)!=(SELECT COUNT(*) FROM files_fts)");
     defer _ = c.sqlite3_finalize(fts_count);
     if (c.sqlite3_step(fts_count) != c.SQLITE_ROW) return error.IntegrityCheckFailed;
@@ -3253,6 +3511,41 @@ pub fn backupTo(path: []const u8) !void {
     }
 }
 
+fn validateIdentityRowsOn(handle: *c.sqlite3) !void {
+    const stmt = try prepareOn(handle, storage_schema.check);
+    defer _ = c.sqlite3_finalize(stmt);
+    if (c.sqlite3_step(stmt) != c.SQLITE_ROW or c.sqlite3_column_int64(stmt, 0) != 0) return error.InvalidBackupSchema;
+}
+
+fn validateStoredFingerprintsOn(handle: *c.sqlite3) !void {
+    if (try storedFingerprintErrorsOn(handle) != 0) return error.InvalidFingerprintBlob;
+}
+
+fn storedFingerprintErrorsOn(handle: *c.sqlite3) !u32 {
+    const stmt = try prepareOn(handle, "SELECT token_count,landmarks FROM file_fingerprints");
+    defer _ = c.sqlite3_finalize(stmt);
+    var errors: u32 = 0;
+    while (true) {
+        try query_cancel.check();
+        const rc = c.sqlite3_step(stmt);
+        if (rc == c.SQLITE_DONE) break;
+        if (rc != c.SQLITE_ROW) return error.StepFailed;
+        const ptr = c.sqlite3_column_blob(stmt, 1) orelse {
+            errors += 1;
+            continue;
+        };
+        const len: usize = @intCast(c.sqlite3_column_bytes(stmt, 1));
+        const decoded = fingerprint.deserialize(std.heap.c_allocator, @as([*]const u8, @ptrCast(ptr))[0..len]) catch |err| {
+            if (err == error.OutOfMemory or err == error.Cancelled) return err;
+            errors += 1;
+            continue;
+        };
+        defer std.heap.c_allocator.free(decoded);
+        if (decoded.len == 0 or decoded.len != c.sqlite3_column_int64(stmt, 0)) errors += 1;
+    }
+    return errors;
+}
+
 fn validateRestoreSchema(handle: *c.sqlite3, version: i32, canonical: bool) !void {
     const table_sql: [*:0]const u8 = switch (version) {
         3 => "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='files'",
@@ -3265,7 +3558,7 @@ fn validateRestoreSchema(handle: *c.sqlite3, version: i32, canonical: bool) !voi
         10 => "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('files','files_fts','files_trigram','embedding_models','file_embeddings','semantic_state','embedding_failures','fingerprint_algorithms','file_fingerprints','fingerprint_postings','fingerprint_failures','acoustic_edges','acoustic_groups','acoustic_group_state','waveform_analyses','waveform_tiers','waveform_cache_state','waveform_failures')",
         11 => "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('files','files_fts','files_trigram','embedding_models','file_embeddings','semantic_state','embedding_failures','fingerprint_algorithms','file_fingerprints','fingerprint_postings','fingerprint_failures','acoustic_edges','acoustic_groups','acoustic_group_state','waveform_analyses','waveform_tiers','waveform_cache_state','waveform_failures','semantic_sq8')",
         12 => "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('files','files_fts','files_trigram','embedding_models','file_embeddings','semantic_state','embedding_failures','fingerprint_algorithms','file_fingerprints','fingerprint_postings','fingerprint_failures','acoustic_edges','acoustic_groups','acoustic_group_state','waveform_analyses','waveform_tiers','waveform_cache_state','waveform_failures','semantic_sq8','file_search_keys','files_vocab','catalog_stats','fingerprint_df')",
-        13 => "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('files','files_fts','files_trigram','embedding_models','file_embeddings','semantic_state','embedding_failures','fingerprint_algorithms','file_fingerprints','fingerprint_postings','fingerprint_failures','acoustic_edges','acoustic_groups','acoustic_group_state','waveform_analyses','waveform_tiers','waveform_cache_state','waveform_failures','semantic_sq8','file_search_keys','files_vocab','catalog_stats','fingerprint_df','pending_embeddings','pending_fingerprints')",
+        13, 14 => "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('files','files_fts','files_trigram','embedding_models','file_embeddings','semantic_state','embedding_failures','fingerprint_algorithms','file_fingerprints','fingerprint_postings','fingerprint_failures','acoustic_edges','acoustic_groups','acoustic_group_state','waveform_analyses','waveform_tiers','waveform_cache_state','waveform_failures','semantic_sq8','file_search_keys','files_vocab','catalog_stats','fingerprint_df','pending_embeddings','pending_fingerprints')",
         else => return error.UnsupportedSchemaVersion,
     };
     const expected_tables: c_int = switch (version) {
@@ -3279,7 +3572,7 @@ fn validateRestoreSchema(handle: *c.sqlite3, version: i32, canonical: bool) !voi
         10 => 18,
         11 => 19,
         12 => 23,
-        13 => 25,
+        13, 14 => 25,
         else => unreachable,
     };
     var tables: ?*c.sqlite3_stmt = null;
@@ -3288,11 +3581,20 @@ fn validateRestoreSchema(handle: *c.sqlite3, version: i32, canonical: bool) !voi
     if (c.sqlite3_step(tables) != c.SQLITE_ROW or c.sqlite3_column_int(tables, 0) != expected_tables) return error.InvalidBackupSchema;
     const file_contract = if (version == 3)
         "SELECT id,folder_id,path,relative_path,name,search_text,duration_ms,content_hash,waveform FROM files LIMIT 0"
+    else if (version >= 14)
+        "SELECT id,folder_id,path,relative_path,name,search_text,duration_ms,content_hash,waveform,file_size,mtime_ns,identity_kind,hash_algorithm FROM files LIMIT 0"
     else
         "SELECT id,folder_id,path,relative_path,name,search_text,duration_ms,content_hash,waveform,file_size,mtime_ns FROM files LIMIT 0";
     var contract: ?*c.sqlite3_stmt = null;
     if (c.sqlite3_prepare_v2(handle, file_contract, -1, &contract, null) != c.SQLITE_OK) return error.InvalidBackupSchema;
     _ = c.sqlite3_finalize(contract);
+    if (version >= 14) {
+        const storage = try prepareOn(handle, "SELECT storage_version FROM file_fingerprints LIMIT 0");
+        defer _ = c.sqlite3_finalize(storage);
+        const objects = try prepareOn(handle, "SELECT COUNT(*) FROM sqlite_master WHERE name IN ('idx_fingerprint_storage_pending','file_identity_au','file_identity_source_au')");
+        defer _ = c.sqlite3_finalize(objects);
+        if (c.sqlite3_step(objects) != c.SQLITE_ROW or c.sqlite3_column_int(objects, 0) != 3) return error.InvalidBackupSchema;
+    }
     if (version >= 4) {
         var triggers: ?*c.sqlite3_stmt = null;
         if (c.sqlite3_prepare_v2(handle, "SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND name IN ('files_ai','files_ad','files_au')", -1, &triggers, null) != c.SQLITE_OK) return error.InvalidBackupSchema;
@@ -3433,6 +3735,8 @@ pub fn compactTo(path: []const u8) !void {
     defer _ = c.sqlite3_finalize(foreign_keys);
     if (c.sqlite3_step(foreign_keys) != c.SQLITE_DONE) return error.CompactFailed;
     try validateRestoreSchema(handle, SCHEMA_VERSION, false);
+    try validateStoredFingerprintsOn(handle);
+    try validateIdentityRowsOn(handle);
     const stats = try prepareOn(handle, optimization_schema.check);
     defer _ = c.sqlite3_finalize(stats);
     if (c.sqlite3_step(stats) != c.SQLITE_ROW or c.sqlite3_column_int(stats, 0) != 0) return error.DerivedStatsMismatch;
@@ -3508,6 +3812,8 @@ pub fn restoreFrom(path: []const u8) !void {
     const staged_len: usize = @intCast(c.sqlite3_column_bytes(staged_check, 0));
     if (!std.mem.eql(u8, staged_text[0..staged_len], "ok")) return error.InvalidBackup;
     try validateRestoreSchema(staged.?, SCHEMA_VERSION, true);
+    try validateStoredFingerprintsOn(staged.?);
+    try validateIdentityRowsOn(staged.?);
     var foreign_key_stmt: ?*c.sqlite3_stmt = null;
     if (c.sqlite3_prepare_v2(staged, "PRAGMA foreign_key_check", -1, &foreign_key_stmt, null) != c.SQLITE_OK) return error.InvalidBackupSchema;
     defer _ = c.sqlite3_finalize(foreign_key_stmt);
@@ -3686,7 +3992,7 @@ test "SQ8 indexed retrieval reranks exactly, filters early, maintains identity, 
     _ = try setSemanticModel("test/sq8-v1", 16);
     try execLocked("DELETE FROM files WHERE id=1;");
     // Existing v10 catalogs are backfilled atomically without re-running CLAP.
-    try execLocked(refinement_schema.dropForTests ++ optimization_schema.dropForTests ++ DROP_QUANTIZED_INDEX_SQL ++ "PRAGMA user_version=10;");
+    try execLocked(storage_schema.dropForTests ++ refinement_schema.dropForTests ++ optimization_schema.dropForTests ++ DROP_QUANTIZED_INDEX_SQL ++ "PRAGMA user_version=10;");
     close();
     try open(allocator, path);
     try std.testing.expectEqual(SCHEMA_VERSION, try schemaVersion());

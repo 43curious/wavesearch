@@ -11,6 +11,11 @@ suppresses common selectors. Persisted edges and deterministic connected
 components provide transitive family IDs; dirty components are rebuilt once at
 the end of an indexing operation rather than after every file batch.
 
+Extraction streams bounded canonical PCM into the same v3 algorithm. Schema 14
+adds lossless grouped storage and resumable legacy repacking, plus explicit
+source strength and complete-byte duplicate verification. See
+[contracts, measurements, and compatibility](documentation/INDEXING_STORAGE_IDENTITIES.md).
+
 ## Behavior
 
 - `ws_acoustic_index_pending` is resumable and invalidates changed files while
@@ -23,8 +28,10 @@ the end of an indexing operation rather than after every file batch.
 - `ws_acoustic_group` returns persisted transitive family identity/count and a
   conservative weakest-edge component confidence. Dirty components are hidden
   until deterministic union-find reconstruction completes.
-- The legacy `ws_duplicate_count(content_hash)` remains ABI-compatible but is no
-  longer the UI's primary duplicate signal.
+- Legacy `ws_duplicate_count(content_hash)` remains ABI-compatible and verifies
+  complete bytes for known full-hash groups. Unknown/sampled/ambiguous groups
+  return zero; `ws_duplicate_verify_v1` verifies candidates by file ID. Acoustic
+  families remain the UI's primary similarity signal.
 - Built-in acoustic decoding supports WAV and uncompressed AIFF/AIFC. The
   `ws_search_by_example_pcm` ABI supports finite host-decoded PCM from optional
   MP3/FLAC/AAC decoders without making codecs core dependencies.

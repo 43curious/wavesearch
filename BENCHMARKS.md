@@ -1,5 +1,9 @@
 # Performance and acceptance benchmarks
 
+See [streaming extraction, lossless storage, and byte verification](documentation/INDEXING_STORAGE_IDENTITIES.md)
+for the schema-14 follow-up, reproducible benchmark modes, measured memory/read
+bytes/payload/compaction costs, and synthetic-versus-real acceptance limits.
+
 Benchmarks are explicit developer operations. Normal builds and tests never
 generate large corpora or download fixtures.
 

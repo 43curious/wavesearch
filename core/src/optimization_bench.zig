@@ -32,6 +32,11 @@ pub fn main(init: std.process.Init) !void {
     try db.open(allocator, path);
     defer db.close();
     if (std.mem.eql(u8, mode, "fingerprint")) return fingerprintBench(io, count);
+    if (std.mem.eql(u8, mode, "duplicates")) return duplicateBench(io, path, count);
+    if (std.mem.eql(u8, mode, "fingerprint-codec")) return fingerprintCodecBench(io, count);
+    if (std.mem.eql(u8, mode, "fingerprint-storage")) return fingerprintStorageBench(io, path, count);
+    if (std.mem.eql(u8, mode, "trigram-detail")) return trigramDetailBench(path, count);
+    if (std.mem.eql(u8, mode, "fingerprint-file")) return fingerprintFileBench(io, path, count);
     if (std.mem.eql(u8, mode, "scan")) return scanBench(io, path, count);
     if (std.mem.eql(u8, mode, "stage")) return stageBench(io, path, count);
     if (std.mem.eql(u8, mode, "index-contention")) return indexContentionBench(io, count);
@@ -212,7 +217,148 @@ fn fingerprintBench(io: std.Io, seconds: usize) !void {
         landmarks_count = landmarks.len;
     }
     report("fingerprint", &times);
-    std.debug.print("seconds={d} landmarks={d} fingerprint_digest={x} peak_rss_bytes={d}\n", .{ seconds, landmarks_count, hash, perf.peakRssBytes() });
+    std.debug.print("seconds={d} landmarks={d} storage_digest={x} peak_rss_bytes={d}\n", .{ seconds, landmarks_count, hash, perf.peakRssBytes() });
+}
+
+// The caller supplies PATH.wav; this mode never modifies or deletes that source.
+fn fingerprintFileBench(io: std.Io, path: []const u8, seconds: usize) !void {
+    if (seconds > 300) return error.InvalidArguments;
+    const source = try std.fmt.allocPrint(allocator, "{s}.wav", .{path});
+    defer allocator.free(source);
+    var reads: u64 = 0;
+    @import("audio_file.zig").bytes_read = &reads;
+    defer @import("audio_file.zig").bytes_read = null;
+    const start = std.Io.Clock.awake.now(io);
+    const landmarks = try fingerprint.fromFile(allocator, io, source);
+    defer allocator.free(landmarks);
+    const elapsed_ns = elapsed(io, start);
+    const blob = try fingerprint.serialize(allocator, landmarks);
+    defer allocator.free(blob);
+    var digest = std.hash.Wyhash.init(0);
+    for (landmarks) |landmark| {
+        var raw: [8]u8 = undefined;
+        std.mem.writeInt(u32, raw[0..4], landmark.hash, .little);
+        std.mem.writeInt(u32, raw[4..8], landmark.frame, .little);
+        digest.update(&raw);
+    }
+    std.debug.print("fixture_seconds={d} source_read_bytes={d} extraction_ms={d:.3} landmarks={d} landmark_digest={x} blob_bytes={d} peak_rss_bytes={d}\n", .{ seconds, reads, @as(f64, @floatFromInt(elapsed_ns)) / 1e6, landmarks.len, digest.final(), blob.len, perf.peakRssBytes() });
+}
+
+// Caller-owned PATH.audio fixture; no source is modified or deleted.
+fn duplicateBench(io: std.Io, path: []const u8, count: usize) !void {
+    const directory = try std.fmt.allocPrint(allocator, "{s}.audio", .{path});
+    defer allocator.free(directory);
+    var start = std.Io.Clock.awake.now(io);
+    try search.indexFolder(allocator, 1, directory);
+    const index_ns = elapsed(io, start);
+    if (try db.countForFolder(1) != count) return error.UnexpectedFixture;
+    const info = (try db.inspectFile("a.wav")) orelse return error.FileNotFound;
+    start = std.Io.Clock.awake.now(io);
+    const result = try db.verifyDuplicates(@intCast(info.id));
+    const duration = elapsed(io, start);
+    std.debug.print("files={d} index_ms={d:.3} verify_ms={d:.3} candidate_count={d} verified_count={d} source_read_bytes={d} peak_rss_bytes={d}\n", .{ count, perf.milliseconds(index_ns), perf.milliseconds(duration), result.candidate_count, result.verified_count, result.bytes_read, perf.peakRssBytes() });
+}
+
+fn fingerprintCodecBench(io: std.Io, seconds: usize) !void {
+    if (seconds > 60) return error.InvalidArguments;
+    const samples = try allocator.alloc(f32, seconds * 16000);
+    defer allocator.free(samples);
+    var random = std.Random.DefaultPrng.init(42);
+    for (samples) |*sample| sample.* = random.random().float(f32) * 2 - 1;
+    const landmarks = try fingerprint.fromSamples(allocator, samples);
+    defer allocator.free(landmarks);
+    const raw = try fingerprint.serializeRaw(allocator, landmarks);
+    defer allocator.free(raw);
+    const compact = try fingerprint.serialize(allocator, landmarks);
+    defer allocator.free(compact);
+    var encoding: [runs]u64 = undefined;
+    var decoding: [runs]u64 = undefined;
+    for (0..runs) |i| {
+        var start = std.Io.Clock.awake.now(io);
+        const bytes = try fingerprint.serialize(allocator, landmarks);
+        encoding[i] = elapsed(io, start);
+        defer allocator.free(bytes);
+        start = std.Io.Clock.awake.now(io);
+        const decoded = try fingerprint.deserialize(allocator, bytes);
+        decoding[i] = elapsed(io, start);
+        defer allocator.free(decoded);
+        if (!std.mem.eql(fingerprint.Landmark, landmarks, decoded)) return error.FingerprintChanged;
+    }
+    report("fingerprint_encode", &encoding);
+    report("fingerprint_decode", &decoding);
+    std.debug.print("landmarks={d} raw_bytes={d} compact_bytes={d} canonical_digest={x} peak_rss_bytes={d}\n", .{ landmarks.len, raw.len, compact.len, std.hash.Wyhash.hash(0, raw), perf.peakRssBytes() });
+}
+
+fn benchHandle(path: []const u8) !*db.c.sqlite3 {
+    const z = try allocator.dupeSentinel(u8, path, 0);
+    defer allocator.free(z);
+    var h: ?*db.c.sqlite3 = null;
+    if (db.c.sqlite3_open(z, &h) != db.c.SQLITE_OK) {
+        if (h) |v| _ = db.c.sqlite3_close_v2(v);
+        return error.OpenFailed;
+    }
+    errdefer _ = db.c.sqlite3_close_v2(h);
+    try db.registerVectorFunctions(h.?);
+    return h.?;
+}
+
+fn benchScalar(h: *db.c.sqlite3, sql: [*:0]const u8) !i64 {
+    var stmt: ?*db.c.sqlite3_stmt = null;
+    if (db.c.sqlite3_prepare_v2(h, sql, -1, &stmt, null) != db.c.SQLITE_OK) return error.PrepareFailed;
+    defer _ = db.c.sqlite3_finalize(stmt);
+    if (db.c.sqlite3_step(stmt) != db.c.SQLITE_ROW) return error.StepFailed;
+    return db.c.sqlite3_column_int64(stmt, 0);
+}
+
+fn fingerprintStorageBench(io: std.Io, path: []const u8, count: usize) !void {
+    try db.insertSyntheticBenchmarkFiles(count);
+    const algorithm = try db.ensureFingerprintAlgorithm(fingerprint.ALGORITHM_KEY);
+    var landmarks: [200]fingerprint.Landmark = undefined;
+    for (&landmarks, 0..) |*landmark, i| landmark.* = .{ .hash = @intCast(i / 25), .frame = @intCast((i % 25) * 32) };
+    const raw = try fingerprint.serializeRaw(allocator, &landmarks);
+    defer allocator.free(raw);
+    const selected = try fingerprint.selectors(allocator, &landmarks);
+    defer allocator.free(selected);
+    for (0..count) |i| try db.upsertFingerprint(algorithm, @intCast(i + 1), @intCast(i + 1), raw, selected);
+    try db.rebuildAcousticGroups(allocator, algorithm);
+    const h = try benchHandle(path);
+    defer _ = db.c.sqlite3_close_v2(h);
+    if (db.c.sqlite3_exec(h, "UPDATE file_fingerprints SET storage_version=0;", null, null, null) != db.c.SQLITE_OK) return error.ExecFailed;
+    const before = try benchScalar(h, "SELECT page_count*page_size FROM pragma_page_count(),pragma_page_size()");
+    const start = std.Io.Clock.awake.now(io);
+    var bytes_before: u64 = 0;
+    var bytes_after: u64 = 0;
+    var processed: usize = 0;
+    while (true) {
+        const result = try db.repackFingerprints(allocator, 16);
+        bytes_before += result.bytes_before;
+        bytes_after += result.bytes_after;
+        processed += result.processed_count;
+        if (result.processed_count == 0) break;
+    }
+    const duration = elapsed(io, start);
+    if (processed != count or (try db.integrityCheck(true)).errors_found != 0) return error.StorageRegression;
+    const after = try benchScalar(h, "SELECT page_count*page_size FROM pragma_page_count(),pragma_page_size()");
+    const copy = try std.fmt.allocPrint(allocator, "{s}.compact", .{path});
+    defer allocator.free(copy);
+    defer std.Io.Dir.cwd().deleteFile(io, copy) catch {};
+    try db.compactTo(copy);
+    const stat = try std.Io.Dir.cwd().statFile(io, copy, .{});
+    std.debug.print("files={d} payload_before={d} payload_after={d} allocated_before={d} allocated_after={d} compact_db_bytes={d} repack_ms={d:.3} peak_rss_bytes={d}\n", .{ count, bytes_before, bytes_after, before, after, stat.size, perf.milliseconds(duration), perf.peakRssBytes() });
+}
+
+fn trigramDetailBench(path: []const u8, count: usize) !void {
+    try db.insertSyntheticBenchmarkFiles(count);
+    const h = try benchHandle(path);
+    defer _ = db.c.sqlite3_close_v2(h);
+    if (db.c.sqlite3_exec(h, "CREATE VIRTUAL TABLE temp.trigram_none USING fts5(search_text,tokenize='trigram',detail=none,columnsize=0); INSERT INTO temp.trigram_none(rowid,search_text) SELECT id,search_text FROM files;", null, null, null) != db.c.SQLITE_OK) return error.ExecFailed;
+    const full = try benchScalar(h, "SELECT COUNT(*) FROM files_trigram WHERE files_trigram MATCH 'impact'");
+    var stmt: ?*db.c.sqlite3_stmt = null;
+    if (db.c.sqlite3_prepare_v2(h, "SELECT COUNT(*) FROM temp.trigram_none WHERE trigram_none MATCH 'impact'", -1, &stmt, null) != db.c.SQLITE_OK) return error.PrepareFailed;
+    defer _ = db.c.sqlite3_finalize(stmt);
+    const rc = db.c.sqlite3_step(stmt);
+    if (rc == db.c.SQLITE_ROW) return error.ExpectedUnsupportedPhrase;
+    std.debug.print("full_phrase_matches={d} reduced_detail_error={s}\n", .{ full, db.c.sqlite3_errmsg(h) });
 }
 
 fn scanBench(io: std.Io, path: []const u8, count: usize) !void {

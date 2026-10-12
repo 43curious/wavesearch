@@ -283,7 +283,7 @@ test "v5 migration adds current embedding failures fingerprints groups and wavef
     defer fixture.deinit();
     try openFixture(&fixture);
     db.close();
-    try rawExec(fixture.db_path, @import("refinement_schema.zig").dropForTests ++ @import("schema_optimizations.zig").dropForTests);
+    try rawExec(fixture.db_path, @import("storage_schema.zig").dropForTests ++ @import("refinement_schema.zig").dropForTests ++ @import("schema_optimizations.zig").dropForTests);
     try rawExec(fixture.db_path, "DROP TRIGGER waveform_analysis_source_changed;DROP TRIGGER waveform_files_ai;DROP TRIGGER waveform_tier_rescan_au;DROP TRIGGER waveform_claim_source_changed;DROP TRIGGER waveform_claim_file_ad;DROP TABLE waveform_failures;DROP TABLE waveform_cache_state;DROP TABLE waveform_tiers;DROP TABLE waveform_analyses;DROP TRIGGER acoustic_edges_ai;DROP TRIGGER acoustic_edges_ad;DROP TABLE acoustic_group_state;DROP TABLE acoustic_groups;DROP TABLE acoustic_edges;DROP TABLE fingerprint_postings;DROP TABLE fingerprint_failures;DROP TABLE file_fingerprints;DROP TABLE fingerprint_algorithms;DROP TABLE embedding_failures;" ++ db.DROP_QUANTIZED_INDEX_SQL ++ "PRAGMA user_version=5;");
     try openFixture(&fixture);
     try std.testing.expectEqual(db.SCHEMA_VERSION, try db.schemaVersion());
@@ -311,7 +311,7 @@ test "v6 migration preserves semantic rows and adds current derived schemas" {
     const file_id: i32 = @intCast((try db.inspectFile("preserved.wav")).?.id);
     try db.upsertSemanticEmbedding(allocator, file_id, 55, &.{ 1, 0 });
     db.close();
-    try rawExec(fixture.db_path, @import("refinement_schema.zig").dropForTests ++ @import("schema_optimizations.zig").dropForTests);
+    try rawExec(fixture.db_path, @import("storage_schema.zig").dropForTests ++ @import("refinement_schema.zig").dropForTests ++ @import("schema_optimizations.zig").dropForTests);
     try rawExec(fixture.db_path, "DROP TRIGGER waveform_analysis_source_changed;DROP TRIGGER waveform_files_ai;DROP TRIGGER waveform_tier_rescan_au;DROP TRIGGER waveform_claim_source_changed;DROP TRIGGER waveform_claim_file_ad;DROP TABLE waveform_failures;DROP TABLE waveform_cache_state;DROP TABLE waveform_tiers;DROP TABLE waveform_analyses;DROP TRIGGER acoustic_edges_ai;DROP TRIGGER acoustic_edges_ad;DROP TABLE acoustic_group_state;DROP TABLE acoustic_groups;DROP TABLE acoustic_edges;DROP TABLE fingerprint_postings;DROP TABLE fingerprint_failures;DROP TABLE file_fingerprints;DROP TABLE fingerprint_algorithms;PRAGMA user_version=6;");
     try openFixture(&fixture);
     try std.testing.expectEqual(db.SCHEMA_VERSION, try db.schemaVersion());
@@ -334,7 +334,7 @@ test "v7 migration preserves fingerprints and adds current derived schemas" {
     defer allocator.free(selected);
     try db.upsertFingerprint(algorithm_id, file_id, 71, blob, selected);
     db.close();
-    try rawExec(fixture.db_path, @import("refinement_schema.zig").dropForTests ++ @import("schema_optimizations.zig").dropForTests);
+    try rawExec(fixture.db_path, @import("storage_schema.zig").dropForTests ++ @import("refinement_schema.zig").dropForTests ++ @import("schema_optimizations.zig").dropForTests);
     try rawExec(fixture.db_path, "DROP TRIGGER waveform_analysis_source_changed;DROP TRIGGER waveform_files_ai;DROP TRIGGER waveform_tier_rescan_au;DROP TRIGGER waveform_claim_source_changed;DROP TRIGGER waveform_claim_file_ad;DROP TABLE waveform_failures;DROP TABLE waveform_cache_state;DROP TABLE waveform_tiers;DROP TABLE waveform_analyses;DROP TRIGGER acoustic_edges_ai;DROP TRIGGER acoustic_edges_ad;DROP TABLE acoustic_group_state;DROP TABLE acoustic_groups;DROP TABLE acoustic_edges;PRAGMA user_version=7;");
     try openFixture(&fixture);
     try std.testing.expectEqual(db.SCHEMA_VERSION, try db.schemaVersion());
@@ -353,7 +353,7 @@ test "v8 migration preserves legacy waveform and adds current derived schemas" {
     try db.applyFolderIndex(8, &files);
     try db.saveWaveform(files[0].path, &.{ 0.25, 0.5 });
     db.close();
-    try rawExec(fixture.db_path, @import("refinement_schema.zig").dropForTests ++ @import("schema_optimizations.zig").dropForTests);
+    try rawExec(fixture.db_path, @import("storage_schema.zig").dropForTests ++ @import("refinement_schema.zig").dropForTests ++ @import("schema_optimizations.zig").dropForTests);
     try rawExec(fixture.db_path, "DROP TRIGGER waveform_analysis_source_changed;DROP TRIGGER waveform_files_ai;DROP TRIGGER waveform_tier_rescan_au;DROP TRIGGER waveform_claim_source_changed;DROP TRIGGER waveform_claim_file_ad;DROP TABLE waveform_failures;DROP TABLE waveform_cache_state;DROP TABLE waveform_tiers;DROP TABLE waveform_analyses;PRAGMA user_version=8;");
     try openFixture(&fixture);
     try std.testing.expectEqual(db.SCHEMA_VERSION, try db.schemaVersion());
@@ -372,7 +372,7 @@ test "v9 migration invalidates legacy analysis and adds current derived schemas"
     try db.applyFolderIndex(9, &files);
     try db.saveWaveformCacheBlob(files[0].path, "WWF2-old");
     db.close();
-    try rawExec(fixture.db_path, @import("refinement_schema.zig").dropForTests ++ @import("schema_optimizations.zig").dropForTests);
+    try rawExec(fixture.db_path, @import("storage_schema.zig").dropForTests ++ @import("refinement_schema.zig").dropForTests ++ @import("schema_optimizations.zig").dropForTests);
     try rawExec(fixture.db_path, "DROP TRIGGER waveform_analysis_source_changed;DROP TRIGGER waveform_files_ai;DROP TRIGGER waveform_tier_rescan_au;DROP TRIGGER waveform_claim_source_changed;DROP TRIGGER waveform_claim_file_ad;DROP TABLE waveform_failures;DROP TABLE waveform_cache_state;DROP TABLE waveform_tiers;CREATE TRIGGER waveform_analysis_source_changed AFTER UPDATE OF file_size,mtime_ns,content_hash ON files BEGIN DELETE FROM waveform_analyses WHERE file_id=new.id; END;PRAGMA user_version=9;");
     try openFixture(&fixture);
     try std.testing.expectEqual(db.SCHEMA_VERSION, try db.schemaVersion());
@@ -389,7 +389,7 @@ test "early development v10 failure rows and claim columns upgrade safely" {
     const files = [_]db.ScannedFile{.{ .path = "/dev10.wav", .relative_path = "dev10.wav", .name = "dev10.wav", .search_text = "dev10 wav", .duration_ms = 1, .content_hash = 10, .file_size = 100, .mtime_ns = 200 }};
     try db.applyFolderIndex(10, &files);
     db.close();
-    try rawExec(fixture.db_path, @import("refinement_schema.zig").dropForTests ++ @import("schema_optimizations.zig").dropForTests ++ db.DROP_QUANTIZED_INDEX_SQL ++ "PRAGMA user_version=10;");
+    try rawExec(fixture.db_path, @import("storage_schema.zig").dropForTests ++ @import("refinement_schema.zig").dropForTests ++ @import("schema_optimizations.zig").dropForTests ++ db.DROP_QUANTIZED_INDEX_SQL ++ "PRAGMA user_version=10;");
     try rawExec(fixture.db_path, "DROP TRIGGER waveform_claim_source_changed;DROP TRIGGER waveform_claim_file_ad;" ++
         "DROP TRIGGER waveform_analysis_source_changed;" ++
         "CREATE TRIGGER waveform_analysis_source_changed AFTER UPDATE OF file_size,mtime_ns,content_hash ON files BEGIN DELETE FROM waveform_analyses WHERE file_id=new.id;DELETE FROM waveform_tiers WHERE file_id=new.id;DELETE FROM waveform_failures WHERE file_id=new.id;UPDATE waveform_cache_state SET universal_scan_complete=0 WHERE singleton=1;END;" ++
@@ -2719,4 +2719,262 @@ fn rawExec(path: []const u8, sql: [*:0]const u8) !void {
     defer _ = c.sqlite3_close(handle);
     try db.registerVectorFunctions(handle.?);
     if (c.sqlite3_exec(handle, sql, null, null, null) != c.SQLITE_OK) return error.RawExecFailed;
+}
+
+test "five-minute fingerprint input uses bounded PCM memory and rejects duration before payload reads" {
+    var fixture = try Fixture.init();
+    defer fixture.deinit();
+    var header: [44]u8 = @splat(0);
+    const frames = 300 * 16000;
+    @memcpy(header[0..4], "RIFF");
+    std.mem.writeInt(u32, header[4..8], 36 + frames * 4, .little);
+    @memcpy(header[8..20], "WAVEfmt \x10\x00\x00\x00");
+    std.mem.writeInt(u16, header[20..22], 3, .little);
+    std.mem.writeInt(u16, header[22..24], 1, .little);
+    std.mem.writeInt(u32, header[24..28], 16000, .little);
+    std.mem.writeInt(u32, header[28..32], 64000, .little);
+    std.mem.writeInt(u16, header[32..34], 4, .little);
+    std.mem.writeInt(u16, header[34..36], 32, .little);
+    @memcpy(header[36..40], "data");
+    std.mem.writeInt(u32, header[40..44], frames * 4, .little);
+    try fixture.tmp.dir.writeFile(io, .{ .sub_path = "bounded.wav", .data = &header });
+    {
+        const file = try fixture.tmp.dir.openFile(io, "bounded.wav", .{ .mode = .read_write });
+        defer file.close(io);
+        try file.setLength(io, 44 + frames * 4);
+    }
+    const path = try fixture.path("bounded.wav");
+    defer allocator.free(path);
+    const memory = try allocator.alloc(u8, 1024 * 1024);
+    defer allocator.free(memory);
+    var fixed = std.heap.FixedBufferAllocator.init(memory);
+    // Silence is rejected for insufficient detail after the complete timeline;
+    // an attempted 19.2 MB PCM allocation would instead fail this 1 MiB budget.
+    try std.testing.expectError(error.InsufficientFingerprintDetail, fingerprint.fromFile(fixed.allocator(), io, path));
+    std.mem.writeInt(u32, header[4..8], 36 + (frames + 16000) * 4, .little);
+    std.mem.writeInt(u32, header[40..44], (frames + 16000) * 4, .little);
+    try fixture.tmp.dir.writeFile(io, .{ .sub_path = "bounded.wav", .data = &header });
+    {
+        const file = try fixture.tmp.dir.openFile(io, "bounded.wav", .{ .mode = .read_write });
+        defer file.close(io);
+        try file.setLength(io, 44 + (frames + 16000) * 4);
+    }
+    var reads: u64 = 0;
+    @import("audio_file.zig").bytes_read = &reads;
+    defer @import("audio_file.zig").bytes_read = null;
+    try std.testing.expectError(error.FingerprintDurationLimit, fingerprint.fromFile(allocator, io, path));
+    try std.testing.expect(reads < 1024);
+}
+
+test "sampled identities verify complete bytes instead of confirming different middle content" {
+    const identity = @import("file_identity.zig");
+    const reader_module = @import("audio_file.zig");
+    var fixture = try Fixture.init();
+    defer fixture.deinit();
+    const payload_bytes = 18 * 1024 * 1024;
+    const bytes = try allocator.alloc(u8, 44 + payload_bytes);
+    defer allocator.free(bytes);
+    @memset(bytes, 0);
+    @memcpy(bytes[0..4], "RIFF");
+    std.mem.writeInt(u32, bytes[4..8], 36 + payload_bytes, .little);
+    @memcpy(bytes[8..20], "WAVEfmt \x10\x00\x00\x00");
+    std.mem.writeInt(u16, bytes[20..22], 1, .little);
+    std.mem.writeInt(u16, bytes[22..24], 1, .little);
+    std.mem.writeInt(u32, bytes[24..28], 48000, .little);
+    std.mem.writeInt(u32, bytes[28..32], 96000, .little);
+    std.mem.writeInt(u16, bytes[32..34], 2, .little);
+    std.mem.writeInt(u16, bytes[34..36], 16, .little);
+    @memcpy(bytes[36..40], "data");
+    std.mem.writeInt(u32, bytes[40..44], payload_bytes, .little);
+    try fixture.tmp.dir.createDir(io, "sounds", .default_dir);
+    try fixture.tmp.dir.writeFile(io, .{ .sub_path = "sounds/a.wav", .data = bytes });
+    try fixture.tmp.dir.writeFile(io, .{ .sub_path = "sounds/c.wav", .data = bytes });
+    bytes[9 * 1024 * 1024 + 12345] = 7;
+    try fixture.tmp.dir.writeFile(io, .{ .sub_path = "sounds/b.wav", .data = bytes });
+    try openFixture(&fixture);
+    const root = try fixture.path("sounds");
+    defer allocator.free(root);
+    try search.indexFolder(allocator, 81, root);
+    const a = (try db.inspectFile("a.wav")).?;
+    const b = (try db.inspectFile("b.wav")).?;
+    const c_file = (try db.inspectFile("c.wav")).?;
+    try std.testing.expectEqual(a.content_hash, b.content_hash);
+    try std.testing.expectEqual(a.content_hash, c_file.content_hash);
+    try std.testing.expect(a.content_hash < 0);
+    try std.testing.expectEqual(identity.Kind.sampled, a.identity_kind);
+    try std.testing.expectEqual(@as(c_int, 0), main_c.ws_duplicate_count(a.content_hash));
+    var info = std.mem.zeroes(main_c.WSFileIdentity);
+    info.struct_size = @sizeOf(main_c.WSFileIdentity);
+    try std.testing.expectEqual(@as(c_int, 0), main_c.ws_file_identity_v1(@intCast(a.id), &info));
+    try std.testing.expectEqual(@as(u32, 2), info.kind);
+    try std.testing.expectEqual(@as(u32, 1), info.algorithm);
+    try std.testing.expectEqual(@sizeOf(abi_c.WSFileIdentity), @sizeOf(main_c.WSFileIdentity));
+    try std.testing.expectEqual(@sizeOf(abi_c.WSDuplicateVerification), @sizeOf(main_c.WSDuplicateVerification));
+    try std.testing.expectEqual(@sizeOf(abi_c.WSFingerprintStorageResult), @sizeOf(main_c.WSFingerprintStorageResult));
+    const request = main_c.ws_query_create().?;
+    defer main_c.ws_query_destroy(request);
+    var verified = std.mem.zeroes(main_c.WSDuplicateVerification);
+    verified.struct_size = @sizeOf(main_c.WSDuplicateVerification);
+    try std.testing.expectEqual(@as(c_int, 0), main_c.ws_duplicate_verify_v1(request, @intCast(a.id), &verified));
+    try std.testing.expectEqual(@as(u32, 3), verified.candidate_count);
+    try std.testing.expectEqual(@as(u32, 2), verified.verified_count);
+    try std.testing.expect(verified.source_bytes_read > bytes.len * 2);
+
+    // Interrupt after actual file I/O, before any result can be published.
+    const Hooks = struct {
+        var active_request: ?*@import("query.zig").Request = null;
+        var limit: u64 = 0;
+        fn cancelAfterReads() void {
+            if (reader_module.bytes_read.?.* >= limit) active_request.?.cancel();
+        }
+        var dir: std.Io.Dir = undefined;
+        var failure: ?anyerror = null;
+        var replaced = false;
+        fn replaceAfterReads() void {
+            if (!replaced and reader_module.bytes_read.?.* >= limit) {
+                replaced = true;
+                dir.rename("sounds/replacement.wav", dir, "sounds/a.wav", io) catch |err| {
+                    failure = err;
+                };
+            }
+        }
+    };
+    Hooks.active_request = request;
+    Hooks.limit = 20 * 1024 * 1024;
+    reader_module.Testing.after_read = Hooks.cancelAfterReads;
+    defer reader_module.Testing.after_read = null;
+    verified.verified_count = 99;
+    try std.testing.expectEqual(@as(c_int, -2), main_c.ws_duplicate_verify_v1(request, @intCast(a.id), &verified));
+    try std.testing.expectEqual(@as(u32, 99), verified.verified_count);
+    reader_module.Testing.after_read = null;
+
+    // Replacing the path with equal bytes/size/mtime must still invalidate the
+    // active descriptor's confirmation; an inode change is not a relocation.
+    bytes[9 * 1024 * 1024 + 12345] = 0;
+    try fixture.tmp.dir.writeFile(io, .{ .sub_path = "sounds/replacement.wav", .data = bytes });
+    {
+        const replacement = try fixture.tmp.dir.openFile(io, "sounds/replacement.wav", .{});
+        defer replacement.close(io);
+        try replacement.setTimestamps(io, .{ .modify_timestamp = .{ .new = .{ .nanoseconds = a.mtime_ns } } });
+    }
+    const fresh = main_c.ws_query_create().?;
+    defer main_c.ws_query_destroy(fresh);
+    Hooks.dir = fixture.tmp.dir;
+    reader_module.Testing.after_read = Hooks.replaceAfterReads;
+    try std.testing.expectEqual(@as(c_int, -1), main_c.ws_duplicate_verify_v1(fresh, @intCast(a.id), &verified));
+    try std.testing.expect(Hooks.replaced);
+    try std.testing.expect(Hooks.failure == null);
+    try std.testing.expectEqual(@as(u32, 99), verified.verified_count);
+    reader_module.Testing.after_read = null;
+    try search.indexFolderWithOptions(allocator, 81, root, .{ .deep = true });
+    const deep_a = (try db.inspectFile("a.wav")).?;
+    const deep_b = (try db.inspectFile("b.wav")).?;
+    try std.testing.expectEqual(a.id, deep_a.id);
+    try std.testing.expectEqual(identity.Kind.full, deep_a.identity_kind);
+    try std.testing.expect(deep_a.content_hash > 0 and deep_a.content_hash != deep_b.content_hash);
+    try std.testing.expectEqual(@as(c_int, 2), main_c.ws_duplicate_count(deep_a.content_hash));
+    // Metadata-only changes are byte changes; identical PCM is not exact identity.
+    bytes[9 * 1024 * 1024 + 12345] = 7;
+    const metadata_bytes = try allocator.alloc(u8, bytes.len + 24);
+    defer allocator.free(metadata_bytes);
+    @memcpy(metadata_bytes[0..bytes.len], bytes);
+    std.mem.writeInt(u32, metadata_bytes[4..8], @intCast(metadata_bytes.len - 8), .little);
+    const metadata = metadata_bytes[bytes.len..];
+    @memcpy(metadata[0..4], "LIST");
+    std.mem.writeInt(u32, metadata[4..8], 16, .little);
+    @memcpy(metadata[8..16], "INFOISFT");
+    std.mem.writeInt(u32, metadata[16..20], 4, .little);
+    @memcpy(metadata[20..24], "edit");
+    try fixture.tmp.dir.writeFile(io, .{ .sub_path = "sounds/b.wav", .data = metadata_bytes });
+    try search.indexFolderWithOptions(allocator, 81, root, .{ .deep = true });
+    try std.testing.expect((try db.inspectFile("b.wav")).?.content_hash != deep_b.content_hash);
+}
+
+test "legacy fingerprint repacking resumes across migration cancellation reopen and backup restore" {
+    var fixture = try Fixture.init();
+    defer fixture.deinit();
+    try openFixture(&fixture);
+    const files = [_]db.ScannedFile{
+        .{ .path = "/a.wav", .relative_path = "a.wav", .name = "a.wav", .search_text = "a", .duration_ms = 1000, .content_hash = 101, .file_size = 1, .mtime_ns = 1 },
+        .{ .path = "/b.wav", .relative_path = "b.wav", .name = "b.wav", .search_text = "b", .duration_ms = 1000, .content_hash = 102, .file_size = 1, .mtime_ns = 1 },
+    };
+    try db.applyFolderIndex(82, &files);
+    const algorithm_id = try db.ensureFingerprintAlgorithm(fingerprint.ALGORITHM_KEY);
+    var landmarks: [200]fingerprint.Landmark = undefined;
+    for (&landmarks, 0..) |*landmark, i| landmark.* = .{ .hash = @intCast(i / 25), .frame = @intCast((i % 25) * 32) };
+    const raw = try fingerprint.serializeRaw(allocator, &landmarks);
+    defer allocator.free(raw);
+    const selectors = try fingerprint.selectors(allocator, &landmarks);
+    defer allocator.free(selectors);
+    var ids: [2]i32 = undefined;
+    for (files, 0..) |file, i| {
+        ids[i] = @intCast((try db.inspectFile(file.relative_path)).?.id);
+        try db.upsertFingerprint(algorithm_id, ids[i], file.content_hash, raw, selectors);
+    }
+    try db.replaceAcousticEdges(algorithm_id, ids[0], &.{.{ .other_file_id = ids[1], .score_ppm = 900000, .aligned = 32 }});
+    try db.rebuildAcousticGroups(allocator, algorithm_id);
+    db.close();
+    try rawExec(fixture.db_path, @import("storage_schema.zig").dropForTests ++ "PRAGMA user_version=13;");
+    try openFixture(&fixture);
+    try std.testing.expectEqual(@as(i32, 14), try db.schemaVersion());
+    try std.testing.expectEqual(@as(i64, 2), try rawScalar(fixture.db_path, "SELECT COUNT(*) FROM file_fingerprints WHERE storage_version=0"));
+    const first = try db.repackFingerprints(allocator, 1);
+    try std.testing.expectEqual(@as(u32, 1), first.processed_count);
+    try std.testing.expect(first.bytes_after < first.bytes_before);
+    try std.testing.expectEqual(@as(u32, 2), (try db.acousticGroupInfo(algorithm_id, ids[0])).?.member_count);
+    try std.testing.expectEqual(@as(i64, 0), (try db.fingerprintStatus(algorithm_id)).pending);
+    const request = main_c.ws_query_create().?;
+    defer main_c.ws_query_destroy(request);
+    main_c.ws_query_cancel(request);
+    var outcome = std.mem.zeroes(main_c.WSFingerprintStorageResult);
+    outcome.struct_size = @sizeOf(main_c.WSFingerprintStorageResult);
+    try std.testing.expectEqual(@as(c_int, -2), main_c.ws_fingerprint_storage_repack_v1(request, 16, &outcome));
+    try std.testing.expectEqual(@as(i64, 1), try rawScalar(fixture.db_path, "SELECT COUNT(*) FROM file_fingerprints WHERE storage_version=0"));
+    const backup = try fixture.path("mixed.sqlite");
+    defer allocator.free(backup);
+    try db.backupTo(backup);
+    db.close();
+    try openFixture(&fixture);
+    const fresh = main_c.ws_query_create().?;
+    defer main_c.ws_query_destroy(fresh);
+    try std.testing.expectEqual(@as(c_int, 0), main_c.ws_fingerprint_storage_repack_v1(fresh, 16, &outcome));
+    try std.testing.expectEqual(@as(u32, 1), outcome.processed_count);
+    try db.restoreFrom(backup);
+    try std.testing.expectEqual(@as(i64, 1), try rawScalar(fixture.db_path, "SELECT COUNT(*) FROM file_fingerprints WHERE storage_version=0"));
+    _ = try db.repackFingerprints(allocator, 16);
+    const stored = (try db.loadFingerprint(allocator, algorithm_id, ids[1])).?;
+    defer allocator.free(stored.landmarks);
+    const decoded = try fingerprint.deserialize(allocator, stored.landmarks);
+    defer allocator.free(decoded);
+    try std.testing.expectEqualSlices(fingerprint.Landmark, &landmarks, decoded);
+    try std.testing.expectEqual(@as(u32, 0), (try db.integrityCheck(true)).errors_found);
+    try rawExec(fixture.db_path, "UPDATE file_fingerprints SET landmarks=zeroblob(length(landmarks)),storage_version=0 WHERE file_id=1;");
+    try std.testing.expect((try db.integrityCheck(false)).errors_found > 0);
+    try std.testing.expectError(error.InvalidFingerprintBlob, db.repackFingerprints(allocator, 1));
+    const corrupt = try fixture.path("corrupt-codec.sqlite");
+    defer allocator.free(corrupt);
+    try db.backupTo(corrupt);
+    try std.testing.expectError(error.InvalidFingerprintBlob, db.restoreFrom(corrupt));
+    try db.restoreFrom(backup);
+    try std.testing.expectEqual(@as(u32, 0), (try db.integrityCheck(true)).errors_found);
+    const Hooks = struct {
+        var changed: [2]db.ScannedFile = undefined;
+        var failure: ?anyerror = null;
+        fn changeSource() void {
+            db.Testing.before_fingerprint_repack_publish = null;
+            db.applyFolderIndex(82, &changed) catch |err| {
+                failure = err;
+            };
+        }
+    };
+    Hooks.changed = files;
+    Hooks.changed[1].content_hash = 103;
+    Hooks.changed[1].file_size = 2;
+    Hooks.changed[1].mtime_ns = 2;
+    db.Testing.before_fingerprint_repack_publish = Hooks.changeSource;
+    defer db.Testing.before_fingerprint_repack_publish = null;
+    try std.testing.expectError(error.StaleContentHash, db.repackFingerprints(allocator, 1));
+    try std.testing.expect(Hooks.failure == null);
+    try std.testing.expect((try db.loadFingerprint(allocator, algorithm_id, ids[1])) == null);
+    try std.testing.expectEqual(@as(i64, 1), (try db.fingerprintStatus(algorithm_id)).pending);
 }

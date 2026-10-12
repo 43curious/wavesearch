@@ -5,6 +5,8 @@ current WaveSearch application.
 
 ## Performance and portability
 
+- [Streaming fingerprints, storage, and identity](INDEXING_STORAGE_IDENTITIES.md)
+  — bounded extraction, lossless repacking, exact duplicates, migration, and measurements.
 - [Durable refinement queues](REFINEMENT_QUEUES.md) — indexed semantic/acoustic
   work, publication, retries, migration, recovery, and discovery measurements.
 - [Performance and portability plan](PERFORMANCE_AND_PORTABILITY_PLAN.md) — prioritized issue inventory, responsiveness and resource recommendations, portable `libwavesearch` architecture, implementation status, and validation checklist.

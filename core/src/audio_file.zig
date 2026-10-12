@@ -1,5 +1,12 @@
 const std = @import("std");
 
+// Optional request-local diagnostic counter used by disposable I/O benchmarks.
+pub threadlocal var bytes_read: ?*u64 = null;
+
+pub const Testing = if (@import("builtin").is_test) struct {
+    pub threadlocal var after_read: ?*const fn () void = null;
+} else struct {};
+
 /// Borrowed positional reader. Indexing shares an opened file and its bounded
 /// prefix across metadata, duration parsing, and hashing without moving a cursor.
 pub const Reader = struct {
@@ -15,6 +22,9 @@ pub const Reader = struct {
             0;
         if (cached > 0) @memcpy(dest[0..cached], self.prefix[@intCast(offset)..][0..cached]);
         if (cached == dest.len) return cached;
-        return cached + try self.handle.readPositionalAll(self.io, dest[cached..], offset + cached);
+        const read = try self.handle.readPositionalAll(self.io, dest[cached..], offset + cached);
+        if (bytes_read) |counter| counter.* += read;
+        if (comptime @import("builtin").is_test) if (Testing.after_read) |hook| hook();
+        return cached + read;
     }
 };

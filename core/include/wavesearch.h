@@ -10,7 +10,7 @@ typedef struct {
     char path[1024];
     char name[256];
     int  duration_ms;
-    int64_t content_hash; // opaque identity; negative values are provisional fast-scan identities
+    int64_t content_hash; // opaque identity; negative values are provisional or sampled, not exact duplicate proof
 } WSResult;
 
 #define WS_SEMANTIC_STATUS_VERSION 2u
@@ -480,8 +480,56 @@ int ws_waveform_cache_set_detailed_budget(int64_t bytes);
 // Freed SQLite pages are reused; this does not vacuum the database.
 int ws_waveform_cache_clear(void);
 
-// Returns how many indexed files share this content hash.
+// Returns the count only for current full-hash identities whose complete bytes
+// verify equal. Provisional, sampled, historical/unknown or ambiguous groups
+// return 0; source/cancellation/DB failures return -1. Includes the source itself.
+// This may read whole files: call off the UI thread and drain before shutdown.
 int ws_duplicate_count(int64_t content_hash);
+
+#define WS_FILE_IDENTITY_VERSION 1u
+#define WS_IDENTITY_UNKNOWN 0u
+#define WS_IDENTITY_FAST_PROVISIONAL 1u
+#define WS_IDENTITY_SAMPLED 2u
+#define WS_IDENTITY_FULL 3u
+#define WS_HASH_UNKNOWN 0u
+#define WS_HASH_WYHASH_SIZE_LE64_V1 1u
+typedef struct {
+    uint32_t struct_size, version;
+    int file_id;
+    uint32_t kind, algorithm, reserved;
+    int64_t content_hash, file_size, mtime_ns;
+} WSFileIdentity;
+// Indexed hash strength/algorithm; historical rows stay unknown until rescanned.
+// Full hashing is a candidate identity, not proof against a hash collision.
+int ws_file_identity_v1(int file_id, WSFileIdentity *out);
+
+#define WS_DUPLICATE_VERIFICATION_VERSION 1u
+typedef struct {
+    uint32_t struct_size, version;
+    int file_id;
+    uint32_t candidate_count, verified_count, reserved;
+    uint64_t source_bytes_read;
+} WSDuplicateVerification;
+// Request-local complete-byte verification of same hash/kind/algorithm/size
+// candidates, including fast/sampled identities. Includes the source itself.
+// No catalog mutation or cross-file analysis sharing. Constant scratch memory,
+// potentially large I/O; invoke off-main and drain before releasing file access.
+// Returns 0, -1 on failure, or WS_QUERY_CANCELLED; discard out on failure/cancel.
+int ws_duplicate_verify_v1(WSQueryRequest *request, int file_id,
+                            WSDuplicateVerification *out);
+
+#define WS_FINGERPRINT_STORAGE_RESULT_VERSION 1u
+typedef struct {
+    uint32_t struct_size, version, processed_count, reserved;
+    uint64_t bytes_before, bytes_after;
+} WSFingerprintStorageResult;
+// Explicit resumable lossless repack, max_files=1..1024, one row at a time.
+// Completed rows stay committed if a later row fails/cancels. No PCM decoding,
+// model/algorithm change, or posting/group rebuild. Freed pages remain reusable;
+// ws_backup_compact can create a smaller physical copy at a NEW path.
+// Returns 0, -1, or WS_QUERY_CANCELLED; discard out on failure/cancellation.
+int ws_fingerprint_storage_repack_v1(WSQueryRequest *request, int max_files,
+                                      WSFingerprintStorageResult *out);
 
 // Returns the last backend error message for diagnostics.
 const char *ws_last_error_message(void);

@@ -7,6 +7,11 @@ include schema-12 storage/counters, bounded retrieval/staging, pagination,
 metadata caching and graded ranking. The original inventory below remains
 historical; this follow-up does not claim every unchecked portability item done.
 
+Schema 14 adds [bounded fingerprint extraction, lossless repacking, and explicit
+source identity verification](INDEXING_STORAGE_IDENTITIES.md), with canonical v3
+output retained. Reduced-detail trigrams and on-demand universal waveforms remain
+experiments rather than assumed storage improvements.
+
 ## Scope and evidence
 
 Keep Zig, SQLite, and native frontends. The largest opportunities are eliminating unnecessary work, bounding concurrency, and keeping blocking operations away from the UI. This plan records the source review; it is not a new profiling report. References name the reviewed functions because line numbers change during implementation.

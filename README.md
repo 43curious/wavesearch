@@ -167,7 +167,8 @@ Start with the [documentation index](documentation/README.md), or go directly to
 - [Audio preview and editor imports](documentation/WAVEFORM_AND_AUDIO_PREVIEW.md).
 - [Waveform algorithm](documentation/WAVEFORM_ALGORITHM.md) and
   [cache design](documentation/WAVEFORM_CACHE_V10.md).
-- [Acoustic search and duplicate families](ACOUSTIC_SEARCH.md).
+- [Acoustic search and duplicate families](ACOUSTIC_SEARCH.md), including
+  [bounded extraction, lossless storage, and exact byte identity](documentation/INDEXING_STORAGE_IDENTITIES.md).
 - [Backup, recovery, and operations](OPERATIONS.md).
 - [Search optimizations](documentation/SEARCH_OPTIMIZATION_RESULTS.md) and
   [benchmarks](BENCHMARKS.md), including measured results and validation limits.

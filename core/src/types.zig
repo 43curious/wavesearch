@@ -19,6 +19,37 @@ pub const WSResult = extern struct {
     content_hash: i64,
 };
 
+pub const WSFileIdentity = extern struct {
+    struct_size: u32,
+    version: u32,
+    file_id: c_int,
+    kind: u32,
+    algorithm: u32,
+    reserved: u32,
+    content_hash: i64,
+    file_size: i64,
+    mtime_ns: i64,
+};
+
+pub const WSDuplicateVerification = extern struct {
+    struct_size: u32,
+    version: u32,
+    file_id: c_int,
+    candidate_count: u32,
+    verified_count: u32,
+    reserved: u32,
+    source_bytes_read: u64,
+};
+
+pub const WSFingerprintStorageResult = extern struct {
+    struct_size: u32,
+    version: u32,
+    processed_count: u32,
+    reserved: u32,
+    bytes_before: u64,
+    bytes_after: u64,
+};
+
 pub const WS_SEMANTIC_STATUS_VERSION: u32 = 2;
 pub const WSSemanticStatus = extern struct {
     struct_size: u32,

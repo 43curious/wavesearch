@@ -256,54 +256,97 @@ fn renderWindow(allocator: std.mem.Allocator, input: Input, parsed: Parsed, dest
     try query_cancel.check();
 }
 
-/// Decode the complete WAV timeline to bounded 16 kHz mono samples for
-/// fingerprints and waveforms. Source decoding is chunked, so high-rate or
-/// multichannel input does not require a whole-file PCM allocation.
-pub fn decodeFingerprintFile(allocator: std.mem.Allocator, io: std.Io, path: []const u8) ![]f32 {
-    try query_cancel.check();
-    var file = try std.Io.Dir.openFileAbsolute(io, path, .{});
-    defer file.close(io);
-    const stat = try file.stat(io);
-    if (stat.size > MAX_WAV_BYTES) return error.FileTooLarge;
-    const input: Input = .{ .file = .{ .handle = &file, .io = io, .size = stat.size } };
-    const parsed = try parseAudio(input);
-    if (parsed.format.encoding == .float) try validateFiniteFloatData(allocator, input, parsed);
-    const max_source_frames = @as(u64, parsed.format.sample_rate) * MAX_FINGERPRINT_SECONDS;
-    if (parsed.frames > max_source_frames) return error.FingerprintDurationLimit;
-    const output_count_u64 = (@as(u64, parsed.frames) * FINGERPRINT_SAMPLE_RATE) / parsed.format.sample_rate;
-    if (output_count_u64 == 0 or output_count_u64 > std.math.maxInt(usize)) return error.EmptyAudio;
-    const output_count: usize = @intCast(output_count_u64);
-    const output = try allocator.alloc(f32, output_count);
-    errdefer allocator.free(output);
+/// Full-timeline decoder with bounded source/work buffers and fused Float
+/// validation. Sparse semantic windows deliberately keep their separate pass.
+pub const FingerprintReader = struct {
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    file: std.Io.File,
+    path: []u8,
+    stat: std.Io.File.Stat,
+    parsed: Parsed,
+    output_count: usize,
+    output_start: usize = 0,
+    validated_until: usize = 0,
+    mono: []f32,
+    scratch: []u8,
+    coefficients: ?[]f32,
+    pub const max_chunk = 8192;
 
-    const output_chunk: usize = 64 * 1024;
-    const coefficients = if (parsed.format.sample_rate == FINGERPRINT_SAMPLE_RATE)
-        null
-    else
-        try makePolyphaseTable(allocator, parsed.format.sample_rate, FINGERPRINT_SAMPLE_RATE);
-    defer if (coefficients) |table| allocator.free(table);
-    var output_start: usize = 0;
-    while (output_start < output_count) {
+    pub fn initFile(allocator: std.mem.Allocator, io: std.Io, path: []const u8) !FingerprintReader {
         try query_cancel.check();
-        const output_end = @min(output_count, output_start + output_chunk);
-        const first_base = sourceBase(output_start, parsed.format.sample_rate, FINGERPRINT_SAMPLE_RATE);
-        const last_base = sourceBase(output_end - 1, parsed.format.sample_rate, FINGERPRINT_SAMPLE_RATE);
-        const source_start = first_base -| FILTER_RADIUS;
-        const source_end = @min(parsed.frames, last_base + FILTER_RADIUS + 2);
-        const mono = try decodeMonoRange(allocator, input, parsed, source_start, source_end - source_start);
-        defer allocator.free(mono);
-        for (output[output_start..output_end], output_start..) |*destination, output_index| {
-            if (output_index % 1024 == 0) try query_cancel.check();
-            const value = if (coefficients) |table|
-                resampleOne(mono, source_start, parsed.frames, output_index, parsed.format.sample_rate, FINGERPRINT_SAMPLE_RATE, false, table)
-            else
-                mono[output_index - source_start];
+        var file = try std.Io.Dir.openFileAbsolute(io, path, .{});
+        errdefer file.close(io);
+        const stat = try file.stat(io);
+        if (stat.size > MAX_WAV_BYTES) return error.FileTooLarge;
+        const parsed = try parseAudio(.{ .file = .{ .handle = &file, .io = io, .size = stat.size } });
+        if (parsed.frames > @as(u64, parsed.format.sample_rate) * MAX_FINGERPRINT_SECONDS) return error.FingerprintDurationLimit;
+        const output_count = (@as(u64, parsed.frames) * FINGERPRINT_SAMPLE_RATE) / parsed.format.sample_rate;
+        if (output_count == 0 or output_count > std.math.maxInt(usize)) return error.EmptyAudio;
+        const owned_path = try allocator.dupe(u8, path);
+        errdefer allocator.free(owned_path);
+        const mono = try allocator.alloc(f32, ((max_chunk + 1) * @as(usize, parsed.format.sample_rate)) / FINGERPRINT_SAMPLE_RATE + FILTER_TAPS + 4);
+        errdefer allocator.free(mono);
+        const scratch = try allocator.alloc(u8, SCRATCH_BYTES);
+        errdefer allocator.free(scratch);
+        const coefficients = if (parsed.format.sample_rate == FINGERPRINT_SAMPLE_RATE) null else try makePolyphaseTable(allocator, parsed.format.sample_rate, FINGERPRINT_SAMPLE_RATE);
+        return .{ .allocator = allocator, .io = io, .file = file, .path = owned_path, .stat = stat, .parsed = parsed, .output_count = @intCast(output_count), .mono = mono, .scratch = scratch, .coefficients = coefficients };
+    }
+
+    pub fn deinit(self: *FingerprintReader) void {
+        if (self.coefficients) |table| self.allocator.free(table);
+        self.allocator.free(self.scratch);
+        self.allocator.free(self.mono);
+        self.allocator.free(self.path);
+        self.file.close(self.io);
+        self.* = undefined;
+    }
+
+    pub fn next(self: *FingerprintReader, output: []f32) !usize {
+        try query_cancel.check();
+        if (output.len == 0 or output.len > max_chunk) return error.InvalidWindowSize;
+        if (self.output_start == self.output_count) {
+            if (self.validated_until != self.parsed.frames) return error.TruncatedAudio;
+            const current = try std.Io.Dir.cwd().statFile(self.io, self.path, .{});
+            const after = try self.file.stat(self.io);
+            if (current.inode != self.stat.inode or current.size != self.stat.size or current.mtime.nanoseconds != self.stat.mtime.nanoseconds or current.ctime.nanoseconds != self.stat.ctime.nanoseconds or after.size != self.stat.size or after.mtime.nanoseconds != self.stat.mtime.nanoseconds or after.ctime.nanoseconds != self.stat.ctime.nanoseconds) return error.FileChangedDuringScan;
+            return 0;
+        }
+        const end = @min(self.output_count, self.output_start + output.len);
+        const rate = self.parsed.format.sample_rate;
+        const first_base = sourceBase(self.output_start, rate, FINGERPRINT_SAMPLE_RATE);
+        const last_base = sourceBase(end - 1, rate, FINGERPRINT_SAMPLE_RATE);
+        const first = if (self.coefficients == null) self.output_start else first_base -| FILTER_RADIUS;
+        const last = if (end == self.output_count) self.parsed.frames else if (self.coefficients == null) end else @min(self.parsed.frames, last_base + FILTER_RADIUS + 2);
+        // Every source frame must be decoded, including the final fractional
+        // resampling tail. Supported rate ratios keep adjacent ranges overlapping.
+        if (first > self.validated_until or last - first > self.mono.len) return error.InvalidFrameRange;
+        const mono = self.mono[0 .. last - first];
+        try decodeMonoInto(.{ .file = .{ .handle = &self.file, .io = self.io, .size = self.stat.size } }, self.parsed, first, mono, self.scratch);
+        self.validated_until = last;
+        for (output[0 .. end - self.output_start], self.output_start..) |*destination, index| {
+            if (index % 1024 == 0) try query_cancel.check();
+            const value = if (self.coefficients) |table| resampleOne(mono, first, self.parsed.frames, index, rate, FINGERPRINT_SAMPLE_RATE, false, table) else mono[index - first];
             if (!std.math.isFinite(value)) return error.NonFiniteSample;
             destination.* = int16CompatibilityRoundTrip(value);
         }
-        output_start = output_end;
+        const count = end - self.output_start;
+        self.output_start = end;
+        return count;
     }
-    try query_cancel.check();
+};
+
+/// Compatibility helper for legacy waveform clients needing a PCM array.
+/// Acoustic extraction uses FingerprintReader directly and never calls this.
+pub fn decodeFingerprintFile(allocator: std.mem.Allocator, io: std.Io, path: []const u8) ![]f32 {
+    var reader = try FingerprintReader.initFile(allocator, io, path);
+    defer reader.deinit();
+    const output = try allocator.alloc(f32, reader.output_count);
+    errdefer allocator.free(output);
+    var offset: usize = 0;
+    while (offset < output.len) offset += try reader.next(output[offset..@min(output.len, offset + FingerprintReader.max_chunk)]);
+    var tail: [1]f32 = undefined;
+    _ = try reader.next(&tail);
     return output;
 }
 
@@ -630,27 +673,23 @@ fn validateFiniteFloatData(allocator: std.mem.Allocator, input: Input, parsed: P
     }
 }
 
-fn decodeMonoRange(
-    allocator: std.mem.Allocator,
-    input: Input,
-    parsed: Parsed,
-    first_frame: usize,
-    frame_count: usize,
-) ![]f32 {
-    if (first_frame > parsed.frames or frame_count > parsed.frames - first_frame) return error.InvalidFrameRange;
+fn decodeMonoRange(allocator: std.mem.Allocator, input: Input, parsed: Parsed, first_frame: usize, frame_count: usize) ![]f32 {
     const output = try allocator.alloc(f32, frame_count);
     errdefer allocator.free(output);
-    if (frame_count == 0) return output;
-
-    const frame_bytes: usize = parsed.format.block_align;
-    const frames_per_block = @max(@as(usize, 1), SCRATCH_BYTES / frame_bytes);
-    const scratch_size = frames_per_block * frame_bytes;
-    const scratch = try allocator.alloc(u8, scratch_size);
+    const scratch = try allocator.alloc(u8, SCRATCH_BYTES);
     defer allocator.free(scratch);
+    try decodeMonoInto(input, parsed, first_frame, output, scratch);
+    return output;
+}
 
+fn decodeMonoInto(input: Input, parsed: Parsed, first_frame: usize, output: []f32, scratch: []u8) !void {
+    if (first_frame > parsed.frames or output.len > parsed.frames - first_frame) return error.InvalidFrameRange;
+    const frame_bytes: usize = parsed.format.block_align;
+    const frames_per_block = scratch.len / frame_bytes;
+    if (frames_per_block == 0) return error.InvalidFrameRange;
     var done: usize = 0;
-    while (done < frame_count) {
-        const count = @min(frame_count - done, frames_per_block);
+    while (done < output.len) {
+        const count = @min(output.len - done, frames_per_block);
         const amount = count * frame_bytes;
         const frame_offset = std.math.mul(u64, first_frame + done, frame_bytes) catch return error.AudioTooLarge;
         const offset = std.math.add(u64, parsed.data_offset, frame_offset) catch return error.AudioTooLarge;
@@ -672,7 +711,6 @@ fn decodeMonoRange(
         }
         done += count;
     }
-    return output;
 }
 
 fn decodeSample(bytes: []const u8, endian: std.builtin.Endian, format: Format) f64 {
@@ -726,9 +764,28 @@ fn sourceBase(dst_index: usize, source_rate: u32, destination_rate: u32) usize {
     return @intCast((@as(u128, dst_index) * source_rate) / destination_rate);
 }
 
+const CachedTable = struct {
+    source_rate: u32 = 0,
+    destination_rate: u32 = 0,
+    weights: [(FILTER_PHASES + 1) * FILTER_TAPS]f32 = undefined,
+};
+var table_cache: [2]CachedTable = .{ .{}, .{} };
+var table_cache_next: usize = 0;
+var table_cache_mutex: @import("sync.zig").Mutex = .{};
+
 fn makePolyphaseTable(allocator: std.mem.Allocator, source_rate: u32, destination_rate: u32) ![]f32 {
     const table = try allocator.alloc(f32, (FILTER_PHASES + 1) * FILTER_TAPS);
     errdefer allocator.free(table);
+    table_cache_mutex.lock();
+    for (&table_cache) |*entry| {
+        if (entry.source_rate == source_rate and entry.destination_rate == destination_rate) {
+            @memcpy(table, &entry.weights);
+            table_cache_mutex.unlock();
+            try query_cancel.check();
+            return table;
+        }
+    }
+    table_cache_mutex.unlock();
     const cutoff: f64 = @min(1.0, @as(f64, @floatFromInt(destination_rate)) / @as(f64, @floatFromInt(source_rate))) * 0.94;
     for (0..FILTER_PHASES + 1) |phase| {
         if (phase % 32 == 0) try query_cancel.check();
@@ -750,6 +807,12 @@ fn makePolyphaseTable(allocator: std.mem.Allocator, source_rate: u32, destinatio
             weight.* = @floatCast(@as(f64, weight.*) / sum);
         }
     }
+    table_cache_mutex.lock();
+    table_cache[table_cache_next].source_rate = source_rate;
+    table_cache[table_cache_next].destination_rate = destination_rate;
+    @memcpy(&table_cache[table_cache_next].weights, table);
+    table_cache_next = (table_cache_next + 1) % table_cache.len;
+    table_cache_mutex.unlock();
     return table;
 }
 
@@ -1070,4 +1133,61 @@ test "44.1 kHz windowed-sinc resampling preserves sine and impulse timing" {
     }
     try std.testing.expect(peak_index >= 108 and peak_index <= 110);
     try std.testing.expect(peak > 0.85 and peak <= 1.0);
+}
+
+test "full streaming decode equals canonical PCM across rates, chunks and fractional tails" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const values = try allocator.alloc(f64, 8201 * 2);
+    defer allocator.free(values);
+    const pcm = try allocator.alloc(f32, values.len);
+    defer allocator.free(pcm);
+    var random = std.Random.DefaultPrng.init(871);
+    for (values, pcm) |*value, *sample| {
+        sample.* = random.random().float(f32) * 1.6 - 0.8;
+        value.* = sample.*;
+    }
+    for ([_]u32{ 8000, 44100, 96000, 384000 }) |rate| {
+        const wav = try makeTestWav(allocator, .{ .encoding = .float, .bits = 32, .channels = 2, .rate = rate }, values);
+        defer allocator.free(wav);
+        try tmp.dir.writeFile(io, .{ .sub_path = "stream.wav", .data = wav });
+        const path = try tmp.dir.realPathFileAlloc(io, "stream.wav", allocator);
+        defer allocator.free(path);
+        const expected = try canonicalizeInterleavedPcm(allocator, pcm, 8201, 2, rate);
+        defer allocator.free(expected);
+        for ([_]usize{ 17, 4096, 8192 }) |chunk| {
+            var reader = try FingerprintReader.initFile(allocator, io, path);
+            defer reader.deinit();
+            var actual: std.ArrayList(f32) = .empty;
+            defer actual.deinit(allocator);
+            var buffer: [8192]f32 = undefined;
+            while (true) {
+                const count = try reader.next(buffer[0..chunk]);
+                if (count == 0) break;
+                try actual.appendSlice(allocator, buffer[0..count]);
+            }
+            try std.testing.expectEqualSlices(f32, expected, actual.items);
+        }
+        // The last source frame can lie outside the final sinc neighborhood.
+        // Full-timeline validation must still reject it, including at 384 kHz.
+        values[values.len - 1] = std.math.nan(f64);
+        const corrupt = try makeTestWav(allocator, .{ .encoding = .float, .bits = 32, .channels = 2, .rate = rate }, values);
+        defer allocator.free(corrupt);
+        try tmp.dir.writeFile(io, .{ .sub_path = "stream.wav", .data = corrupt });
+        var reader = try FingerprintReader.initFile(allocator, io, path);
+        defer reader.deinit();
+        var buffer: [8192]f32 = undefined;
+        var rejected = false;
+        while (!rejected) {
+            const count = reader.next(&buffer) catch |err| {
+                try std.testing.expectEqual(error.NonFiniteSample, err);
+                rejected = true;
+                break;
+            };
+            try std.testing.expect(count != 0);
+        }
+        values[values.len - 1] = pcm[pcm.len - 1];
+    }
 }

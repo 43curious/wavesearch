@@ -81,7 +81,7 @@ Normal batch selection performs indexed traversal plus file lookups.
 
 Restore rebuilds derived queues from canonical backup data before publishing the
 restored catalog. Full integrity checks verify queue completeness and identity;
-compaction also checks consistency. Older binaries reject schema 13: use a
+compaction also checks consistency. The current schema is 14; older binaries reject it. Use a
 compatible backup when returning to an older binary. See
 [operations and recovery](../OPERATIONS.md).
 

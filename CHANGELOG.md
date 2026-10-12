@@ -12,6 +12,11 @@ changelog/agent documentation added afterward.
 
 ### Added
 
+- Explicit source hash kind/algorithm inspection and cancellable complete-byte
+  duplicate verification through additive C APIs. Schema 14 labels historical
+  identities unknown until a successful scan refreshes them.
+- Versioned lossless grouped fingerprint storage and explicit, resumable repacking
+  of legacy blobs, preserving landmarks, postings, and acoustic families.
 - Editor import preference in **Settings → General**, with **Keep the files in
   place** as the default and **Copy files to Exports** as an option.
 - A Finder shortcut to the Exports folder when copying is selected.
@@ -49,6 +54,13 @@ changelog/agent documentation added afterward.
 
 ### Fixed
 
+- File fingerprint extraction streams canonical PCM through bounded overlap
+  buffers instead of retaining the five-minute timeline. Full Float validation
+  is fused into decoding, duration rejection precedes payload reads, and bounded
+  resampler coefficient reuse preserves v3 output.
+- Normal head/tail hashes are marked sampled; matching weak hashes no longer
+  confirm exact duplicates. Legacy counts verify complete bytes for known
+  full-hash groups and return zero for unknown or ambiguous identities.
 - Unchanged-file rescans retain compact identity references instead of staging
   full paths and metadata again, and reconcile removals from the original
   snapshot without a second seen-path table. Relocation, cancellation, and

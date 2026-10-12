@@ -35,73 +35,123 @@ const Peak = struct {
 };
 
 pub fn fromFile(allocator: std.mem.Allocator, io: std.Io, path: []const u8) ![]Landmark {
-    const samples = try clap_audio.decodeFingerprintFile(allocator, io, path);
-    defer allocator.free(samples);
-    return fromSamples(allocator, samples);
+    var reader = try clap_audio.FingerprintReader.initFile(allocator, io, path);
+    defer reader.deinit();
+    var analyzer = Analyzer.init(allocator);
+    defer analyzer.deinit();
+    var samples: [4096]f32 = undefined;
+    while (true) {
+        const count = try reader.next(&samples);
+        if (count == 0) break;
+        try analyzer.push(samples[0..count]);
+    }
+    return analyzer.finish();
 }
 
 pub fn fromSamples(allocator: std.mem.Allocator, samples: []const f32) ![]Landmark {
-    try query_cancel.check();
-    if (samples.len < FFT_SIZE) return error.AudioTooShortForFingerprint;
-    const frame_count = 1 + (samples.len - FFT_SIZE) / HOP_SIZE;
-    const bin_count = MAX_BIN - MIN_BIN + 1;
-    // Five spectrogram rows cover the ±2-frame local-maximum neighborhood.
-    const powers = try allocator.alloc(f32, 5 * bin_count);
-    defer allocator.free(powers);
-    const real = try allocator.alloc(f64, FFT_SIZE);
-    defer allocator.free(real);
-    const imag = try allocator.alloc(f64, FFT_SIZE);
-    defer allocator.free(imag);
+    var analyzer = Analyzer.init(allocator);
+    defer analyzer.deinit();
+    try analyzer.push(samples);
+    return analyzer.finish();
+}
 
-    var window: [FFT_SIZE]f64 = undefined;
-    for (&window, 0..) |*value, i| {
-        const phase = 2.0 * std.math.pi * @as(f64, @floatFromInt(i)) / @as(f64, @floatFromInt(FFT_SIZE));
-        value.* = 0.5 - 0.5 * @cos(phase);
-    }
-    var peaks: [MAX_TARGET_DELTA + 1][MAX_PEAKS_PER_FRAME]Peak = undefined;
-    var peak_counts: [MAX_TARGET_DELTA + 1]u8 = @splat(0);
-    var landmarks: std.ArrayList(Landmark) = .empty;
-    errdefer landmarks.deinit(allocator);
-    // Delay peak selection by two rows, and landmark emission by 32 peaks.
-    // Tail flushes use the same clipped neighborhoods as the original algorithm.
-    for (0..frame_count + 2) |lookahead| {
-        try query_cancel.check();
-        if (lookahead < frame_count) {
-            const start = lookahead * HOP_SIZE;
-            for (0..FFT_SIZE) |i| {
-                real[i] = @as(f64, samples[start + i]) * window[i];
-                imag[i] = 0;
-            }
-            fft(real, imag);
-            for (MIN_BIN..MAX_BIN + 1) |bin| {
-                const magnitude = real[bin] * real[bin] + imag[bin] * imag[bin];
-                powers[(lookahead % 5) * bin_count + bin - MIN_BIN] = @floatCast(magnitude);
-            }
+/// Complete-timeline v3 extraction with bounded PCM overlap, five spectral
+/// rows, and delayed peak/landmark emission. Only the bounded output grows.
+pub const Analyzer = struct {
+    allocator: std.mem.Allocator,
+    pcm: [FFT_SIZE]f32 = undefined,
+    filled: usize = 0,
+    frame_count: usize = 0,
+    powers: [5 * (MAX_BIN - MIN_BIN + 1)]f32 = undefined,
+    real: [FFT_SIZE]f64 = undefined,
+    imag: [FFT_SIZE]f64 = undefined,
+    window: [FFT_SIZE]f64 = undefined,
+    peaks: [MAX_TARGET_DELTA + 1][MAX_PEAKS_PER_FRAME]Peak = undefined,
+    peak_counts: [MAX_TARGET_DELTA + 1]u8 = @splat(0),
+    landmarks: std.ArrayList(Landmark) = .empty,
+    finished: bool = false,
+
+    pub fn init(allocator: std.mem.Allocator) Analyzer {
+        var self: Analyzer = .{ .allocator = allocator };
+        for (&self.window, 0..) |*value, i| {
+            const phase = 2.0 * std.math.pi * @as(f64, @floatFromInt(i)) / @as(f64, @floatFromInt(FFT_SIZE));
+            value.* = 0.5 - 0.5 * @cos(phase);
         }
-        if (lookahead < 2) continue;
-        const frame = lookahead - 2;
-        const slot = frame % peaks.len;
-        peak_counts[slot] = 0;
-        const row = powers[(frame % 5) * bin_count ..][0..bin_count];
+        return self;
+    }
+
+    pub fn deinit(self: *Analyzer) void {
+        self.landmarks.deinit(self.allocator);
+        self.* = undefined;
+    }
+
+    pub fn push(self: *Analyzer, samples: []const f32) !void {
+        if (self.finished) return error.InvalidFingerprintState;
+        var offset: usize = 0;
+        while (offset < samples.len) {
+            try query_cancel.check();
+            const count = @min(samples.len - offset, FFT_SIZE - self.filled);
+            for (samples[offset..][0..count]) |sample| if (!std.math.isFinite(sample)) return error.NonFiniteSample;
+            @memcpy(self.pcm[self.filled..][0..count], samples[offset..][0..count]);
+            self.filled += count;
+            offset += count;
+            if (self.filled < FFT_SIZE) continue;
+            try self.processFrame();
+            std.mem.copyForwards(f32, self.pcm[0 .. FFT_SIZE - HOP_SIZE], self.pcm[HOP_SIZE..]);
+            self.filled -= HOP_SIZE;
+        }
+    }
+
+    fn processFrame(self: *Analyzer) !void {
+        const bin_count = MAX_BIN - MIN_BIN + 1;
+        const lookahead = self.frame_count;
+        for (0..FFT_SIZE) |i| {
+            self.real[i] = @as(f64, self.pcm[i]) * self.window[i];
+            self.imag[i] = 0;
+        }
+        fft(&self.real, &self.imag);
+        for (MIN_BIN..MAX_BIN + 1) |bin| {
+            const magnitude = self.real[bin] * self.real[bin] + self.imag[bin] * self.imag[bin];
+            self.powers[(lookahead % 5) * bin_count + bin - MIN_BIN] = @floatCast(magnitude);
+        }
+        self.frame_count += 1;
+        if (lookahead >= 2) try self.processPeak(lookahead - 2, self.frame_count);
+    }
+
+    fn processPeak(self: *Analyzer, frame: usize, frame_count: usize) !void {
+        const bin_count = MAX_BIN - MIN_BIN + 1;
+        const slot = frame % self.peaks.len;
+        self.peak_counts[slot] = 0;
+        const row = self.powers[(frame % 5) * bin_count ..][0..bin_count];
         var mean: f64 = 0;
         for (row) |value| mean += value;
         mean /= @as(f64, @floatFromInt(row.len));
         const threshold: f32 = @floatCast(mean * 2.5 + 1e-18);
         for (0..bin_count) |relative_bin| {
             const value = row[relative_bin];
-            if (value < threshold or !isLocalMaximum(powers, frame_count, bin_count, frame, relative_bin, value)) continue;
-            insertPeak(&peaks[slot], &peak_counts[slot], .{ .bin = @intCast(relative_bin + MIN_BIN), .power = value });
+            if (value < threshold or !isLocalMaximum(&self.powers, frame_count, bin_count, frame, relative_bin, value)) continue;
+            insertPeak(&self.peaks[slot], &self.peak_counts[slot], .{ .bin = @intCast(relative_bin + MIN_BIN), .power = value });
         }
-        if (frame >= MAX_TARGET_DELTA) try emitLandmarks(allocator, &landmarks, &peaks, &peak_counts, frame - MAX_TARGET_DELTA, frame_count);
+        if (frame >= MAX_TARGET_DELTA) try emitLandmarks(self.allocator, &self.landmarks, &self.peaks, &self.peak_counts, frame - MAX_TARGET_DELTA, frame_count);
     }
-    for (frame_count -| MAX_TARGET_DELTA..frame_count) |anchor| {
+
+    pub fn finish(self: *Analyzer) ![]Landmark {
+        if (self.finished) return error.InvalidFingerprintState;
+        self.finished = true;
         try query_cancel.check();
-        try emitLandmarks(allocator, &landmarks, &peaks, &peak_counts, anchor, frame_count);
+        if (self.frame_count == 0) return error.AudioTooShortForFingerprint;
+        // Flush the two lookahead rows and 32 delayed anchor frames with exactly
+        // the clipped tail neighborhoods used by the original batch algorithm.
+        for (self.frame_count -| 2..self.frame_count) |frame| try self.processPeak(frame, self.frame_count);
+        for (self.frame_count -| MAX_TARGET_DELTA..self.frame_count) |anchor| {
+            try query_cancel.check();
+            try emitLandmarks(self.allocator, &self.landmarks, &self.peaks, &self.peak_counts, anchor, self.frame_count);
+        }
+        if (self.landmarks.items.len < 6) return error.InsufficientFingerprintDetail;
+        std.mem.sort(Landmark, self.landmarks.items, {}, landmarkLessThan);
+        return self.landmarks.toOwnedSlice(self.allocator);
     }
-    if (landmarks.items.len < 6) return error.InsufficientFingerprintDetail;
-    std.mem.sort(Landmark, landmarks.items, {}, landmarkLessThan);
-    return landmarks.toOwnedSlice(allocator);
-}
+};
 
 fn emitLandmarks(allocator: std.mem.Allocator, landmarks: *std.ArrayList(Landmark), peaks: *const [MAX_TARGET_DELTA + 1][MAX_PEAKS_PER_FRAME]Peak, counts: *const [MAX_TARGET_DELTA + 1]u8, anchor_frame: usize, frame_count: usize) !void {
     for (peaks[anchor_frame % peaks.len][0..counts[anchor_frame % peaks.len]]) |anchor| {
@@ -197,7 +247,7 @@ test "rolling spectrogram preserves the v3 fingerprint bytes" {
     for (samples) |*sample| sample.* = random.random().float(f32) * 2 - 1;
     const landmarks = try fromSamples(allocator, samples);
     defer allocator.free(landmarks);
-    const blob = try serialize(allocator, landmarks);
+    const blob = try serializeRaw(allocator, landmarks);
     defer allocator.free(blob);
     try std.testing.expectEqual(@as(usize, 22404), landmarks.len);
     try std.testing.expectEqual(@as(u64, 0x4077abbfe9e0262d), std.hash.Wyhash.hash(0, blob));
@@ -336,7 +386,109 @@ pub fn selectors(allocator: std.mem.Allocator, landmarks: []const Landmark) ![]u
     return allocator.dupe(u32, unique.items[0..@min(SELECTOR_COUNT, unique.items.len)]);
 }
 
+// WFP1 groups sorted hashes and delta-encodes frame positions with bounded
+// unsigned LEB128. Legacy raw blobs stay readable; choose raw if it is smaller.
 pub fn serialize(allocator: std.mem.Allocator, landmarks: []const Landmark) ![]u8 {
+    if (landmarks.len > MAX_LANDMARKS or !std.sort.isSorted(Landmark, landmarks, {}, landmarkLessThan)) return error.InvalidFingerprintBlob;
+    var bytes: std.ArrayList(u8) = .empty;
+    defer bytes.deinit(allocator);
+    try bytes.appendNTimes(allocator, 0, 24);
+    var start: usize = 0;
+    var previous_hash: u32 = 0;
+    while (start < landmarks.len) {
+        try query_cancel.check();
+        var end = start + 1;
+        while (end < landmarks.len and landmarks[end].hash == landmarks[start].hash) : (end += 1) {}
+        try appendVarint(allocator, &bytes, landmarks[start].hash - previous_hash);
+        try appendVarint(allocator, &bytes, @intCast(end - start));
+        var previous_frame: u32 = 0;
+        for (landmarks[start..end], start..) |landmark, index| {
+            if (index % 1024 == 0) try query_cancel.check();
+            try appendVarint(allocator, &bytes, landmark.frame - previous_frame);
+            previous_frame = landmark.frame;
+        }
+        previous_hash = landmarks[start].hash;
+        start = end;
+    }
+    const payload_len = bytes.items.len - 24;
+    // The length tag also distinguishes compressed blobs from raw 8-byte pairs.
+    while (bytes.items.len % 8 != 1) try bytes.append(allocator, 0);
+    if (bytes.items.len >= landmarks.len * 8) return serializeRaw(allocator, landmarks);
+    @memcpy(bytes.items[0..4], "WFP1");
+    std.mem.writeInt(u32, bytes.items[4..8], 1, .little);
+    std.mem.writeInt(u32, bytes.items[8..12], @intCast(landmarks.len), .little);
+    std.mem.writeInt(u32, bytes.items[12..16], @intCast(payload_len), .little);
+    var checksum = std.hash.Wyhash.init(0);
+    checksum.update(bytes.items[0..16]);
+    checksum.update(bytes.items[24..][0..payload_len]);
+    std.mem.writeInt(u64, bytes.items[16..24], checksum.final(), .little);
+    return bytes.toOwnedSlice(allocator);
+}
+
+fn appendVarint(allocator: std.mem.Allocator, out: *std.ArrayList(u8), input: u32) !void {
+    var value = input;
+    while (value >= 128) {
+        try out.append(allocator, @as(u8, @truncate(value)) | 0x80);
+        value >>= 7;
+    }
+    try out.append(allocator, @intCast(value));
+}
+
+fn readVarint(bytes: []const u8, offset: *usize) !u32 {
+    var value: u32 = 0;
+    for (0..5) |i| {
+        if (offset.* == bytes.len) return error.InvalidFingerprintBlob;
+        const b = bytes[offset.*];
+        offset.* += 1;
+        if (i == 4 and b > 15) return error.InvalidFingerprintBlob;
+        value |= @as(u32, b & 0x7f) << @intCast(i * 7);
+        if (b & 0x80 == 0) {
+            if (i > 0 and b == 0) return error.InvalidFingerprintBlob;
+            return value;
+        }
+    }
+    return error.InvalidFingerprintBlob;
+}
+
+pub fn deserialize(allocator: std.mem.Allocator, bytes: []const u8) ![]Landmark {
+    try query_cancel.check();
+    if (bytes.len < 4 or !std.mem.eql(u8, bytes[0..4], "WFP1")) return deserializeRaw(allocator, bytes);
+    if (bytes.len < 25 or bytes.len % 8 != 1 or bytes.len > MAX_LANDMARKS * 11 + 32 or std.mem.readInt(u32, bytes[4..8], .little) != 1) return error.InvalidFingerprintBlob;
+    const count = std.mem.readInt(u32, bytes[8..12], .little);
+    const payload_len = std.mem.readInt(u32, bytes[12..16], .little);
+    if (count == 0 or count > MAX_LANDMARKS or payload_len > bytes.len - 24 or bytes.len - 24 - payload_len >= 8) return error.InvalidFingerprintBlob;
+    for (bytes[24 + payload_len ..]) |pad| if (pad != 0) return error.InvalidFingerprintBlob;
+    const payload = bytes[24..][0..payload_len];
+    var checksum = std.hash.Wyhash.init(0);
+    checksum.update(bytes[0..16]);
+    checksum.update(payload);
+    if (checksum.final() != std.mem.readInt(u64, bytes[16..24], .little)) return error.InvalidFingerprintBlob;
+    const landmarks = try allocator.alloc(Landmark, count);
+    errdefer allocator.free(landmarks);
+    var offset: usize = 0;
+    var row: usize = 0;
+    var previous_hash: u32 = 0;
+    while (row < count) {
+        try query_cancel.check();
+        const delta = try readVarint(payload, &offset);
+        if (row > 0 and delta == 0) return error.InvalidFingerprintBlob;
+        const hash = std.math.add(u32, previous_hash, delta) catch return error.InvalidFingerprintBlob;
+        const group = try readVarint(payload, &offset);
+        if (group == 0 or group > count - row) return error.InvalidFingerprintBlob;
+        var frame: u32 = 0;
+        for (landmarks[row..][0..group], row..) |*landmark, index| {
+            if (index % 1024 == 0) try query_cancel.check();
+            frame = std.math.add(u32, frame, try readVarint(payload, &offset)) catch return error.InvalidFingerprintBlob;
+            landmark.* = .{ .hash = hash, .frame = frame };
+        }
+        row += group;
+        previous_hash = hash;
+    }
+    if (offset != payload.len) return error.InvalidFingerprintBlob;
+    return landmarks;
+}
+
+pub fn serializeRaw(allocator: std.mem.Allocator, landmarks: []const Landmark) ![]u8 {
     const bytes = try allocator.alloc(u8, try std.math.mul(usize, landmarks.len, 8));
     for (landmarks, 0..) |landmark, i| {
         std.mem.writeInt(u32, bytes[i * 8 ..][0..4], landmark.hash, .little);
@@ -345,7 +497,7 @@ pub fn serialize(allocator: std.mem.Allocator, landmarks: []const Landmark) ![]u
     return bytes;
 }
 
-pub fn deserialize(allocator: std.mem.Allocator, bytes: []const u8) ![]Landmark {
+fn deserializeRaw(allocator: std.mem.Allocator, bytes: []const u8) ![]Landmark {
     if (bytes.len % 8 != 0 or bytes.len / 8 > MAX_LANDMARKS) return error.InvalidFingerprintBlob;
     const landmarks = try allocator.alloc(Landmark, bytes.len / 8);
     errdefer allocator.free(landmarks);
@@ -355,4 +507,72 @@ pub fn deserialize(allocator: std.mem.Allocator, bytes: []const u8) ![]Landmark 
     };
     if (!std.sort.isSorted(Landmark, landmarks, {}, landmarkLessThan)) return error.InvalidFingerprintBlob;
     return landmarks;
+}
+
+test "streamed landmark extraction is invariant to PCM chunk boundaries and cancellation" {
+    const allocator = std.testing.allocator;
+    const samples = try allocator.alloc(f32, 3 * 16000 + 191);
+    defer allocator.free(samples);
+    var random = std.Random.DefaultPrng.init(49);
+    for (samples) |*sample| sample.* = random.random().float(f32) * 2 - 1;
+    const expected = try fromSamples(allocator, samples);
+    defer allocator.free(expected);
+    for ([_]usize{ 1, 127, 256, 1023, 4096, 8192 }) |chunk| {
+        var analyzer = Analyzer.init(allocator);
+        defer analyzer.deinit();
+        var offset: usize = 0;
+        while (offset < samples.len) {
+            const end = @min(samples.len, offset + chunk);
+            try analyzer.push(samples[offset..end]);
+            offset = end;
+        }
+        const actual = try analyzer.finish();
+        defer allocator.free(actual);
+        try std.testing.expectEqualSlices(Landmark, expected, actual);
+    }
+    var request = query_cancel.Request{};
+    query_cancel.current = &request;
+    defer query_cancel.current = null;
+    var analyzer = Analyzer.init(allocator);
+    defer analyzer.deinit();
+    try analyzer.push(samples[0..2048]);
+    request.cancel();
+    try std.testing.expectError(error.Cancelled, analyzer.push(samples[2048..]));
+    try std.testing.expectError(error.Cancelled, analyzer.finish());
+}
+
+test "lossless grouped fingerprint storage preserves legacy landmarks and rejects corruption" {
+    const allocator = std.testing.allocator;
+    var landmarks: [1000]Landmark = undefined;
+    for (&landmarks, 0..) |*landmark, index| landmark.* = .{ .hash = @intCast(index / 25), .frame = @intCast((index % 25) * 150 + (index / 25)) };
+    const raw = try serializeRaw(allocator, &landmarks);
+    defer allocator.free(raw);
+    const compact = try serialize(allocator, &landmarks);
+    defer allocator.free(compact);
+    try std.testing.expect(compact.len < raw.len / 2);
+    for ([_][]const u8{ raw, compact }) |blob| {
+        const decoded = try deserialize(allocator, blob);
+        defer allocator.free(decoded);
+        try std.testing.expectEqualSlices(Landmark, &landmarks, decoded);
+        const match = try compare(allocator, &landmarks, decoded);
+        try std.testing.expect(match.highConfidence());
+    }
+    // Every encoded byte, including header/checksum/padding, is validated.
+    for (0..compact.len) |index| {
+        const original = compact[index];
+        compact[index] ^= 1;
+        try std.testing.expectError(error.InvalidFingerprintBlob, deserialize(allocator, compact));
+        compact[index] = original;
+    }
+    for (0..compact.len) |length| {
+        if (length % 8 == 0 and length < 4) continue; // Empty legacy blob.
+        try std.testing.expectError(error.InvalidFingerprintBlob, deserialize(allocator, compact[0..length]));
+    }
+    // Raw fallback covers tiny/high-entropy data and full uint32 boundaries.
+    const extremes = [_]Landmark{ .{ .hash = 0, .frame = 0 }, .{ .hash = std.math.maxInt(u32), .frame = std.math.maxInt(u32) } };
+    const tiny = try serialize(allocator, &extremes);
+    defer allocator.free(tiny);
+    const decoded = try deserialize(allocator, tiny);
+    defer allocator.free(decoded);
+    try std.testing.expectEqualSlices(Landmark, &extremes, decoded);
 }

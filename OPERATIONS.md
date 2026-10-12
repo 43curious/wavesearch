@@ -6,7 +6,8 @@
 should call `ws_index_folder_ex`. `WS_INDEX_FAST` publishes a searchable
 snapshot using at most five uniformly spaced 64 KiB identity samples per file
 and at most 256 KiB of recognized WAV metadata; fast identities are marked
-provisional and are never exposed as exact legacy hash-duplicate proof;
+provisional and are never exposed as exact legacy hash-duplicate proof. Normal
+head/tail samples above 16 MiB are also marked sampled;
 `WS_INDEX_DEEP` bypasses size/mtime reuse and streams every file byte through
 the content hash. All modes build a complete snapshot before the short SQLite publication transaction, so cancellation,
 filesystem errors, or process interruption cannot expose a partial folder.
@@ -121,6 +122,13 @@ v9-to-v10 two-tier waveform-cache migration, and legacy-schema preservation, bac
 integrity checks have automated regression tests.
 Schema 13 backfills pending queues during migration and rebuilds them from
 canonical data during restore, preserving existing analysis and unfinished work.
+
+Schema 14 preserves old fingerprints and labels historical hash strength/algorithm
+unknown. Successful rescans upgrade metadata; changed sampled-hash signs invalidate
+affected analysis normally. Explicit fingerprint repacking resumes per row, and
+restore/compaction validate both blob formats before publishing. Legacy duplicate
+counts may read whole files: keep them off-main. See
+[storage/identity contracts and costs](documentation/INDEXING_STORAGE_IDENTITIES.md).
 
 ## Background refinement modes
 

@@ -17,6 +17,9 @@ const query_cancel = @import("query.zig");
 const refinement_schedule = @import("refinement_schedule.zig");
 
 pub const WSResult = types.WSResult;
+pub const WSFileIdentity = types.WSFileIdentity;
+pub const WSDuplicateVerification = types.WSDuplicateVerification;
+pub const WSFingerprintStorageResult = types.WSFingerprintStorageResult;
 pub const WSSemanticStatus = types.WSSemanticStatus;
 pub const WSAcousticStatus = types.WSAcousticStatus;
 pub const WSExampleResult = types.WSExampleResult;
@@ -257,6 +260,71 @@ pub export fn ws_duplicate_count(content_hash: i64) c_int {
         setLastError(err);
         return -1;
     };
+}
+
+pub export fn ws_file_identity_v1(file_id: c_int, out: ?*WSFileIdentity) c_int {
+    const result = out orelse {
+        setLastErrorMessage("NullIdentityOutput");
+        return -1;
+    };
+    if (file_id <= 0 or result.struct_size < @sizeOf(WSFileIdentity)) {
+        setLastErrorMessage("InvalidIdentityArguments");
+        return -1;
+    }
+    const identity = db.fileIdentity(file_id) catch |err| {
+        setLastError(err);
+        return -1;
+    };
+    result.* = .{ .struct_size = @sizeOf(WSFileIdentity), .version = 1, .file_id = file_id, .kind = @backingInt(identity.kind), .algorithm = @backingInt(identity.algorithm), .reserved = 0, .content_hash = identity.hash, .file_size = identity.size, .mtime_ns = identity.mtime_ns };
+    return 0;
+}
+
+pub export fn ws_duplicate_verify_v1(request: ?*query_cancel.Request, file_id: c_int, out: ?*WSDuplicateVerification) c_int {
+    const previous = query_cancel.current;
+    query_cancel.current = request orelse {
+        setLastErrorMessage("NullQueryRequest");
+        return -1;
+    };
+    defer query_cancel.current = previous;
+    if (query_cancel.isCancelled()) return queryResult(0);
+    const result = out orelse {
+        setLastErrorMessage("NullVerificationOutput");
+        return -1;
+    };
+    if (file_id <= 0 or result.struct_size < @sizeOf(WSDuplicateVerification)) {
+        setLastErrorMessage("InvalidVerificationArguments");
+        return -1;
+    }
+    const verified = db.verifyDuplicates(file_id) catch |err| {
+        setLastError(err);
+        return queryResult(-1);
+    };
+    result.* = .{ .struct_size = @sizeOf(WSDuplicateVerification), .version = 1, .file_id = file_id, .candidate_count = verified.candidate_count, .verified_count = verified.verified_count, .reserved = 0, .source_bytes_read = verified.bytes_read };
+    return queryResult(0);
+}
+
+pub export fn ws_fingerprint_storage_repack_v1(request: ?*query_cancel.Request, max_files: c_int, out: ?*WSFingerprintStorageResult) c_int {
+    const previous = query_cancel.current;
+    query_cancel.current = request orelse {
+        setLastErrorMessage("NullQueryRequest");
+        return -1;
+    };
+    defer query_cancel.current = previous;
+    if (query_cancel.isCancelled()) return queryResult(0);
+    const result = out orelse {
+        setLastErrorMessage("NullStorageOutput");
+        return -1;
+    };
+    if (max_files <= 0 or max_files > 1024 or result.struct_size < @sizeOf(WSFingerprintStorageResult)) {
+        setLastErrorMessage("InvalidStorageArguments");
+        return -1;
+    }
+    const stored = db.repackFingerprints(allocator, @intCast(max_files)) catch |err| {
+        setLastError(err);
+        return queryResult(-1);
+    };
+    result.* = .{ .struct_size = @sizeOf(WSFingerprintStorageResult), .version = 1, .processed_count = stored.processed_count, .reserved = 0, .bytes_before = stored.bytes_before, .bytes_after = stored.bytes_after };
+    return queryResult(0);
 }
 
 pub export fn ws_query_create() ?*query_cancel.Request {
