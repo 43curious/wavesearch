@@ -1,4 +1,5 @@
 import Foundation
+import WaveSearchKit
 
 nonisolated enum RefinementMode: String, CaseIterable, Codable, Identifiable, Sendable {
     case fastOnly
@@ -38,6 +39,31 @@ nonisolated enum RefinementQueue: String, Sendable {
         case .acoustic: "acoustic fingerprints"
         case .semantic: "semantic embeddings"
         }
+    }
+}
+
+nonisolated struct RefinementSchedule {
+    private var cursor: UInt32 = 0
+    private var folderOffsets: [RefinementQueue: Int] = [:]
+
+    mutating func next(waveform: Bool, acoustic: Bool, semantic: Bool) -> RefinementQueue? {
+        let ready = (waveform ? WS_REFINEMENT_QUEUE_WAVEFORM : 0)
+            | (acoustic ? WS_REFINEMENT_QUEUE_ACOUSTIC : 0)
+            | (semantic ? WS_REFINEMENT_QUEUE_SEMANTIC : 0)
+        switch ws_refinement_next_queue(&cursor, ready) {
+        case WS_REFINEMENT_QUEUE_WAVEFORM: return .waveform
+        case WS_REFINEMENT_QUEUE_ACOUSTIC: return .acoustic
+        case WS_REFINEMENT_QUEUE_SEMANTIC: return .semantic
+        default: return nil
+        }
+    }
+
+    /// Each producer visits every available folder independently.
+    mutating func nextFolder(for queue: RefinementQueue, from folders: [Int32]) -> Int32? {
+        guard !folders.isEmpty else { return nil }
+        let offset = folderOffsets[queue, default: 0] % folders.count
+        folderOffsets[queue] = (offset + 1) % folders.count
+        return folders[offset]
     }
 }
 

@@ -24,6 +24,7 @@ test "module tests are included" {
     std.testing.refAllDecls(model_manifest);
     std.testing.refAllDecls(clap_provider);
     std.testing.refAllDecls(sync);
+    std.testing.refAllDecls(@import("refinement_schedule.zig"));
 }
 const abi_c = @import("c");
 const env_c = @import("c");

@@ -105,6 +105,11 @@ Se puede arrastrar el archivo completo a otra aplicación. También se puede sel
 
 Por ejemplo, si un archivo dura diez segundos pero solo necesitamos el golpe del segundo cuatro, podemos escoger esa parte.
 
+Por defecto, WaveSearch entrega el archivo original completo y el editor se
+encarga de recortarlo. Si elegimos **Copy files to Exports** en los ajustes,
+WaveSearch crea una copia del fragmento y la conserva para que el proyecto pueda
+seguir utilizándola.
+
 ---
 
 ## Las partes principales de la pantalla

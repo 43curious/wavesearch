@@ -22,6 +22,9 @@ current WaveSearch application.
 
 ## Related repository documents
 
+- [Repository audit](REPOSITORY_AUDIT.md) — cleanup evidence, build-product
+  removal, retained files, and fresh-source validation.
+
 The following top-level documents cover other parts of WaveSearch:
 
 - [`../README.md`](../README.md) — project overview and build instructions.

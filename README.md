@@ -195,6 +195,13 @@ then run the app from Xcode. A clean checkout regenerates the frameworks;
 build caches, personal Xcode state, and optional model/runtime artifacts are
 ignored. `make clean` removes local build caches and output.
 
+`make clean` also removes both generated XCFramework copies while preserving
+DerivedData outside its Build directory. `make distclean` removes the selected
+DerivedData directory too; use `DERIVED_DATA=/path/to/data` for a custom one.
+Optional models, fixture downloads, personal Xcode state, and persistent media
+are preserved. See the [repository audit](documentation/REPOSITORY_AUDIT.md)
+for cleanup findings and intentionally retained files.
+
 ### Checks
 
 ```bash

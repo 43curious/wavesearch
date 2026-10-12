@@ -115,6 +115,18 @@ int ws_cancel_indexing(void);
 int ws_cancel_refinement(void);
 int ws_operation_status(WSOperationStatus *out);
 
+#define WS_REFINEMENT_QUEUE_WAVEFORM 1u
+#define WS_REFINEMENT_QUEUE_ACOUSTIC 2u
+#define WS_REFINEMENT_QUEUE_SEMANTIC 4u
+// Nonblocking, allocation-free 2:1:1 queue selection. Initialize *cursor to 0
+// and retain it across admitted steps. ready_mask combines the constants above;
+// return one ready queue or 0 if none are ready (unknown bits are ignored).
+// A continuously ready queue gets a turn within four selections. Hosts enforce
+// admission, backoff, cancellation/draining, and one-file step limits. This is
+// a step-count bound, not a wall-clock guarantee. Caller owns/synchronizes cursor.
+// Does not require ws_init; a null cursor returns 0.
+uint32_t ws_refinement_next_queue(uint32_t *cursor, uint32_t ready_mask);
+
 // Run SQLite, foreign-key, FTS, vector, and fingerprint consistency checks.
 int ws_integrity_check(uint32_t flags, WSIntegrityReport *out);
 

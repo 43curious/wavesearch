@@ -27,7 +27,7 @@
       "size" : "128x128"
     },
     {
-      "filename" : "WaveSearch_Icon_Default_256 1.png",
+      "filename" : "WaveSearch_Icon_Default_256.png",
       "idiom" : "mac",
       "scale" : "2x",
       "size" : "128x128"
@@ -39,7 +39,7 @@
       "size" : "256x256"
     },
     {
-      "filename" : "WaveSearch_Icon_Default_512 1.png",
+      "filename" : "WaveSearch_Icon_Default_512.png",
       "idiom" : "mac",
       "scale" : "2x",
       "size" : "256x256"

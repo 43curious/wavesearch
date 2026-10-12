@@ -68,11 +68,11 @@ check-linux: check-format check-scripts
 	cd core && $(ZIG) build lib -Doptimize=safe -Dtarget=x86_64-linux-gnu --prefix zig-out/linux-x86_64
 
 clean:
-	rm -rf $(DERIVED_DATA)/Build
+	rm -rf "$(DERIVED_DATA)/Build"
+	rm -rf .zig-cache
 	cd core && rm -rf .zig-cache zig-out
-	rm -rf macos/WaveSearchKit.xcframework
-
-distclean: clean
-	rm -rf $(DERIVED_DATA)
 	rm -rf core/WaveSearchKit.xcframework
 	rm -rf macos/WaveSearch/WaveSearch/WaveSearchKit.xcframework
+
+distclean: clean
+	rm -rf "$(DERIVED_DATA)"

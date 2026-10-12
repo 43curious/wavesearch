@@ -17,7 +17,7 @@ publication. Restarting the operation resumes safely from the previous live
 snapshot; semantic and acoustic derived indexes independently resume from their
 persisted pending rows. The macOS app uses `WS_INDEX_FAST`, refreshes lexical
 results immediately after publication, then refines acoustic and semantic work
-in bounded 16-file batches on a single background worker, subject to the modes
+in bounded one-file steps on a single background worker, subject to the modes
 below. Schema 13 reads [durable pending indexes](documentation/REFINEMENT_QUEUES.md)
 so new calls and reopen avoid rescanning completed files. The worker yields
 while interactive search is active and pauses under serious thermal pressure. Accuracy algorithms
@@ -132,10 +132,18 @@ The mode never gates selected-file waveform or loudness analysis.
   universal-waveform work or invoke acoustic/semantic indexing. Existing derived
   rows remain intact. CLAP is unloaded to release model memory.
 - **Balanced** waits for 30 seconds of system-wide keyboard/mouse idle time and
-  AC power. It prioritizes universal waveforms and then alternates bounded
-  16-file acoustic and semantic batches. Files are analyzed serially.
+  AC power. It interleaves universal waveform, acoustic, and semantic work in
+  2:1:1 turns, skipping unavailable or parked queues. Files are analyzed serially.
 - **Complete** drains every currently available queue with the same bounded
-  batches without requiring idle time or AC power.
+  one-file steps without requiring idle time or AC power.
+
+The portable `ws_refinement_next_queue` helper selects admitted queue turns;
+native hosts supply readiness and own OS admission/backoff. Each continuously
+ready producer receives a turn within four selections. Acoustic and semantic
+producers rotate folders independently, so interleaving cannot partition
+libraries between them. This bounds queue opportunities, not wall-clock latency:
+an OS read, decoder, or model call may still finish before cancellation is
+observed. See [fair scheduling and validation](documentation/REFINEMENT_QUEUES.md#fair-background-scheduling).
 
 Balanced and Complete both pause for explicit user pause, metadata scans,
 search, playback, selected waveform analysis, serious/critical thermal state,

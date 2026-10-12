@@ -43,7 +43,7 @@ Read these references when touching the corresponding behavior:
 | CLAP loading, installation, or preprocessing | [Model contract](core/models/README.md); [relevance acceptance](core/models/RELEVANCE.md) |
 | Fingerprints, duplicate families, or example search | [Acoustic search](ACOUSTIC_SEARCH.md) |
 | Database lifecycle, backups, recovery, or library moves | [Operations](OPERATIONS.md) |
-| Platform boundaries, concurrency, or resource scheduling | [Performance and portability plan](documentation/PERFORMANCE_AND_PORTABILITY_PLAN.md) |
+| Platform boundaries, concurrency, or resource scheduling | [Performance and portability plan](documentation/PERFORMANCE_AND_PORTABILITY_PLAN.md); [fair scheduling](documentation/REFINEMENT_QUEUES.md#fair-background-scheduling) |
 
 Use [documentation/README.md](documentation/README.md) to find further references.
 Treat unchecked roadmap/plan items as proposals, and verify historical notes
@@ -88,8 +88,8 @@ Use existing checks appropriate to the change; fix failures before finishing.
   unverified. For documentation-only changes, check facts, local links, and
   `git diff --check`; an application rebuild is unnecessary.
 - When core code changes, rebuild the library used by Swift checks rather than
-  testing against a stale XCFramework. `scripts/test-app-lifecycle.sh` supports
-  `WS_CORE_LIBRARY` and `WS_CORE_HEADERS` overrides.
+  testing against a stale XCFramework. The lifecycle and refinement-policy
+  scripts support `WS_CORE_LIBRARY` and `WS_CORE_HEADERS` overrides.
 - Run benchmarks and real-audio acceptance only when relevant. Use disposable
   fixtures/catalogs, and keep synthetic, cold-storage, real-audio, and GUI
   results distinct. An emitted drag URL does not prove a DAW imported it.

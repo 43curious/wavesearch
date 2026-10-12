@@ -219,15 +219,17 @@ released without publishing a permanent failure, and mounted folders continue
 through bounded per-folder derived calls. The coordinator:
 
 1. Processes one file at a time.
-2. Yields after each file and takes a 10 ms cooperative pause after each
-   eight-file burst, avoiding the former 75 ms per-effect throughput tax.
+2. Yields after each file and interleaves available waveform/acoustic/semantic
+   queues in 2:1:1 turns, without a fixed per-file sleep.
 3. Cancels when foreground work needs the decoder.
 4. Pauses during playback, search, metadata scans, user pause, memory pressure,
    and serious/critical thermal state.
 5. Records unsupported sources and continues.
 
-AppStore makes acoustic and semantic refinement yield until universal waveform
-work drains, implementing the agreed priority order.
+The portable queue selector gives every continuously ready queue a turn within
+four selections. Acoustic and semantic producers rotate folders independently;
+waveform backlog no longer prevents their progress. See
+[fair scheduling and its wall-clock limits](REFINEMENT_QUEUES.md#fair-background-scheduling).
 
 ## Repository lookup and coalescing
 

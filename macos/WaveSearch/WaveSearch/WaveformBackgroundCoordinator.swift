@@ -29,8 +29,7 @@ final class BackgroundRefinementCoordinator {
     private var memoryPressureSource: DispatchSourceMemoryPressure?
     private var memoryConstrained = false
     private var observers: [(center: NotificationCenter, token: NSObjectProtocol)] = []
-    private var nextDerivedQueue: RefinementQueue = .acoustic
-    private var nextFolderOffset = 0
+    private var schedule = RefinementSchedule()
     private var waveformDeferredUntil = Date.distantPast
     private var consecutiveMissingWaveforms = 0
     private var acousticDeferredUntil = Date.distantPast
@@ -58,6 +57,7 @@ final class BackgroundRefinementCoordinator {
         generation = UUID()
         semanticCanBeConfigured = false
         semanticLoadAttempted = false
+        schedule = RefinementSchedule()
         lastModelProbe = .distantPast
         self.configuration = configuration
         self.stateProvider = stateProvider
@@ -271,23 +271,13 @@ final class BackgroundRefinementCoordinator {
 
     private func chooseQueue(snapshot: RefinementSnapshot) -> RefinementQueue? {
         let now = Date()
-        if snapshot.waveformPending > 0, now >= waveformDeferredUntil { return .waveform }
+        let waveformPending = snapshot.waveformPending > 0 && now >= waveformDeferredUntil
         let acousticPending = snapshot.acousticPending > 0 && now >= acousticDeferredUntil
         let semanticPending = (snapshot.semanticPending > 0 || !snapshot.semanticAvailable)
             && semanticCanBeConfigured
             && (!semanticLoadAttempted || snapshot.semanticAvailable)
             && now >= semanticDeferredUntil
-        switch (acousticPending, semanticPending) {
-        case (true, true):
-            let selected = nextDerivedQueue
-            nextDerivedQueue = selected == .acoustic ? .semantic : .acoustic
-            return selected
-        case (true, false): return .acoustic
-        case (false, true): return .semantic
-        case (false, false):
-            if snapshot.waveformPending > 0 { return nil }
-            return nil
-        }
+        return schedule.next(waveform: waveformPending, acoustic: acousticPending, semantic: semanticPending)
     }
 
     private func hasDeferredPendingWork(_ snapshot: RefinementSnapshot) -> Bool {
@@ -455,10 +445,10 @@ final class BackgroundRefinementCoordinator {
     }
 
     private func runAcousticStep(folderIDs: [Int32], pendingBefore: Int64) async {
-        guard !Task.isCancelled, let folderID = nextFolder(from: folderIDs) else { return }
+        guard !Task.isCancelled, let folderID = schedule.nextFolder(for: .acoustic, from: folderIDs) else { return }
         let expectedGeneration = ws_refinement_generation()
         let outcome = await Task.detached(priority: .background) { () -> (Int32, Int64?, String?) in
-            let result = ws_acoustic_index_pending_v2(folderID, 16, expectedGeneration)
+            let result = ws_acoustic_index_pending_v2(folderID, 1, expectedGeneration)
             var status = WSAcousticStatus()
             status.struct_size = UInt32(MemoryLayout<WSAcousticStatus>.size)
             let pending = ws_acoustic_status(&status) == 0 ? status.pending_count : nil
@@ -485,10 +475,10 @@ final class BackgroundRefinementCoordinator {
               await ensureSemanticProvider(),
               !Task.isCancelled else { return }
         if pendingBefore == 0 { return }
-        guard let folderID = nextFolder(from: folderIDs) else { return }
+        guard let folderID = schedule.nextFolder(for: .semantic, from: folderIDs) else { return }
         let expectedGeneration = ws_refinement_generation()
         let outcome = await Task.detached(priority: .background) { () -> (Int32, Int64?, String?) in
-            let result = ws_clap_index_pending_v2(folderID, 16, expectedGeneration)
+            let result = ws_clap_index_pending_v2(folderID, 1, expectedGeneration)
             var status = WSSemanticStatus()
             status.struct_size = UInt32(MemoryLayout<WSSemanticStatus>.size)
             let pending = ws_semantic_status(&status) == 0 ? status.pending_count : nil
@@ -544,13 +534,6 @@ final class BackgroundRefinementCoordinator {
         }
         lastError = outcome.1 ?? "Semantic provider could not be loaded"
         return false
-    }
-
-    private func nextFolder(from folderIDs: [Int32]) -> Int32? {
-        guard !folderIDs.isEmpty else { return nil }
-        let index = nextFolderOffset % folderIDs.count
-        nextFolderOffset = (index + 1) % folderIDs.count
-        return folderIDs[index]
     }
 
     private func release(_ claim: WSWaveformWorkClaim) async {

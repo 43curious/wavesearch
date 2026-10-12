@@ -79,6 +79,7 @@ struct AppStoreLifecycleCheck {
         await browsingAppendsPagesAndRetries()
         await playbackPreparationIsBoundedAndDrained()
         try await liveLibrarySmokeTest()
+        try await refinementProgressesBeforeWaveformBacklogDrains()
         try await waveformDragExportsRealSelectionURL()
         print("PASS: library lifecycle (startup, removal, shutdown, blocked work, availability, preferences)")
     }
@@ -708,6 +709,68 @@ struct AppStoreLifecycleCheck {
         precondition(retainedData == corrupt, "Retained database changed")
         await recovering.shutdown()
         print("PASS: catalog backup/restore, safety copy, moved library identities/favourites, failed recovery preservation, integrity and storage")
+    }
+
+    private static func refinementProgressesBeforeWaveformBacklogDrains() async throws {
+        let preferenceSuite = "\(suite)-fairness"
+        let isolatedPreferences = UserDefaults(suiteName: preferenceSuite)!
+        defer { isolatedPreferences.removePersistentDomain(forName: preferenceSuite) }
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("wavesearch-fairness-\(UUID().uuidString)")
+        let sounds = root.appendingPathComponent("sounds")
+        try FileManager.default.createDirectory(at: sounds, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        // A valid one-second effect; repeated sources keep the native fixture small.
+        var bytes: [UInt8] = [82,73,70,70,164,62,0,0,87,65,86,69,102,109,116,32,
+                             16,0,0,0,1,0,1,0,64,31,0,0,128,62,0,0,2,0,16,0,
+                             100,97,116,97,128,62,0,0]
+        for frame in 0..<8000 {
+            let value = Int16(10000 * sin(Double(frame) * (0.15 + Double(frame / 1000) * 0.01)))
+            let bits = UInt16(bitPattern: value)
+            bytes.append(UInt8(truncatingIfNeeded: bits))
+            bytes.append(UInt8(truncatingIfNeeded: bits >> 8))
+        }
+        for file in 0..<8 { try Data(bytes).write(to: sounds.appendingPathComponent("effect-\(file).wav")) }
+        let store = AppStore(storageDirectory: root.appendingPathComponent("catalog"), preferences: isolatedPreferences, startsRefinement: false)
+        store.bootstrap()
+        await store.waitUntilStarted()
+        precondition(store.isReady)
+        store.addFolder(at: sounds)
+        await store.waitForLibraryChange()
+        await store.waitForIndexing()
+        precondition(store.folders.count == 1 && store.folders[0].fileCount == 8)
+
+        let coordinator = BackgroundRefinementCoordinator()
+        let progressed = Signal(), paused = Signal()
+        var playing = false
+        var waveformRemaining: Int64 = 0
+        var acousticReady: Int64 = 0
+        coordinator.start(
+            configuration: .init(runtimeLibraryPath: "", modelDirectory: "", semanticThreads: 1),
+            stateProvider: {
+                .init(mode: .complete, userPaused: false, metadataScanning: false, searching: false,
+                      playing: playing, selectedAnalysis: false, thermalConstrained: false,
+                      memoryConstrained: false, lowPowerMode: false, onBattery: false,
+                      idleSeconds: 31, hasAvailableLibraries: true)
+            },
+            folderProvider: { store.folders.map { Int32($0.id) } },
+            snapshotHandler: { snapshot in
+                if snapshot.acousticReady > 0 {
+                    waveformRemaining = snapshot.waveformPending
+                    acousticReady = snapshot.acousticReady
+                    playing = true
+                    progressed.fire()
+                }
+                if snapshot.blocker == .playback { paused.fire() }
+            }
+        )
+        await progressed.wait()
+        coordinator.policyDidChange()
+        await paused.wait()
+        await coordinator.stopAndDrain()
+        precondition(waveformRemaining > 0, "Waveform backlog starved acoustic refinement")
+        precondition(acousticReady == 1, "Background selection processed more than one acoustic file")
+        await store.shutdown()
+        print("PASS: acoustic progress during waveform backlog, playback pause, and refinement drain")
     }
 
     private static func availabilityIsCachedCoalescedAndFresh() async {

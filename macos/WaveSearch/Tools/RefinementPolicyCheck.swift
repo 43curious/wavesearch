@@ -49,6 +49,28 @@ enum RefinementPolicyCheck {
 
         let invalid = RefinementMode(rawValue: "not-a-mode") ?? .balanced
         precondition(invalid == .balanced)
-        print("refinement policy: passed")
+        var schedule = RefinementSchedule()
+        let folders: [Int32] = [10, 20]
+        var visited: [RefinementQueue: [Int32]] = [:]
+        // Interleaving producers must not partition two folders between them.
+        for _ in 0..<3 {
+            for queue: RefinementQueue in [.acoustic, .semantic] {
+                visited[queue, default: []].append(schedule.nextFolder(for: queue, from: folders)!)
+            }
+        }
+        precondition(visited[.acoustic] == [10, 20, 10])
+        precondition(visited[.semantic] == [10, 20, 10])
+        precondition(schedule.nextFolder(for: .acoustic, from: []) == nil)
+        precondition(schedule.nextFolder(for: .acoustic, from: [30]) == 30)
+        // Exercise the actual C bridge with one unavailable optional producer.
+        var acousticTurns = 0
+        for _ in 0..<12 {
+            let queue = schedule.next(waveform: true, acoustic: true, semantic: false)
+            precondition(queue != nil && queue != .semantic)
+            if queue == .acoustic { acousticTurns += 1 }
+        }
+        precondition(acousticTurns >= 3)
+        precondition(schedule.next(waveform: false, acoustic: false, semantic: false) == nil)
+        print("refinement policy, fair queue selection and independent folder rotation: passed")
     }
 }

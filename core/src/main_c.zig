@@ -14,6 +14,7 @@ const waveform = @import("waveform.zig");
 const cancellation = @import("cancellation.zig");
 const sync = @import("sync.zig");
 const query_cancel = @import("query.zig");
+const refinement_schedule = @import("refinement_schedule.zig");
 
 pub const WSResult = types.WSResult;
 pub const WSSemanticStatus = types.WSSemanticStatus;
@@ -72,6 +73,10 @@ pub export fn ws_deinit() void {
     clap_provider.unload();
     semantic.reset();
     db.close();
+}
+
+pub export fn ws_refinement_next_queue(cursor: ?*u32, ready_mask: u32) u32 {
+    return refinement_schedule.next(cursor orelse return 0, ready_mask);
 }
 
 pub export fn ws_index_folder(folder_id: c_int, path: ?[*:0]const u8) c_int {

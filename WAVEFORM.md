@@ -68,7 +68,8 @@ seconds of system idle time on AC power, and **Complete** drains available work
 without idle/power requirements. Balanced is the default. Selected-file exact
 waveform and loudness work remains available in every mode.
 
-When admitted, the coordinator fills missing universal tiers first. Work is resumable because pending
+When admitted, the coordinator interleaves waveform, acoustic, and semantic
+one-file steps in 2:1:1 turns, skipping unavailable queues. Work is resumable because pending
 files are the indexed rows without a current universal tier. A five-minute
 cross-process lease is renewed every minute and explicitly released on
 cancellation; crashes become reclaimable after expiry. Selected-file requests
@@ -77,8 +78,9 @@ requests still coalesce by complete source identity and work profile.
 
 All background queues pause for playback, selected analysis, active search,
 metadata scans, user pause, serious/critical thermal state, and memory pressure.
-Acoustic and semantic refinement yield while available universal waveform work
-remains pending. Missing drives are parked and retried after mount/wake or a
+Every continuously ready queue gets a turn within four selections; acoustic and
+semantic producers rotate folders independently. This bounds opportunities,
+not the time spent inside a decoder or inference call. Missing drives are parked and retried after mount/wake or a
 bounded backoff; unsupported files are recorded by source identity and do not
 block mounted libraries.
 
@@ -89,9 +91,11 @@ lanes, played-region color, and a white playhead. A provisional-to-exact change
 crossfades over 100 ms without changing playhead or selection fractions.
 
 Dragging an unselected region creates a temporary range. A second drag beginning
-inside that range starts an AppKit file promise and writes exactly that source
-frame range as channel/sample-rate-preserving Float32 WAV for DaVinci or another
-drop target.
+inside that range starts a native file-URL drag. The default **Keep the files in
+place** preference supplies the full original URL for the editor to trim or
+copy. **Copy files to Exports** copies whole files unchanged and renders partial
+selections as channel/sample-rate-preserving PCM24 WAVs before starting the
+drag. Completed exports persist because editing projects may reference them.
 
 ## Loudness
 

@@ -23,6 +23,13 @@ changelog/agent documentation added afterward.
 
 ### Changed
 
+- Background refinement uses portable 2:1:1 waveform/acoustic/semantic turns
+  with one-file steps and independent per-producer folder rotation. Acoustic
+  and semantic work can progress before the waveform backlog drains; existing
+  admission, backoff, cancellation, and shutdown draining remain in force.
+- Consolidated byte-identical app icon assets and corrected `make clean` to
+  remove both generated XCFramework copies and root/core Zig caches. Documented
+  the repository audit and corrected outdated waveform/export guidance.
 - Result-row and waveform drags now honor the same editor import preference.
   Keeping files in place supplies the original library URL, including files on
   external drives. A selected range supplies the full original file for the

@@ -336,8 +336,8 @@ wait for LUFS refinement.
 | Decoder ends early | Analysis fails rather than showing a false silent tail. |
 | Sparse overview succeeds but exact+LUFS scan fails | The provisional overview remains visible for the current selection. |
 | Universal cache is valid but detailed generation fails | The exact universal view and cached normalization remain usable. |
-| Selected-range export fails | The file promise reports the error and partial output is removed. |
-| Drop is abandoned | No promised WAV is rendered. |
+| Copy/selected-range export fails | Drag preparation reports the error and removes incomplete output. |
+| Drag preparation is abandoned | Preparation is cancelled, incomplete output is removed, and no stale drag starts. Completed exports remain persistent. |
 
 ## 12. Supported formats
 
@@ -385,7 +385,7 @@ checking and exercised with a runtime smoke launch.
 | `macos/WaveSearch/WaveSearch/WaveformBackgroundCoordinator.swift` | Resumable one-file universal backfill and pause policy. |
 | `macos/WaveSearch/WaveSearch/WaveformSignposts.swift` | Points-of-Interest latency and queue instrumentation. |
 | `macos/WaveSearch/WaveSearch/WaveformView.swift` | Canvas rendering, playhead, selection display, AppKit pointer and drag session. |
-| `macos/WaveSearch/WaveSearch/AudioClipExport.swift` | File promise and selected-range Float32 WAV rendering. |
+| `macos/WaveSearch/WaveSearch/AudioClipExport.swift` | Original-file URLs, persistent whole-file copies, and selected-range PCM24 WAV rendering. |
 | `macos/WaveSearch/WaveSearch/PlayerPanel.swift` | `AVAudioPlayer`, progress timer, staged publication, LUFS gain, panel integration. |
 | `core/include/wavesearch.h` | Public opaque waveform-cache C ABI. |
 | `core/src/main_c.zig` | C ABI validation and error translation. |
@@ -397,6 +397,7 @@ checking and exercised with a runtime smoke launch.
 - Only the first two channels are drawn.
 - Selection has no draggable edge handles or numeric time fields.
 - Selection is temporary and is not restored after changing files or relaunching.
-- Export is Float32 WAV rather than the source container or codec.
+- Partial selections in Copy mode export as PCM24 WAV; whole-file copies preserve
+  the source container. Keep-in-place drags supply the full original file.
 - Loudness protection uses sample peak rather than oversampled true peak.
 - Rendering uses SwiftUI Canvas rather than a custom Metal waveform renderer.
