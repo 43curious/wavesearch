@@ -93,10 +93,11 @@ pub fn build(b: *std.Build) void {
     });
     waveform_abi_mod.addIncludePath(b.path("include"));
     waveform_abi_mod.addCSourceFile(.{ .file = b.path("src/waveform_abi_test.c"), .flags = &.{"-std=c11"} });
+    waveform_abi_mod.addCSourceFile(.{ .file = b.path("src/legacy_abi_test.c"), .flags = &.{"-std=c11"} });
     waveform_abi_mod.linkLibrary(native_lib);
     const waveform_abi_exe = b.addExecutable(.{ .name = "waveform-abi-test", .root_module = waveform_abi_mod });
     const run_waveform_abi = b.addRunArtifact(waveform_abi_exe);
-    const waveform_abi_step = b.step("waveform-abi", "Compile and run the public C waveform ABI contract");
+    const waveform_abi_step = b.step("waveform-abi", "Compile and run the public C ABI and waveform contract");
     waveform_abi_step.dependOn(&run_waveform_abi.step);
     test_step.dependOn(&run_waveform_abi.step);
 

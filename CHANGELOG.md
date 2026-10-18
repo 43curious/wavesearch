@@ -12,6 +12,12 @@ changelog/agent documentation added afterward.
 
 ### Added
 
+- Global C ABI version and compiled-capability queries, with documented buffer,
+  handle, concurrency and shutdown contracts and legacy/current C caller checks.
+- GitHub Actions native Linux core and macOS core/app/lifecycle/policy checks
+  using the pinned, checksum-verified Zig release and Xcode 26.6. A new
+  `check-macos-headless` target leaves desktop checks in local `make check`.
+
 - Opt-in long-recording CLAP coverage experiment comparing canonical five-window
   mean pooling with bounded timestamped segments and energy-rise selection.
   Includes held-out graded evaluation, negatives/localization/cost reporting,

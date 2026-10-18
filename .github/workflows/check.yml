@@ -1,0 +1,88 @@
+name: Checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux native core and C ABI
+            os: ubuntu-24.04
+          - name: macOS core, C ABI, app and headless checks
+            os: macos-26
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the pinned Zig release
+        run: |
+          set -euo pipefail
+          version="$(cat .zig-version)"
+          case "$(uname -s)/$(uname -m)" in
+            Linux/x86_64) platform=x86_64-linux ;;
+            Darwin/arm64) platform=aarch64-macos ;;
+            Darwin/x86_64) platform=x86_64-macos ;;
+            *) echo "Unsupported runner platform" >&2; exit 1 ;;
+          esac
+          curl --fail --silent --show-error --location --retry 3 \
+            https://ziglang.org/download/index.json -o "$RUNNER_TEMP/zig-index.json"
+          python3 - "$version" "$platform" "$RUNNER_TEMP/zig-index.json" > "$RUNNER_TEMP/zig-release.txt" <<'PY'
+          import json, sys
+          with open(sys.argv[3]) as source:
+              release = json.load(source)[sys.argv[1]][sys.argv[2]]
+          print(release["tarball"], release["shasum"])
+          PY
+          read -r url checksum < "$RUNNER_TEMP/zig-release.txt"
+          curl --fail --silent --show-error --location --retry 3 \
+            "$url" -o "$RUNNER_TEMP/zig.tar.xz"
+          echo "$checksum  $RUNNER_TEMP/zig.tar.xz" | shasum -a 256 --check
+          mkdir -p "$RUNNER_TEMP/zig"
+          tar -xJf "$RUNNER_TEMP/zig.tar.xz" --strip-components=1 -C "$RUNNER_TEMP/zig"
+          test "$("$RUNNER_TEMP/zig/zig" version)" = "$version"
+          echo "$RUNNER_TEMP/zig" >> "$GITHUB_PATH"
+
+      - name: Select Xcode 26.6
+        if: runner.os == 'macOS'
+        env:
+          DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+        run: |
+          test -d "$DEVELOPER_DIR"
+          echo "DEVELOPER_DIR=$DEVELOPER_DIR" >> "$GITHUB_ENV"
+          xcodebuild -version
+          swiftc --version
+
+      - name: Run native portable tests, C ABI checks and library build
+        run: make check-core
+
+      - name: Build the macOS app and run lifecycle and policy checks
+        if: runner.os == 'macOS'
+        env:
+          WS_CORE_LIBRARY: ${{ github.workspace }}/core/zig-out/lib/libwavesearch.a
+          WS_CORE_HEADERS: ${{ github.workspace }}/core/include
+        run: make check-macos-headless
+
+      - name: Report desktop checks
+        if: always() && runner.os == 'macOS'
+        run: |
+          echo '### Desktop validation' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Window chrome and Settings appearance checks are **not run** in hosted CI.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Run `make check` in a logged-in macOS desktop session to include them.' >> "$GITHUB_STEP_SUMMARY"

@@ -39,6 +39,18 @@ const allocator = std.heap.c_allocator;
 var mutation_mutex: sync.Mutex = .{};
 threadlocal var last_error_buf: [256:0]u8 = @splat(0);
 
+pub export fn ws_abi_version() u32 {
+    return 1;
+}
+
+pub export fn ws_capabilities() u64 {
+    // Compiled API families, independent of mutable catalog/provider state.
+    const c = @import("c");
+    return c.WS_CAP_QUERY_CANCELLATION | c.WS_CAP_WAVEFORM_V1 |
+        c.WS_CAP_EXTERNAL_SEMANTIC | c.WS_CAP_CLAP |
+        c.WS_CAP_EXACT_DUPLICATES | c.WS_CAP_FINGERPRINT_REPACK;
+}
+
 fn lockMutations() void {
     mutation_mutex.lock();
 }

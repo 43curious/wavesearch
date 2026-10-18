@@ -1,4 +1,4 @@
-.PHONY: core macos build check check-core check-macos check-linux check-format check-scripts check-toolchain clean distclean
+.PHONY: core macos build check check-core check-macos check-macos-headless check-linux check-format check-scripts check-toolchain clean distclean
 
 PROJECT := macos/WaveSearch/wavesearch.xcodeproj
 SCHEME := WaveSearch
@@ -55,9 +55,14 @@ check-core: check-format check-scripts
 	cd core && $(ZIG) build test -Doptimize=safe --summary all
 	cd core && $(ZIG) build lib -Doptimize=safe
 
-check-macos: macos
+# Hosted CI can run these compiled checks without a logged-in desktop. The app
+# build refreshes the XCFramework used by the scripts before they link it.
+check-macos-headless: macos
 	bash scripts/test-refinement-policy.sh
 	bash scripts/test-app-lifecycle.sh
+	@echo "PASS: macOS build and headless checks"
+
+check-macos: check-macos-headless
 	bash scripts/test-window-chrome.sh
 	bash scripts/test-settings-appearance.sh
 	@echo "PASS: macOS build and app checks"

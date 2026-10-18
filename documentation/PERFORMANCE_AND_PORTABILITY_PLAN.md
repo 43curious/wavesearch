@@ -258,10 +258,10 @@ Keep the library in-process; no daemon, RPC protocol, web frontend, or shared GP
 ### Engine ownership and C interface
 
 - [ ] Replace singleton DB/provider/job state with an opaque engine handle. `db.zig`, `clap_provider.zig`, `operations.zig`, and `cancellation.zig` hold shared process-global state today. Normally one engine serves the application, not one per window; independent engines should not cancel or close each other's work.
-- [ ] Specify blocking behavior, callback threads/reentrancy, cancellation, shutdown, allocation ownership, buffer lifetimes, versions, and capabilities.
+- [x] Document current blocking behavior, cancellation/draining, ownership, buffer lifetimes, ABI negotiation and compiled capabilities in the [C API contract](C_API.md). Calls are synchronous and invoke no host callbacks.
 - [ ] Prefer submit/result/progress operations over exposing internal scheduler bookkeeping.
 - [ ] Replace fixed path buffers in new interfaces with length-bearing strings or immutable result handles. Existing `WSResult.path[1024]` and `name[256]` are limiting; `db.copyText` and waveform work-item/claim copies in `main_c.zig` can silently truncate paths. Define UTF-8 byte lengths, embedded-NUL rejection, and explicit insufficient-buffer errors.
-- [ ] Specify stable ID widths, struct sizes/alignment, ABI version negotiation, and operation-local errors. Thread-local errors must be copied immediately on the thread that made the failing call.
+- [ ] Introduce explicitly sized IDs and operation-local errors in future interfaces. Current layouts and ABI negotiation are covered by the C API contract; thread-local errors must be copied immediately on the thread that made the failing call.
 - [ ] Add pagination/bulk metadata, C++ linkage guards and shared-library export macros.
 - [ ] Retain bounded PCM interfaces with portable WAV/AIFF and optional host/shared compressed decoders; preserve canonical semantics with platform acceleration.
 

@@ -176,6 +176,9 @@ Start with the [documentation index](documentation/README.md), or go directly to
 
 ## Developing
 
+External hosts should follow the [C API compatibility and lifecycle contract](documentation/C_API.md)
+for version/capability negotiation, ownership and worker draining.
+
 The repository keeps the portable core and native frontend together:
 
 ```text
@@ -206,12 +209,15 @@ for cleanup findings and intentionally retained files.
 ### Checks
 
 ```bash
-make check        # Full core checks, plus app build and Swift checks on macOS
-make check-core   # Portable formatting, script checks, tests, and library build
-make check-linux  # Cross-compile the Linux x86_64 core library from macOS
+make check                # Full core checks, app build and Swift checks on macOS
+make check-core           # Portable formatting, script checks, tests, library build
+make check-macos-headless # macOS build and lifecycle/policy checks without GUI tests
+make check-linux          # Cross-compile the Linux x86_64 core library from macOS
 ```
 
 The macOS window and Settings checks require a logged-in desktop session.
+GitHub Actions runs native Linux core checks and macOS core/app/headless checks
+on pushes and pull requests. See the [CI workflow and limits](documentation/CI.md).
 Optional model downloads and benchmarks are separate from normal checks.
 Use `make check ZIG=/path/to/zig` to select the pinned compiler explicitly.
 Cross-compilation checks compatibility; run `make check-core` on Linux to

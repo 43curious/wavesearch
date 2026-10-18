@@ -5,6 +5,9 @@ current WaveSearch application.
 
 ## Performance and portability
 
+- [C API compatibility and lifecycle](C_API.md) — ABI/capability negotiation,
+  buffer ownership, API-family concurrency and actual-work draining for hosts.
+
 - [Long-recording semantic coverage experiment](SEMANTIC_COVERAGE_EXPERIMENT.md)
   — opt-in segment/mean comparisons, held-out judgments, localization, costs,
   and the distinction between window coverage and real retrieval acceptance.
@@ -27,6 +30,9 @@ current WaveSearch application.
   signposts, migration, and benchmark gates.
 
 ## Related repository documents
+
+- [Continuous integration](CI.md) — native Linux/macOS jobs, pinned tools,
+  headless checks and the desktop validation that remains local.
 
 - [Repository audit](REPOSITORY_AUDIT.md) — cleanup evidence, build-product
   removal, retained files, and fresh-source validation.

@@ -36,6 +36,8 @@ Read these references when touching the corresponding behavior:
 
 | Change area | Reference |
 | --- | --- |
+| Public C API, ownership, or host lifecycle | [C API contract](documentation/C_API.md) |
+| CI or build/check entry points | [Continuous integration](documentation/CI.md) |
 | Playback, waveforms, selected-range imports | [Audio preview](documentation/WAVEFORM_AND_AUDIO_PREVIEW.md); [algorithm](documentation/WAVEFORM_ALGORITHM.md); [cache](documentation/WAVEFORM_CACHE_V10.md) |
 | Search ranking, storage, or performance | [Search optimizations](documentation/SEARCH_OPTIMIZATION_RESULTS.md); [benchmarks](BENCHMARKS.md) |
 | Filesystem scans or snapshot publication | [Compact staging](documentation/SEARCH_OPTIMIZATION_RESULTS.md#compact-scan-staging-and-filtered-retrieval-2026-10-11); [Operations](OPERATIONS.md) |
@@ -84,6 +86,8 @@ Use existing checks appropriate to the change; fix failures before finishing.
 - Swift changes: `make macos`, plus the relevant existing lifecycle, refinement,
   window, or Settings script. Window/Settings checks need a desktop session;
   run GUI checks sequentially so they do not compete for focus.
+- Headless macOS checks: `make check-core check-macos-headless`. Hosted CI skips
+  window/Settings interaction; local `make check` still includes both.
 - Before committing code, run `make check` for the repository's full check
   entry point. If the host cannot run part of it, report exactly what remains
   unverified. For documentation-only changes, check facts, local links, and

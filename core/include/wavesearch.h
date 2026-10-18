@@ -3,6 +3,44 @@
 
 #include <stdint.h>
 
+// Process-wide C ABI contract (independent of app/schema/model versions).
+// Check equality before ws_init, then require the capability bits your host uses.
+// Additive symbols/capabilities keep this version; incompatible changes bump it.
+// Existing layouts and signatures remain fixed; new layouts use new entry points.
+#define WS_ABI_VERSION 1u
+#define WS_CAP_QUERY_CANCELLATION (UINT64_C(1) << 0)
+#define WS_CAP_WAVEFORM_V1        (UINT64_C(1) << 1)
+#define WS_CAP_EXTERNAL_SEMANTIC  (UINT64_C(1) << 2)
+#define WS_CAP_CLAP              (UINT64_C(1) << 3)
+#define WS_CAP_EXACT_DUPLICATES  (UINT64_C(1) << 4)
+#define WS_CAP_FINGERPRINT_REPACK (UINT64_C(1) << 5)
+// Allocation-free, thread-safe, valid before init and after deinit. Capabilities
+// describe compiled APIs, not model installation, provider loading or DB state.
+// Ignore unknown bits. WS_CAP_CLAP never promises a model/runtime is available.
+uint32_t ws_abi_version(void);
+uint64_t ws_capabilities(void);
+
+// Host contract (full API-family details: documentation/C_API.md):
+// - Calls are synchronous; dispatch filesystem/DB/DSP/inference work off the UI
+//   thread. No callbacks or host executors are invoked by this API.
+// - One process-global catalog/provider. Serialize init/deinit/restore with ALL
+//   catalog/provider work: stop admission, cancel, join actual calls, then close.
+//   Cancellation/status are not drain barriers. Internal locks do not replace
+//   host lifecycle coordination or bound queued work.
+// - Inputs and output storage belong to the caller and must remain valid for
+//   the entire call. Inputs are borrowed only for the call; outputs are copies.
+//   Never share writable buffers concurrently or free library handles yourself.
+// - Query/analyzer/result handles have the explicit destroy functions below.
+//   Join users AND cancellers before destruction. Immutable results allow
+//   concurrent readers; query/analyzer calls on one handle must be sequential.
+// - Zero-initialize structs. Set struct_size to sizeof(the declared type).
+//   Status/work/identity outputs accept >= sizeof and write only that type;
+//   their version is output. WSExampleResult arrays require exact element size.
+//   Waveform config/PCM/info require exact size AND the declared input version.
+// - Strings are NUL-terminated UTF-8 byte strings. Fixed output string arrays
+//   are copies, may be truncated, and do not provide a long-path guarantee.
+//   Read result arrays only through the returned count; discard on failure.
+
 // A single search result
 typedef struct {
     int  file_id;
@@ -531,7 +569,9 @@ typedef struct {
 int ws_fingerprint_storage_repack_v1(WSQueryRequest *request, int max_files,
                                       WSFingerprintStorageResult *out);
 
-// Returns the last backend error message for diagnostics.
+// Borrowed thread-local NUL-terminated diagnostic (never free). Copy immediately
+// on the failing worker: the next failure on that thread overwrites it; success
+// need not clear it. Invalid after the thread exits. Not an error-code protocol.
 const char *ws_last_error_message(void);
 
 #endif // WAVESEARCH_H

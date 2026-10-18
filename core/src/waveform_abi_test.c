@@ -2,6 +2,12 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
+
+extern int ws_legacy_abi_test(void);
+
+_Static_assert(sizeof(WSResult) == 1304, "original result layout");
+_Static_assert(offsetof(WSResult, content_hash) == 1296, "original hash layout");
 
 _Static_assert(WS_WAVEFORM_ANALYZER_ABI_VERSION == 1u, "analyzer ABI");
 _Static_assert(sizeof(WSWaveformAnalyzerConfig) == 88, "config layout");
@@ -15,6 +21,33 @@ _Static_assert(offsetof(WSWaveformResultInfo, integrated_lufs) == 96, "loudness 
 _Static_assert(sizeof(WSWaveformPeak) == 8, "peak layout");
 
 int main(void) {
+    // A host can negotiate before opening any catalog or installing a model.
+    if (ws_abi_version() != WS_ABI_VERSION) return 30;
+    const uint64_t required_caps = WS_CAP_QUERY_CANCELLATION | WS_CAP_WAVEFORM_V1 |
+        WS_CAP_EXTERNAL_SEMANTIC | WS_CAP_CLAP | WS_CAP_EXACT_DUPLICATES |
+        WS_CAP_FINGERPRINT_REPACK;
+    if ((ws_capabilities() & required_caps) != required_caps) return 31;
+    int legacy_status = ws_legacy_abi_test();
+    if (legacy_status != 0) return legacy_status;
+    if (ws_abi_version() != WS_ABI_VERSION ||
+        (ws_capabilities() & required_caps) != required_caps) return 32;
+
+    // Undersized outputs are rejected without writes; a larger caller keeps
+    // its unknown tail. Operation status also works without an open catalog.
+    struct { WSOperationStatus status; uint64_t tail; } extended;
+    memset(&extended, 0xA5, sizeof(extended));
+    extended.status.struct_size = sizeof(WSOperationStatus) - 1;
+    unsigned char before[sizeof(extended)];
+    memcpy(before, &extended, sizeof(extended));
+    if (ws_operation_status(&extended.status) != -1 ||
+        memcmp(before, &extended, sizeof(extended)) != 0) return 33;
+    if (strcmp(ws_last_error_message(), "OperationStatusBufferTooSmall") != 0) return 34;
+    extended.status.struct_size = sizeof(extended);
+    if (ws_operation_status(&extended.status) != 0 ||
+        extended.status.struct_size != sizeof(WSOperationStatus) ||
+        extended.status.version != WS_OPERATION_STATUS_VERSION ||
+        extended.tail != UINT64_C(0xA5A5A5A5A5A5A5A5)) return 35;
+
     WSQueryRequest *request = ws_query_create();
     if (!request) return 20;
     ws_query_cancel(request);
@@ -42,6 +75,14 @@ int main(void) {
     config.channel_count = 1;
 
     WSWaveformAnalyzer *analyzer = NULL;
+    config.struct_size--;
+    if (ws_waveform_analyzer_create_v1(&config, &analyzer) != WS_WAVEFORM_ERROR_UNSUPPORTED_VERSION || analyzer) return 36;
+    config.struct_size += 2;
+    if (ws_waveform_analyzer_create_v1(&config, &analyzer) != WS_WAVEFORM_ERROR_UNSUPPORTED_VERSION || analyzer) return 37;
+    config.struct_size = sizeof(config);
+    config.version++;
+    if (ws_waveform_analyzer_create_v1(&config, &analyzer) != WS_WAVEFORM_ERROR_UNSUPPORTED_VERSION || analyzer) return 38;
+    config.version = WS_WAVEFORM_ANALYZER_ABI_VERSION;
     if (ws_waveform_analyzer_create_v1(&config, &analyzer) != WS_WAVEFORM_OK || !analyzer) return 1;
 
     WSWaveformPCMBuffer pcm = {0};
