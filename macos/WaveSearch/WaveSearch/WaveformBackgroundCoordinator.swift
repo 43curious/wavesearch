@@ -38,6 +38,7 @@ final class BackgroundRefinementCoordinator {
     private var acousticNoProgressFolders: Set<Int32> = []
     private var semanticNoProgressFolders: Set<Int32> = []
     private var semanticLoadAttempted = false
+    private var semanticProviderError: String?
     private var semanticProviderOwner: UUID?
     private var semanticLoadedByCoordinator: Bool { semanticProviderOwner != nil }
     private var semanticCanBeConfigured = false
@@ -58,6 +59,7 @@ final class BackgroundRefinementCoordinator {
         generation = UUID()
         semanticCanBeConfigured = false
         semanticLoadAttempted = false
+        semanticProviderError = nil
         schedule = RefinementSchedule()
         estimator = RefinementEstimator()
         lastModelProbe = .distantPast
@@ -90,6 +92,19 @@ final class BackgroundRefinementCoordinator {
     }
 
     func wake() {
+        startWorkerIfNeeded()
+    }
+
+    /// An explicit install/retry makes a previously failed provider eligible again.
+    func semanticInstallationDidChange() {
+        guard isRunning else { return }
+        semanticLoadAttempted = false
+        semanticProviderError = nil
+        lastModelProbe = .distantPast
+        lastError = nil
+        cachedSnapshot = nil
+        semanticDeferredUntil = .distantPast
+        semanticNoProgressFolders.removeAll()
         startWorkerIfNeeded()
     }
 
@@ -354,6 +369,7 @@ final class BackgroundRefinementCoordinator {
             snapshot.semanticAvailable = false
         }
         snapshot.lastError = lastError
+        snapshot.semanticProviderError = semanticProviderError
         cachedSnapshot = snapshot
         lastSnapshotRead = Date()
         return snapshot
@@ -526,7 +542,7 @@ final class BackgroundRefinementCoordinator {
             return ws_semantic_status(&semantic) == 0 && semantic.provider_loaded != 0
         }.value
         guard isRunning, !Task.isCancelled, generation == owner else { return false }
-        if status { return true }
+        if status { semanticProviderError = nil; return true }
         guard !semanticLoadAttempted, semanticCanBeConfigured, let configuration else { return false }
         semanticLoadAttempted = true
         // This load is registered in activeStep before stop can run. Draining
@@ -546,10 +562,12 @@ final class BackgroundRefinementCoordinator {
             return false
         }
         if outcome.0 == 0 {
+            semanticProviderError = nil
             lastError = nil
             return true
         }
         lastError = outcome.1 ?? "Semantic provider could not be loaded"
+        semanticProviderError = lastError
         return false
     }
 

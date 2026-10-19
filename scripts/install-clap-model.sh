@@ -1,8 +1,8 @@
 #!/bin/sh
 set -eu
 
-# Explicit, opt-in installer for the WaveSearch Phase 2 CLAP pack. The app and
-# normal build never invoke this script or perform model/runtime downloads.
+# Explicit, opt-in CLI installer. The native Settings installer uses the same
+# pinned artifacts; normal builds and tests never download models or runtimes.
 if [ "$#" -gt 1 ]; then
     echo "Usage: $0 [INSTALL_PARENT_DIRECTORY]" >&2
     echo "Downloads about 800 MB and installs an additional ONNX Runtime archive." >&2

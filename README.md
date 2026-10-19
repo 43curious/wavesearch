@@ -187,7 +187,12 @@ Exact filenames keep priority. See [vocabulary and evaluation limits](documentat
 ## Optional semantic search
 
 CLAP adds offline semantic search to the existing lexical and acoustic search.
-It requires an explicit, verified model/runtime installation of about 800 MB:
+On Apple silicon Macs, open **Settings → General → Optional semantic search**
+to review the terms and start a download. The installer shows progress, supports
+cancel/retry, and verifies files before activation. Allow 1.5 GB of free disk
+space for the roughly 800 MB model pack and runtime. Nothing downloads at startup.
+
+The CLI installer remains available:
 
 ```bash
 ./scripts/install-clap-model.sh
@@ -195,8 +200,8 @@ It requires an explicit, verified model/runtime installation of about 800 MB:
 
 The pinned installer supports macOS arm64 and Linux x86_64. It installs the
 verified `muzaiten/clap-htsat-base-onnx` pack and a dynamically loaded ONNX
-Runtime. The app performs no model downloads, and lexical search remains
-available when the provider is absent or cannot load.
+Runtime. Lexical search remains available during installation and when the
+provider is absent or cannot load. The pinned macOS runtime requires Apple silicon.
 
 Built-in semantic indexing supports WAV and uncompressed AIFF/AIFC.
 Host-decoded compressed audio can use the interleaved-PCM search API;

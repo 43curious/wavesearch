@@ -147,6 +147,12 @@ enumeration before publishing removals.
 
 ## Background refinement modes
 
+Install optional semantic search through **Settings → General → Optional semantic
+search**, or use the CLI installer. Downloads require an explicit terms action;
+startup never starts one. Verify/repair and provider retry are separate controls,
+and lexical search remains available. Repairs retain the previous model bundle;
+see [installation, cleanup and signed-release limits](core/models/README.md).
+
 WaveSearch persists one of three producer policies under
 `ws_refinement_mode_v1`; an absent or invalid preference defaults to **Balanced**.
 The mode never gates selected-file waveform or loudness analysis.

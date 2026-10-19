@@ -155,6 +155,7 @@ nonisolated struct RefinementSnapshot: Sendable {
     var semanticFailed: Int64 = 0
     var semanticAvailable: Bool = true
     var semanticConfigured: Bool = false
+    var semanticProviderError: String?
     var lastError: String?
     var estimates: [RefinementQueue: RefinementEstimate] = [:]
     var deferredQueues: Set<RefinementQueue> = []

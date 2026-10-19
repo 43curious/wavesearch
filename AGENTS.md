@@ -73,7 +73,9 @@ against the implementation before relying on them.
 - Native host workers can have small stacks. Avoid large stack scratch buffers
   when sorting core records that contain full paths.
 - Keep optional model/runtime downloads explicit and opt-in. Normal builds and
-  tests must work without installing models.
+  tests must work without installing models. The native installer owns and drains
+  its network/staging task at shutdown; verify before atomic activation and
+  retain the previous bundle when repairing. See [model setup](core/models/README.md).
 - Keep temporary preview ranges in `PlayerController` so waveform selection,
   keyboard marks, auditioning, and selected-range exports share the same bounds.
 - Scope bare preview/navigation keys to results focus. Preserve text editing
@@ -105,8 +107,8 @@ Use existing checks appropriate to the change; fix failures before finishing.
   unverified. For documentation-only changes, check facts, local links, and
   `git diff --check`; an application rebuild is unnecessary.
 - When core code changes, rebuild the library used by Swift checks rather than
-  testing against a stale XCFramework. The lifecycle and refinement-policy
-  scripts and `test-library-watching.sh` support `WS_CORE_LIBRARY` and
+  testing against a stale XCFramework. The lifecycle, refinement-policy,
+  `test-clap-installer.sh` and watcher scripts support `WS_CORE_LIBRARY` and
   `WS_CORE_HEADERS` overrides. Watcher checks inject events by default;
   `--native` additionally needs working FSEvents. Unrelated AppStore fixtures
   should set `watchesLibraries: false` to avoid unsolicited reconciliation.

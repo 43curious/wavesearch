@@ -13,6 +13,7 @@ struct RefinementSettingsView: View {
     var body: some View {
         Form {
             SearchShortcutSettings()
+            CLAPInstallationView(installer: store.modelInstaller)
             Section("Library changes") {
                 Toggle("Keep libraries up to date", isOn: Binding(
                     get: { store.keepsLibrariesUpdated }, set: { store.setKeepsLibrariesUpdated($0) }

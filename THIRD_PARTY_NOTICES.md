@@ -1,7 +1,8 @@
 # Third-party notices for optional CLAP support
 
 Optional semantic support is not included in WaveSearch distributions. Users
-who invoke `scripts/install-clap-model.sh` obtain these components directly:
+who explicitly agree to the Settings download or invoke
+`scripts/install-clap-model.sh` obtain these components directly:
 
 - **muzaiten/clap-htsat-base-onnx**, pinned commit
   `d4d4372c9894b975ec118589b4f4328103796e15`. The repository identifies the

@@ -73,7 +73,7 @@ jobs:
       - name: Run native portable tests, C ABI checks and library build
         run: make check-core
 
-      - name: Build the macOS app and run lifecycle, policy and watcher checks
+      - name: Build the macOS app and run lifecycle, policy, installer and watcher checks
         if: runner.os == 'macOS'
         env:
           WS_CORE_LIBRARY: ${{ github.workspace }}/core/zig-out/lib/libwavesearch.a

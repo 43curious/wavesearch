@@ -152,6 +152,7 @@ final class AppStore: ObservableObject {
     private var activeSearchOperations = 0
     private var lastSearchRequest: String = ""
     private let refinementCoordinator = BackgroundRefinementCoordinator()
+    let modelInstaller: CLAPInstallationController
     private var playerSubscriptions: Set<AnyCancellable> = []
 
     init(storageDirectory: URL? = nil, backend: LibraryBackend = .live,
@@ -174,6 +175,7 @@ final class AppStore: ObservableObject {
         let dir = storageDirectory ?? appSupport.appendingPathComponent("WaveSearch")
         dbPath = dir.appendingPathComponent("index.db").path
         semanticInstallRoot = dir.appendingPathComponent("wavesearch-clap").path
+        modelInstaller = CLAPInstallationController(root: URL(fileURLWithPath: semanticInstallRoot))
         favouritePaths = Set(preferences.stringArray(forKey: favouritesKey) ?? [])
         refinementMode = RefinementMode(
             rawValue: preferences.string(forKey: refinementModeKey) ?? ""
@@ -202,10 +204,12 @@ final class AppStore: ObservableObject {
         stopAvailabilityMonitoring()
         libraryWatcher.stop()
         refinementCoordinator.stop()
+        modelInstaller.cancel()
         _ = ws_cancel_indexing()
         backendWork.suspend()
         BlockingWorkRegistry.hostFiles.suspend()
         shutdownTask = Task {
+            await modelInstaller.cancelAndDrain()
             // Startup/removal retain their ownership until their workers return.
             await startupTask?.value
             await libraryChangeTask?.value
@@ -263,6 +267,7 @@ final class AppStore: ObservableObject {
             startRefinement()
             startAvailabilityMonitoring()
             updateLibraryWatching()
+            modelInstaller.refresh()
             refreshSearch()
         }
     }
@@ -317,6 +322,19 @@ final class AppStore: ObservableObject {
                 self?.applyRefinementSnapshot(snapshot)
             }
         )
+    }
+
+    func installSemanticModel() {
+        guard canUseLibrary else { return }
+        modelInstaller.install { [weak self] in
+            guard let self, self.canUseLibrary else { return }
+            self.refinementCoordinator.semanticInstallationDidChange()
+        }
+    }
+
+    func retrySemanticProvider() {
+        guard canUseLibrary else { return }
+        refinementCoordinator.semanticInstallationDidChange()
     }
 
     private var refinementPolicyInput: RefinementPolicyInput {

@@ -59,6 +59,7 @@ check-core: check-format check-scripts
 # build refreshes the XCFramework used by the scripts before they link it.
 check-macos-headless: macos
 	bash scripts/test-refinement-policy.sh
+	bash scripts/test-clap-installer.sh
 	bash scripts/test-library-watching.sh
 	bash scripts/test-app-lifecycle.sh
 	@echo "PASS: macOS build and headless checks"

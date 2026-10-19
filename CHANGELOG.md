@@ -12,6 +12,10 @@ changelog/agent documentation added afterward.
 
 ### Added
 
+- Opt-in semantic model installation in Settings with terms, per-file progress,
+  cancel/retry, pinned integrity checks and atomic activation. Repair retains
+  the previous bundle; provider retry and lexical fallback remain available.
+  Model-free installer fixtures run in the headless macOS checks.
 - Automatic macOS library watching, enabled by default with a General setting.
   Coalesced FSEvents reconcile one library at a time, defer to foreground work,
   recover from downtime/lost events, and stop/drain before library teardown.
