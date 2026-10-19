@@ -12,8 +12,9 @@ The checkout action is pinned to a commit.
 | `ubuntu-24.04` (x86_64) | `make check-core`: formatting, shell syntax, native Zig tests, compiled legacy/current C ABI contract, optional-harness compilation and native static library build. |
 | `macos-26` | The same native core checks, then `make check-macos-headless`: universal core XCFramework, Debug Swift app build, refinement-policy check and app lifecycle checks. Swift checks link the native library rebuilt by `check-core` using `WS_CORE_LIBRARY`/`WS_CORE_HEADERS`. |
 
-Linux tests execute on Linux; the existing `make check-linux` cross-compilation
-target remains a separate local check. The macOS job selects Xcode 26.6 through
+Linux tests execute on Linux; `make check-linux` separately cross-compiles the
+library, Zig tests, audio-fuzz executable, C ABI executable and coverage harness
+without running them. The macOS job selects Xcode 26.6 through
 `DEVELOPER_DIR`, fails if it is unavailable, and logs Xcode/Swift versions. The
 app uses ad-hoc signing and needs no signing certificate or Apple credentials.
 
@@ -62,6 +63,7 @@ overwrites it. These bounded checks do not establish exhaustive parser safety.
 
 ```bash
 make check-core                 # Execute portable checks on this host
+make check-linux                # Compile Linux library + check executables only
 make check-macos-headless       # macOS app + policy/lifecycle, rebuilt XCFramework
 make check                      # Full local check, including desktop interaction
 ```
@@ -72,3 +74,8 @@ path and `WS_CORE_HEADERS` to the absolute `core/include` path when running the
 headless target. The default scripts instead link the freshly built universal
 XCFramework. A hosted run can only validate committed work once it has been
 pushed; local checks and workflow linting do not prove a hosted job succeeded.
+
+Peak-RSS reporting uses Zig's libc `rusage` binding. Translated glibc headers
+can place `ru_maxrss` inside an anonymous union, so directly accessing that
+field in the generated C import is not portable. The helper still reports
+bytes, converting Linux's KiB value and preserving macOS's byte value.

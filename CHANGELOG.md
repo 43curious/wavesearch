@@ -86,6 +86,9 @@ changelog/agent documentation added afterward.
 
 ### Fixed
 
+- Linux core-check compilation now uses Zig's libc peak-RSS binding rather than
+  assuming glibc's translated `rusage` has a top-level `ru_maxrss` field.
+  `make check-linux` also compiles the test and coverage-check executables.
 - Global shortcut restoration explicitly makes the visible search window key
   before focusing its field, fixing intermittent minimize-to-search activation.
 - Combined duration filters now intersect regardless of order, including

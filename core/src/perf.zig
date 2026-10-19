@@ -4,7 +4,6 @@ const db = @import("db.zig");
 const search = @import("search.zig");
 const types = @import("types.zig");
 const audio = @import("audio.zig");
-const c = @import("c");
 
 const RUNS: usize = 30;
 
@@ -132,8 +131,9 @@ fn seconds(ns: anytype) f64 {
 }
 
 pub fn peakRssBytes() u64 {
-    var usage: c.struct_rusage = undefined;
-    if (c.getrusage(c.RUSAGE_SELF, &usage) != 0) return 0;
-    const raw: u64 = @intCast(@max(usage.ru_maxrss, 0));
+    // Zig's libc binding avoids translated anonymous unions in glibc rusage.
+    var usage: std.c.rusage = undefined;
+    if (std.c.getrusage(std.c.rusage.SELF, &usage) != 0) return 0;
+    const raw: u64 = @intCast(@max(usage.maxrss, 0));
     return if (builtin.os.tag == .macos) raw else raw * 1024;
 }

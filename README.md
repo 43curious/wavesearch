@@ -239,7 +239,7 @@ for cleanup findings and intentionally retained files.
 make check                # Full core checks, app build and Swift checks on macOS
 make check-core           # Portable formatting, script checks, tests, library build
 make check-macos-headless # macOS build and lifecycle/policy checks without GUI tests
-make check-linux          # Cross-compile the Linux x86_64 core library from macOS
+make check-linux          # Cross-compile the Linux x86_64 library and core checks
 ```
 
 The macOS window and Settings checks require a logged-in desktop session.

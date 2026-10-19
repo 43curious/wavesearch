@@ -190,6 +190,10 @@ pub fn build(b: *std.Build) void {
     b.step("coverage-relevance", "Opt-in mean/segment CLAP coverage comparison with held-out judgments").dependOn(&run_coverage.step);
     // Compile the optional harness in ordinary checks; never load/download models.
     test_step.dependOn(&coverage_exe.step);
+    const check_compile = b.step("check-compile", "Compile core check executables without running them");
+    for ([_]*std.Build.Step.Compile{ tests, fuzz_exe, waveform_abi_exe, coverage_exe }) |artifact| {
+        check_compile.dependOn(&artifact.step);
+    }
 
     const acoustic_acceptance_mod = b.createModule(.{
         .root_source_file = b.path("src/acoustic_acceptance.zig"),

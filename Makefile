@@ -67,10 +67,10 @@ check-macos: check-macos-headless
 	bash scripts/test-settings-appearance.sh
 	@echo "PASS: macOS build and app checks"
 
-# Cross-compilation validates the Linux C ABI/library on a Mac; run check-core
-# on a Linux host to execute the tests there.
+# Cross-compile the library and all core check executables without running them.
+# Run check-core on Linux to execute the native tests there.
 check-linux: check-format check-scripts
-	cd core && $(ZIG) build lib -Doptimize=safe -Dtarget=x86_64-linux-gnu --prefix zig-out/linux-x86_64
+	cd core && $(ZIG) build lib check-compile -Doptimize=safe -Dtarget=x86_64-linux-gnu --prefix zig-out/linux-x86_64
 
 clean:
 	rm -rf "$(DERIVED_DATA)/Build"

@@ -87,7 +87,8 @@ against the implementation before relying on them.
 Use existing checks appropriate to the change; fix failures before finishing.
 
 - Core changes: `make check-core`. Changes to platform code also need native
-  execution on the affected OS; `make check-linux` only checks compilation.
+  execution on the affected OS; `make check-linux` compiles the Linux library
+  and core check executables without running them.
 - Swift changes: `make macos`, plus the relevant existing lifecycle, refinement,
   window, or Settings script. Window/Settings checks need a desktop session;
   run GUI checks sequentially so they do not compete for focus.
