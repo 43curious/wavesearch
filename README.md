@@ -139,7 +139,8 @@ They exclude pauses and other queues; Balanced mode cannot promise a finish time
 | **⌘K** or **/** | Focus search |
 | **⌃⌘S** | Show/hide the sidebar |
 | **⌘,** | Open Settings |
-| **Esc** | Leave search |
+| **Esc** | Move from search to results; from results back to search |
+| **Tab / ⇧Tab** | Move between native controls |
 | **j / k** or **↓ / ↑** | Next / previous result |
 | **gg / G** | First / last result |
 | **Return** | Play the selected result from the in point |
@@ -147,6 +148,17 @@ They exclude pauses and other queues; Balanced mode cannot promise a finish time
 | **h / l** | Shuttle backward / forward; repeat to accelerate |
 | **i / o** | Set in / out points |
 | **b** | Reveal the selected file in Finder |
+| **⌘⇧C** | Copy the selected sound/range for an editor, using the import preference |
+| **⌘⇧O** | Add a library |
+| **?** or **⌘?** | Open keyboard shortcut help |
+
+Bare preview keys work when results have focus; text editing and other focused
+controls keep their normal keys. Use **Help → Keyboard Shortcuts** for the
+in-app reference. The **Preview position** slider supports keyboard/VoiceOver
+seeking before setting **In / Out** points. **Copy for Editor** provides a file
+URL to paste into compatible editors; keep-in-place mode supplies the full
+original even for a range. The **Library** menu provides selected-library
+management. See [accessibility workflows and verification limits](documentation/ACCESSIBILITY.md).
 
 ### Duration filters
 

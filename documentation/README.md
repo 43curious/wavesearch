@@ -23,6 +23,8 @@ current WaveSearch application.
 
 ## Audio preview and waveform
 
+- [Keyboard and accessibility workflows](ACCESSIBILITY.md) — focus scopes,
+  shortcut help, VoiceOver semantics, keyboard editor copies and acceptance limits.
 - [Waveform and audio preview system](WAVEFORM_AND_AUDIO_PREVIEW.md) — user
   behavior, architecture, cache, rendering, export, failures, and validation.
 - [Waveform algorithm reference](WAVEFORM_ALGORITHM.md) — formulas, sparse and

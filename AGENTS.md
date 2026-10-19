@@ -73,6 +73,9 @@ against the implementation before relying on them.
   tests must work without installing models.
 - Keep temporary preview ranges in `PlayerController` so waveform selection,
   keyboard marks, auditioning, and selected-range exports share the same bounds.
+- Scope bare preview/navigation keys to results focus. Preserve text editing
+  and native control keys, and provide keyboard and accessibility alternatives
+  to pointer-only interactions. See [accessibility](documentation/ACCESSIBILITY.md).
 - Editor imports default to **Keep the files in place**, passing the full
   original URL even for a selected range. **Copy files to Exports** copies whole
   files unchanged and renders partial selections as PCM24 WAVs. Exports are

@@ -556,6 +556,7 @@ struct GlobalPlaybackBar: View {
                         )
                     }
                     .disabled(file == nil)
+                    .accessibilityValue(file.map { store.isFavourite($0) } == true ? "Favourite" : "Not a favourite")
                 }
                 .buttonStyle(.borderless)
                 .font(.system(size: 12, weight: .medium))
@@ -573,6 +574,8 @@ struct GlobalPlaybackBar: View {
                     )
                     .controlSize(.small)
                     .frame(width: 132)
+                    .accessibilityLabel("Preview volume")
+                    .accessibilityValue("\(Int(player.volume * 100)) percent")
                     Image(systemName: "speaker.wave.3.fill")
                         .foregroundStyle(.secondary)
                 }
@@ -613,10 +616,30 @@ struct GlobalPlaybackBar: View {
 
 struct PlayerPanel: View {
     let file: SoundFile
+    @EnvironmentObject private var store: AppStore
     @ObservedObject private var player = PlayerController.shared
+    @StateObject private var clipboard = AudioImportClipboard()
+
+    private var isCurrent: Bool { player.currentFile == file }
+    private var positionDescription: String {
+        guard isCurrent, !player.isPreparing else { return "Preparing preview" }
+        guard player.duration > 0 else { return "Preview unavailable" }
+        return "\(timeString(player.progress * player.duration)) of \(timeString(player.duration))"
+    }
+
+    private var rangeDescription: String {
+        guard isCurrent, let range = player.selection else { return "Whole file" }
+        return "In \(timeString(range.lowerBound * player.duration)), out \(timeString(range.upperBound * player.duration))"
+    }
+
+    private var waveformDescription: String {
+        let analysis = !isCurrent || player.isAnalyzingWaveform
+            ? "Analyzing waveform" : player.waveformData == nil ? "Waveform unavailable" : "Waveform ready"
+        return "\(analysis). \(positionDescription). \(rangeDescription)"
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: 12) {
             Text(file.displayName)
                 .font(.system(size: 20, weight: .semibold))
                 .lineLimit(2)
@@ -629,20 +652,56 @@ struct PlayerPanel: View {
                     ForEach(PreviewRate.allCases) { rate in Text(rate.title).tag(rate) }
                 }
                 .frame(width: 130)
-                Button("In") { player.markIn() }.help("Set the in point at the playhead (i)")
-                Button("Out") { player.markOut() }.help("Set the out point at the playhead (o)")
+                Button("In") { player.markIn() }
+                    .help("Set the in point at the playhead (i)")
+                    .accessibilityLabel("Set in point")
+                Button("Out") { player.markOut() }
+                    .help("Set the out point at the playhead (o)")
+                    .accessibilityLabel("Set out point")
                 Button("Clear Range") { player.setSelection(nil) }
                     .disabled(player.selection == nil)
                 Spacer()
                 if let range = player.selection {
                     Text("\(timeString(range.lowerBound * player.duration)) – \(timeString(range.upperBound * player.duration))")
                         .monospacedDigit()
-                        .accessibilityLabel("Preview range")
+                        .accessibilityLabel(rangeDescription)
                 }
             }
             .font(.system(size: 11))
             .controlSize(.small)
-            .disabled(player.currentFile != file)
+            .disabled(!isCurrent)
+
+            HStack {
+                Slider(value: Binding(
+                    get: { isCurrent ? player.progress * player.duration : 0 },
+                    set: { player.seek(to: $0 / max(player.duration, 0.01)) }
+                ), in: 0...max(player.duration, 0.01), step: 0.01) {
+                    Text("Preview position")
+                }
+                .accessibilityValue(positionDescription)
+                .help("Seek with Left and Right, then use In and Out to mark a range")
+                .disabled(!isCurrent || player.isPreparing || player.duration <= 0)
+                Text(positionDescription)
+                    .font(.system(size: 10, design: .monospaced))
+                    .accessibilityHidden(true)
+                Button("Copy for Editor") {
+                    clipboard.copy(file: file, range: player.selection) {
+                        store.canUseLibrary && store.selectedFile == file
+                    }
+                }
+                .keyboardShortcut("c", modifiers: [.command, .shift])
+                .disabled(!isCurrent || !store.canUseLibrary || clipboard.isCopying)
+                .help("Copy a file URL using your editor import preference; selected ranges are trimmed only in Copy files to Exports mode")
+            }
+            .controlSize(.small)
+
+            if !clipboard.status.isEmpty {
+                Text(clipboard.status)
+                    .font(.caption)
+                    .lineLimit(2)
+                    .accessibilityLabel("Editor copy status")
+                    .accessibilityValue(clipboard.status)
+            }
 
             WaveformView(
                 data: player.currentFile == file ? player.waveformData : nil,
@@ -657,7 +716,11 @@ struct PlayerPanel: View {
             )
             .id("\(file.id):\(file.contentHash):\(file.path)")
             .frame(maxWidth: .infinity)
-            .frame(height: 240)
+            .frame(maxHeight: .infinity)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Waveform")
+            .accessibilityValue(waveformDescription)
+            .accessibilityHint("Use Preview position to seek, and Set in point and Set out point to select a range")
         }
         .padding(.horizontal, 22)
         .padding(.top, 28)
@@ -665,6 +728,11 @@ struct PlayerPanel: View {
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .frame(height: 380)
         .background(AppTheme.panelSunken)
+        .onChange(of: file) { _, _ in clipboard.cancel() }
+        .onDisappear { clipboard.cancel() }
+        .onChange(of: clipboard.status) { _, status in
+            if !status.isEmpty { announceAccessibility(status) }
+        }
     }
 }
 

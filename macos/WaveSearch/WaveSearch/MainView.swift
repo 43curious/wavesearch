@@ -6,7 +6,8 @@ struct MainView: View {
     @State private var query: String = ""
     @FocusState private var searchFocused: Bool
     @State private var keyMonitor: Any?
-    @State private var mouseMonitor: Any?
+    @FocusState private var resultsFocused: Bool
+    @Environment(\.openWindow) private var openWindow
     @State private var lastGPress: Date?
 
     var body: some View {
@@ -20,7 +21,7 @@ struct MainView: View {
             if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && store.selectedFolderId == nil && !store.isExampleSearch {
                 LibraryOverviewView()
             } else {
-                SearchWorkspaceView()
+                SearchWorkspaceView(resultsFocused: $resultsFocused)
             }
         }
         .background(AppTheme.panel)
@@ -30,7 +31,6 @@ struct MainView: View {
             query = store.query
             searchFocused = true
             installKeyboardMonitor()
-            installMouseMonitor()
             // If a folder is already selected, trigger a browse
             if store.selectedFolderId != nil && store.query.isEmpty {
                 store.search("")
@@ -38,7 +38,6 @@ struct MainView: View {
         }
         .onDisappear {
             removeKeyboardMonitor()
-            removeMouseMonitor()
         }
         .onReceive(NotificationCenter.default.publisher(for: GlobalSearchShortcut.focusNotification)) { _ in
             focusSearch()
@@ -51,12 +50,25 @@ struct MainView: View {
                 query = newValue
             }
         }
+        .onChange(of: store.isSearching) { wasSearching, isSearching in
+            if wasSearching, !isSearching, store.canUseLibrary {
+                announceAccessibility(store.lastBackendError ?? "\(store.results.count) sounds loaded")
+            }
+        }
+        .onChange(of: store.isMetadataScanning) { _, _ in
+            if !store.indexingPhase.isEmpty { announceAccessibility(store.indexingPhase) }
+        }
+        .onChange(of: store.isRefinementPaused) { _, paused in
+            announceAccessibility(paused ? "Background refinement paused" : "Background refinement resumed")
+        }
     }
 
     private func installKeyboardMonitor() {
         guard keyMonitor == nil else { return }
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            guard event.window?.identifier?.rawValue == "main" else { return event }
+            guard event.window?.identifier?.rawValue == "main",
+                  event.window?.attachedSheet == nil, NSApp.modalWindow == nil,
+                  store.canUseLibrary else { return event }
             // Arrow keys can carry function/numeric-pad flags; Caps Lock also
             // must not disable the normal preview/navigation commands.
             let modifiers = event.modifierFlags.intersection([.command, .control, .option, .shift])
@@ -67,13 +79,22 @@ struct MainView: View {
             }
 
             if searchFocused || isTextInputFocused() {
-                if event.keyCode == 53 { // Esc
+                if event.keyCode == 53, modifiers.isEmpty { // Esc
                     searchFocused = false
-                    event.window?.makeFirstResponder(nil)
+                    resultsFocused = true
                     return nil
                 }
                 return event
             }
+
+            if event.characters == "?", modifiers.isEmpty || modifiers == .shift {
+                openWindow(id: "shortcuts")
+                return nil
+            }
+
+            // Bare preview keys belong to results. Native sidebar, slider, button,
+            // picker and menu focus keeps its normal keyboard behavior.
+            guard resultsFocused else { return event }
 
             if modifiers == .shift, event.keyCode == 5 { // G
                 store.selectLastResult()
@@ -87,8 +108,7 @@ struct MainView: View {
                 focusSearch()
                 return nil
             case 53: // Esc
-                searchFocused = false
-                event.window?.makeFirstResponder(nil)
+                focusSearch()
                 return nil
             case 49: // Space
                 PlayerController.shared.togglePlayPause()
@@ -145,44 +165,9 @@ struct MainView: View {
         }
     }
 
-    private func installMouseMonitor() {
-        guard mouseMonitor == nil else { return }
-        mouseMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { event in
-            guard let window = event.window,
-                  let contentView = window.contentView
-            else { return event }
-
-            let point = contentView.convert(event.locationInWindow, from: nil)
-            let hitView = contentView.hitTest(point)
-            if !isTextInputView(hitView) {
-                searchFocused = false
-                window.makeFirstResponder(nil)
-            }
-            return event
-        }
-    }
-
-    private func removeMouseMonitor() {
-        if let mouseMonitor {
-            NSEvent.removeMonitor(mouseMonitor)
-            self.mouseMonitor = nil
-        }
-    }
-
     private func isTextInputFocused() -> Bool {
         guard let responder = NSApp.keyWindow?.firstResponder else { return false }
         return responder is NSTextView || responder is NSTextField
-    }
-
-    private func isTextInputView(_ view: NSView?) -> Bool {
-        var currentView = view
-        while let current = currentView {
-            if current is NSTextField || current is NSTextView {
-                return true
-            }
-            currentView = current.superview
-        }
-        return false
     }
 }
 
@@ -213,6 +198,8 @@ private struct SearchHeader: View {
                     .textFieldStyle(.plain)
                     .font(.system(size: 13, weight: .medium))
                     .focused(searchFocused)
+                    .accessibilityLabel("Search sounds")
+                    .accessibilityHint("Search filenames and metadata, or enter a duration filter")
 
                 if store.isSearching {
                     InlineSpinner(size: 12, lineWidth: 1.5)
@@ -290,6 +277,8 @@ private struct SearchHeader: View {
                     .overlay(Capsule().strokeBorder(AppTheme.hairline, lineWidth: 1))
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Indexing and refinement status")
+                .accessibilityValue([store.indexingPhase, store.indexingProgress].filter { !$0.isEmpty }.joined(separator: ". "))
                 .popover(isPresented: $showsIndexingPopover, arrowEdge: .bottom) {
                     IndexingProgressPopover()
                         .environmentObject(store)
@@ -513,18 +502,20 @@ struct InlineSpinner: View {
             .rotationEffect(.degrees(spinning ? 360 : 0))
             .animation(.linear(duration: 0.8).repeatForever(autoreverses: false), value: spinning)
             .onAppear { spinning = true }
+            .accessibilityHidden(true)
     }
 }
 
 private struct SearchWorkspaceView: View {
     @EnvironmentObject private var store: AppStore
+    let resultsFocused: FocusState<Bool>.Binding
 
     var body: some View {
         VStack(spacing: 0) {
             VStack(spacing: 0) {
                 ResultsTableHeader()
                 Divider()
-                ResultsList()
+                ResultsList(resultsFocused: resultsFocused)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
@@ -568,55 +559,56 @@ private struct ResultsTableHeader: View {
 
 struct ResultsList: View {
     @EnvironmentObject private var store: AppStore
+    let resultsFocused: FocusState<Bool>.Binding
+    @State private var selection: Int?
 
     var body: some View {
-        Group {
-            if store.results.isEmpty {
-                ContentUnavailableView.search(text: store.query)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(spacing: 0) {
-                            ForEach(store.results) { file in
-                                VStack(spacing: 0) {
-                                    ResultRow(file: file, isSelected: store.selectedFile?.id == file.id)
-                                        .id(file.id)
-                                        .onTapGesture(count: 1) {
-                                            store.selectFile(file)
-                                        }
-                                        .onTapGesture(count: 2) {
-                                            store.selectFile(file, autoplay: true)
-                                        }
-                                        .onDrag {
-                                            itemProviderForAudioImport(file)
-                                        }
-                                        .contextMenu {
-                                            Button("Find Similar Sounds") { store.searchByExample(file) }
-                                            Button(store.isFavourite(file) ? "Remove from Favourites" : "Add to Favourites") {
-                                                store.toggleFavourite(file)
-                                            }
-                                            Button("Reveal in Finder") { NSWorkspace.shared.selectFile(file.path, inFileViewerRootedAtPath: "") }
-                                        }
-                                    Divider()
-                                        .padding(.leading, 44)
-                                }
+        ScrollViewReader { proxy in
+            List(selection: $selection) {
+                ForEach(store.results) { file in
+                    ResultRow(file: file, isSelected: store.selectedFile?.id == file.id)
+                        .tag(file.id)
+                        .id(file.id)
+                        .listRowInsets(EdgeInsets())
+                        .simultaneousGesture(TapGesture(count: 2).onEnded {
+                            store.selectFile(file, autoplay: true)
+                        })
+                        .onDrag { itemProviderForAudioImport(file) }
+                        .contextMenu {
+                            Button("Play Preview") { store.selectFile(file, autoplay: true) }
+                            Button("Find Similar Sounds") { store.searchByExample(file) }
+                            Button(store.isFavourite(file) ? "Remove from Favourites" : "Add to Favourites") {
+                                store.toggleFavourite(file)
                             }
-                            if store.canBrowseMore {
-                                Button("Load More") { store.loadMore() }
-                                    .padding()
-                                    .disabled(store.isSearching)
-                            }
+                            Button("Reveal in Finder") { NSWorkspace.shared.selectFile(file.path, inFileViewerRootedAtPath: "") }
                         }
-                    }
-                    .background(Color.clear)
-                    .onChange(of: store.selectedFile?.id) { _, selectedId in
-                        guard let selectedId else { return }
-                        withAnimation(.easeOut(duration: 0.12)) {
-                            proxy.scrollTo(selectedId, anchor: .center)
-                        }
-                    }
                 }
+                if store.canBrowseMore {
+                    Button("Load More") { store.loadMore() }
+                        .disabled(store.isSearching)
+                }
+            }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .focused(resultsFocused)
+            .accessibilityLabel("Search results")
+            .accessibilityIdentifier("sound-results")
+            .overlay {
+                if store.results.isEmpty {
+                    ContentUnavailableView.search(text: store.query)
+                        .allowsHitTesting(false)
+                }
+            }
+            // Native List owns selection during rendering; publish changes after it.
+            .onChange(of: selection) { _, id in
+                guard let id, store.selectedFile?.id != id,
+                      let file = store.results.first(where: { $0.id == id }) else { return }
+                store.selectFile(file)
+            }
+            .onAppear { selection = store.selectedFile?.id }
+            .onChange(of: store.selectedFile?.id) { _, id in
+                selection = id
+                if let id { proxy.scrollTo(id, anchor: .center) }
             }
         }
     }
@@ -632,7 +624,16 @@ private struct ResultRow: View {
         metadataStore.metadata(for: file)
     }
 
-    var body: some View {
+    private var accessibilitySummary: String {
+        var parts = [file.durationMs > 0 ? String(format: "%.2f seconds", Double(file.durationMs) / 1000) : "Duration unknown",
+                     store.libraryLocation(for: file)]
+        if let channels = metadata?.channels { parts.append("\(channels) channels") }
+        if store.isFavourite(file) { parts.append("Favourite") }
+        if file.acousticGroupId != 0 { parts.append("Acoustic family") }
+        return parts.joined(separator: ", ")
+    }
+
+    private var rowContent: some View {
         HStack(spacing: 12) {
             HStack(spacing: 10) {
                 Image(systemName: "waveform.path.ecg.rectangle")
@@ -689,9 +690,24 @@ private struct ResultRow: View {
         .padding(.vertical, 7)
         .background(isSelected ? AppTheme.accent.opacity(0.16) : Color.clear)
         .contentShape(Rectangle())
-        .task(id: file) {
-            metadataStore.load(file)
-        }
+        .task(id: file) { metadataStore.load(file) }
+    }
+
+    var body: some View {
+        rowContent
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(file.displayName)
+            .accessibilityValue(accessibilitySummary)
+            .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+            .accessibilityAction { store.selectFile(file) }
+            .accessibilityActions {
+                Button("Play Preview") { store.selectFile(file, autoplay: true) }
+                Button("Find Similar Sounds") { store.searchByExample(file) }
+                Button(store.isFavourite(file) ? "Remove from Favourites" : "Add to Favourites") {
+                    store.toggleFavourite(file)
+                }
+                Button("Reveal in Finder") { NSWorkspace.shared.selectFile(file.path, inFileViewerRootedAtPath: "") }
+            }
     }
 }
 

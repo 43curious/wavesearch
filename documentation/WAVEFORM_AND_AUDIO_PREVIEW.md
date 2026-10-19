@@ -46,7 +46,16 @@ The panel's **In**/**Out** buttons and **i**/**o** keys set range boundaries at
 the displayed playhead. Setting an in point past the previous out resets out to
 the end; setting out before in resets in to zero. **Clear Range** restores full
 source auditioning. **Up/Down** and **j/k** navigate results. Preview keys are
-limited to the main window and leave normal text-input editing intact.
+limited to results focus in the main window and leave text editing and native
+control keys intact. Escape moves from search to results, then back to search.
+**Help → Keyboard Shortcuts** opens the command reference.
+
+The labeled **Preview position** slider provides keyboard/VoiceOver seeking
+before setting in/out marks. The waveform exposes time, range and availability
+values. **Copy for Editor** (**Command–Shift–C**) provides the same original or
+exported URL as a drag, including selected-range trimming only in Copy mode.
+It rejects publication after selection replacement or a library-generation
+change. See [accessibility workflows and acceptance limits](ACCESSIBILITY.md).
 
 **Settings → General → Audio preview → Autoplay selected sounds** is off by
 default and persists independently of preview volume. When enabled, selection

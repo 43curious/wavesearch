@@ -79,6 +79,7 @@ struct AppStoreLifecycleCheck {
         await searchesAreBoundedStagedAndDrained()
         await browsingAppendsPagesAndRetries()
         await playbackPreparationIsBoundedAndDrained()
+        try await editorClipboardPublication()
         try await selectionAuditioning()
         try await externalAudioExamples()
         try await liveLibrarySmokeTest()
@@ -551,6 +552,53 @@ struct AppStoreLifecycleCheck {
         await shutdown.value
         precondition(events.count("example") == 1 && events.count("close") == 1)
         precondition(store.lastBackendError == nil, "Obsolete failures must not publish")
+    }
+
+    private static func editorClipboardPublication() async throws {
+        BlockingWorkRegistry.hostFiles.resume()
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("wavesearch-clipboard-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("source.wav")
+        let format = AVAudioFormat(standardFormatWithSampleRate: 48000, channels: 1)!
+        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 2048)!
+        buffer.frameLength = 2048
+        buffer.floatChannelData![0].initialize(repeating: 0.25, count: 2048)
+        do {
+            let audio = try AVAudioFile(forWriting: source, settings: format.settings)
+            try audio.write(from: buffer)
+        }
+        let file = SoundFile(id: 1, folderId: 1, path: source.path, name: "source.wav", durationMs: 43, contentHash: 1)
+        // Capture publication without requiring the system pasteboard service.
+        var published: URL?
+        let clipboard = AudioImportClipboard(writeURL: { published = $0; return true })
+        clipboard.copy(file: file, range: 0.25...0.75, behavior: .keepInPlace)
+        while clipboard.isCopying { await Task.yield() }
+        precondition(published == source, "Keyboard copy must retain the full original URL in keep-in-place mode")
+        clipboard.copy(file: file, range: 0.25...0.75, behavior: .copyToExports)
+        while clipboard.isCopying { await Task.yield() }
+        let output = published!
+        defer { try? FileManager.default.removeItem(at: output) }
+        let clip = try AVAudioFile(forReading: output)
+        precondition(clip.length == 1024 && clip.fileFormat.streamDescription.pointee.mBitsPerChannel == 24,
+                     "Keyboard copy must export the same PCM24 range as dragging")
+        published = nil
+        clipboard.copy(file: file, range: nil, behavior: .keepInPlace)
+        clipboard.cancel()
+        await Task.yield()
+        precondition(published == nil, "Canceled selection must not replace the clipboard")
+        clipboard.copy(file: file, range: nil, behavior: .keepInPlace)
+        await BlockingWorkRegistry.hostFiles.suspendAndDrain()
+        BlockingWorkRegistry.hostFiles.resume()
+        while clipboard.isCopying { await Task.yield() }
+        precondition(published == nil, "Work from an older library generation must not replace the clipboard")
+        var stillSelected = true
+        clipboard.copy(file: file, range: nil, behavior: .keepInPlace, canPublish: { stillSelected })
+        stillSelected = false
+        while clipboard.isCopying { await Task.yield() }
+        precondition(published == nil, "A changed selection must reject publication even before its view disappears")
+        precondition(FileManager.default.fileExists(atPath: source.path))
+        print("PASS: keyboard editor copy preserves original URLs, trims PCM24 ranges, and rejects canceled/obsolete requests")
     }
 
     private static func waveformDragExportsRealSelectionURL() async throws {

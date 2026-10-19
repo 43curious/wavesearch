@@ -23,6 +23,7 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
+        .accessibilityLabel("Libraries")
         .scrollContentBackground(.hidden)
         .background(AppTheme.chrome)
         .safeAreaInset(edge: .bottom) {
@@ -141,7 +142,7 @@ struct LibraryTabsView: View {
     }
 }
 
-private struct LibraryFolderActions: View {
+struct LibraryFolderActions: View {
     @EnvironmentObject private var store: AppStore
     let folder: LibraryFolder
 
@@ -182,5 +183,9 @@ struct FolderRow: View {
         }
         .padding(.vertical, 2)
         .opacity(folder.isMissing ? 0.6 : 1)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(folder.name)
+        .accessibilityValue(folder.isMissing ? "Missing drive" : "\(folder.fileCount) files")
+        .accessibilityHint(folder.path)
     }
 }

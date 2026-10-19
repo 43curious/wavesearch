@@ -28,5 +28,10 @@ struct WaveSearchApp: App {
                 .tint(AppTheme.accent)
                 .appAppearance()
         }
+
+        Window("Keyboard Shortcuts", id: "shortcuts") {
+            KeyboardShortcutsView().tint(AppTheme.accent).appAppearance()
+        }
+        .windowResizability(.contentSize)
     }
 }

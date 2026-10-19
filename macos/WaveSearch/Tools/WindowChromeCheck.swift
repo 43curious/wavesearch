@@ -93,6 +93,10 @@ struct WindowChromeCheck: App {
         .windowToolbarStyle(.unifiedCompact(showsTitle: false))
         .commands { WaveSearchCommands(store: store) }
         Settings { AppSettingsView().environmentObject(store) }
+        Window("Keyboard Shortcuts", id: "shortcuts") {
+            KeyboardShortcutsView()
+        }
+        .windowResizability(.contentSize)
     }
 
     @MainActor
@@ -116,8 +120,8 @@ struct WindowChromeCheck: App {
         // The shortcut test may have recreated the main window.
         let main = NSApp.windows.first { $0.identifier?.rawValue == "main" && $0.isVisible } ?? window
         main.makeKeyAndOrderFront(nil)
-        func key(_ code: UInt16, _ text: String) async {
-            let flags: NSEvent.ModifierFlags = [125, 126].contains(code) ? [.function, .numericPad] : []
+        func key(_ code: UInt16, _ text: String, modifiers: NSEvent.ModifierFlags = []) async {
+            let flags: NSEvent.ModifierFlags = (123...126).contains(code) ? modifiers.union([.function, .numericPad]) : modifiers
             NSApp.sendEvent(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags,
                 timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: main.windowNumber,
                 context: nil, characters: text, charactersIgnoringModifiers: text,
@@ -137,11 +141,53 @@ struct WindowChromeCheck: App {
         player.seek(to: 0.6)
         await key(31, "o")
         precondition(player.selection == 0.2...0.6, "Keyboard marks did not reach the waveform/player range")
+        let elements = accessibilityElements(main)
+        precondition(elements.contains { $0.accessibilityLabel() == "Search sounds" }, "Search needs a stable accessible label")
+        let results = elements.first { $0.accessibilityIdentifier() == "sound-results" }!
+        precondition(!(results.accessibilitySelectedRows() ?? results.accessibilitySelectedChildren() ?? []).isEmpty,
+                     "Native results must expose their selected row")
+        let row = elements.first { $0.accessibilityLabel() == store.selectedFile!.displayName }!
+        precondition(row.accessibilityCustomActions()?.contains { $0.name == "Play Preview" } == true,
+                     "Result actions must be available to VoiceOver")
+        let waveform = elements.first { $0.accessibilityLabel() == "Waveform" }!
+        precondition((waveform.accessibilityValue() as? String)?.contains("In 0:00.20, out 0:00.60") == true,
+                     "Waveform must expose the actual shared range")
+        let slider = elements.first { $0.accessibilityLabel() == "Preview position" && $0.accessibilityRole() == .slider }!
+        precondition(slider.isAccessibilityEnabled())
+        let selectedID = store.selectedFile?.id
+        slider.setAccessibilityFocused(true)
+        try await Task.sleep(for: .milliseconds(100))
+        let beforeSeek = player.progress
+        await key(124, "\u{f703}")
+        precondition(player.progress > beforeSeek && store.selectedFile?.id == selectedID,
+                     "A focused slider must seek instead of navigating results")
+        let out = accessibilityElements(main).first { $0.accessibilityLabel() == "Set out point" }!
+        precondition(out.accessibilityPerformPress(), "VoiceOver must be able to set an out point")
+        precondition(player.selection?.upperBound == player.progress)
+        player.setSelection(0.2...0.6)
+        // Re-enter the results focus scope before bare audition commands.
+        NotificationCenter.default.post(name: GlobalSearchShortcut.focusNotification, object: nil)
+        try await Task.sleep(for: .milliseconds(100))
+        await key(53, "\u{1b}")
         await key(36, "\r")
         precondition(player.isPlaying && player.progress >= 0.2 && player.progress < 0.6,
                      "Return failed: playing=\(player.isPlaying) preparing=\(player.isPreparing) progress=\(player.progress) duration=\(player.duration) source=\(player.currentFile?.name ?? "none")")
         await key(49, " ")
         precondition(!player.isPlaying)
+        await key(44, "?", modifiers: .shift)
+        let help = NSApp.windows.first { $0.identifier?.rawValue == "shortcuts" && $0.isVisible }
+        precondition(help != nil, "Question mark must open shortcut help from results")
+        precondition(accessibilityElements(help!).contains { $0.accessibilityLabel() == "Close" || $0.accessibilityTitle() == "Close" })
+        help?.performClose(nil)
+        main.makeKeyAndOrderFront(nil)
+        try await Task.sleep(for: .milliseconds(100))
+        let helpMenu = NSApp.mainMenu!.items.compactMap(\.submenu).first { $0.items.contains { $0.title == "Keyboard Shortcuts…" } }!
+        helpMenu.performActionForItem(at: helpMenu.items.firstIndex { $0.title == "Keyboard Shortcuts…" }!)
+        try await Task.sleep(for: .milliseconds(100))
+        let reopenedHelp = NSApp.windows.first { $0.identifier?.rawValue == "shortcuts" && $0.isVisible }
+        precondition(reopenedHelp != nil, "Help menu must reopen shortcut help")
+        reopenedHelp?.performClose(nil)
+        main.makeKeyAndOrderFront(nil)
         NotificationCenter.default.post(name: GlobalSearchShortcut.focusNotification, object: nil)
         try await Task.sleep(for: .milliseconds(100))
         precondition(main.firstResponder is NSTextView)
@@ -149,7 +195,21 @@ struct WindowChromeCheck: App {
         await key(34, "i")
         await key(31, "o")
         precondition(player.selection == nil, "Preview commands intercepted search-field editing")
+        precondition(main.firstResponder is NSTextView, "Text input must retain focus")
+        print("PASS: native result accessibility/actions, waveform range, slider focus and shortcut help")
         print("PASS: native arrow navigation, i/o range, Return, Space and text-input focus")
+    }
+
+    private func accessibilityElements(_ root: any NSAccessibilityProtocol) -> [any NSAccessibilityProtocol] {
+        var elements: [any NSAccessibilityProtocol] = []
+        var pending = [root]
+        var visited: Set<ObjectIdentifier> = []
+        while let element = pending.popLast() {
+            guard visited.insert(ObjectIdentifier(element)).inserted else { continue }
+            elements.append(element)
+            pending.append(contentsOf: (element.accessibilityChildren() ?? []).compactMap { $0 as? any NSAccessibilityProtocol })
+        }
+        return elements
     }
 
     @MainActor

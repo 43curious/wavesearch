@@ -12,6 +12,12 @@ changelog/agent documentation added afterward.
 
 ### Added
 
+- Native selectable results with accessible sound summaries and actions,
+  a labeled preview-position slider, waveform time/range/status values,
+  search/scan/pause announcements, and Help → Keyboard Shortcuts (also **?**).
+  Library menu actions and **Copy for Editor** (**Command–Shift–C**) support
+  keyboard workflows; copying follows the existing import preference and
+  rejects canceled, replaced-selection, and obsolete-library requests.
 - Selection-aware preview with shared waveform/in/out marks, deferred Return
   and double-click playback, opt-in autoplay after preparation, whole-file/range
   looping, 0.5×–2× rate controls and Up/Down result navigation. New native checks
@@ -86,6 +92,10 @@ changelog/agent documentation added afterward.
 
 ### Fixed
 
+- Bare preview/navigation keys now require results focus. Sidebar, text,
+  slider, button, picker, and modal-window input retains native behavior;
+  Escape moves from search to results and back without clearing control focus
+  on every mouse click.
 - Linux core-check compilation now uses Zig's libc peak-RSS binding rather than
   assuming glibc's translated `rusage` has a top-level `ru_maxrss` field.
   `make check-linux` also compiles the test and coverage-check executables.
