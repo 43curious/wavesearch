@@ -7,13 +7,14 @@ struct WaveSearchApp: App {
     @NSApplicationDelegateAdaptor(AppLifecycleDelegate.self) private var lifecycle
 
     var body: some Scene {
-        WindowGroup {
+        Window("WaveSearch", id: "main") {
             ContentView()
                 .environmentObject(store)
                 .tint(AppTheme.accent)
                 .appAppearance()
                 .frame(minWidth: 900, minHeight: 600)
                 .onAppear { lifecycle.store = store }
+                .modifier(SearchShortcutActivation())
         }
         .windowStyle(.hiddenTitleBar)
         .windowToolbarStyle(.unifiedCompact(showsTitle: false))

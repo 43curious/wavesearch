@@ -71,6 +71,32 @@ enum RefinementPolicyCheck {
         }
         precondition(acousticTurns >= 3)
         precondition(schedule.next(waveform: false, acoustic: false, semantic: false) == nil)
-        print("refinement policy, fair queue selection and independent folder rotation: passed")
+        var estimator = RefinementEstimator()
+        estimator.record(.waveform, items: 1, seconds: 2)
+        estimator.record(.waveform, items: 1, seconds: 4)
+        precondition(estimator.estimates[.waveform] == nil)
+        estimator.record(.waveform, items: 0, seconds: 10_000)
+        estimator.record(.waveform, items: 1, seconds: .nan)
+        estimator.record(.waveform, items: 1, seconds: 6)
+        precondition(estimator.estimates[.waveform]?.secondsPerItem == 4)
+        precondition(estimator.estimates[.acoustic] == nil)
+        for _ in 0..<20 { estimator.record(.waveform, items: 1, seconds: 10) }
+        precondition(estimator.estimates[.waveform]?.secondsPerItem == 10)
+        var snapshot = RefinementSnapshot(mode: .balanced, activeQueue: .waveform, blocker: nil)
+        snapshot.waveformPending = 120
+        snapshot.estimates = estimator.estimates
+        precondition(snapshot.estimateDetail(for: .waveform).contains("20 min"))
+        snapshot.waveformPending = 6
+        precondition(snapshot.estimateDetail(for: .waveform).contains("1 min"))
+        snapshot.blocker = .batteryPower
+        precondition(snapshot.estimateDetail(for: .waveform) == "Estimate suspended")
+        snapshot.blocker = nil
+        snapshot.deferredQueues = [.waveform]
+        precondition(snapshot.estimateDetail(for: .waveform) == "Estimate suspended")
+        snapshot.deferredQueues = []
+        snapshot.waveformPending = 0
+        precondition(snapshot.estimateDetail(for: .waveform) == "No pending work")
+        precondition(RefinementEstimator().estimates.isEmpty, "Restart must warm up again")
+        print("refinement policy, queue fairness and active processing estimates: passed")
     }
 }

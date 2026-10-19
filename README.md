@@ -111,6 +111,17 @@ system/light/dark appearance, accent and waveform colors, catalog backup and
 restore, integrity checks, storage sizes, and generated waveform cache deletion.
 Exported media remains available because editing projects may reference it.
 
+In **Settings → General**, enable a global search shortcut to bring WaveSearch
+forward and focus search from another app. Choose from the listed combinations;
+the shortcut is off by default and works while WaveSearch is running. See the
+[macOS integration notes](documentation/MACOS_INTEGRATION.md) for conflicts and
+verification limits.
+
+The indexing status popover shows recent processing speed and estimated active
+processing time separately for waveforms, acoustic fingerprints, and semantic
+embeddings. Estimates warm up during each session and suspend while blocked.
+They exclude pauses and other queues; Balanced mode cannot promise a finish time.
+
 ### Keyboard shortcuts
 
 | Shortcut | Action |

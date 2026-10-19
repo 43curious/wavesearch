@@ -237,7 +237,9 @@ fn searchWithLandmarksAndPath(allocator: std.mem.Allocator, landmarks: []const f
     }
 
     try query_cancel.check();
-    std.mem.sort(SearchResult, fused.items, {}, struct {
+    // Results contain full paths. Block sort's 512-record scratch array can
+    // overflow native host worker stacks; heap sort uses constant scratch space.
+    std.sort.heap(SearchResult, fused.items, {}, struct {
         fn lessThan(_: void, a: SearchResult, b: SearchResult) bool {
             const af = a.fingerprint_score_ppm >= 120_000 and a.fingerprint_votes >= 6;
             const bf = b.fingerprint_score_ppm >= 120_000 and b.fingerprint_votes >= 6;

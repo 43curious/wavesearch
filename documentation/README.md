@@ -31,6 +31,9 @@ current WaveSearch application.
 
 ## Related repository documents
 
+- [macOS activation and discovery](MACOS_INTEGRATION.md) — global shortcut
+  configuration/lifecycle, native checks, and the Spotlight/Quick Look assessment.
+
 - [Continuous integration](CI.md) — native Linux/macOS jobs, pinned tools,
   headless checks and the desktop validation that remains local.
 

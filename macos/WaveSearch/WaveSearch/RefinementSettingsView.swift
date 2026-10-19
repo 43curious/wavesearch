@@ -12,6 +12,7 @@ struct RefinementSettingsView: View {
 
     var body: some View {
         Form {
+            SearchShortcutSettings()
             Section("Importing into editors") {
                 Picker("Files", selection: $importBehavior) {
                     ForEach(AudioImportBehavior.allCases) { behavior in

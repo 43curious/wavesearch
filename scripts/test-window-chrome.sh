@@ -11,4 +11,7 @@ done
 swiftc -parse-as-library -swift-version 5 -default-isolation MainActor \
     -I "$KIT/Headers" "$KIT/libwavesearch.a" -framework IOKit \
     "${SOURCES[@]}" macos/WaveSearch/Tools/WindowChromeCheck.swift -o "$BUILD/check"
-"$BUILD/check"
+"$BUILD/check" | tee "$BUILD/output"
+# A window close must not quit the test app before reopening assertions run.
+grep -q 'PASS: native shortcut conflict' "$BUILD/output"
+grep -q 'PASS: sidebar toolbar/menu shortcut' "$BUILD/output"

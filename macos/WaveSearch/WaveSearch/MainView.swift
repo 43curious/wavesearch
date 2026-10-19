@@ -40,6 +40,9 @@ struct MainView: View {
             removeKeyboardMonitor()
             removeMouseMonitor()
         }
+        .onReceive(NotificationCenter.default.publisher(for: GlobalSearchShortcut.focusNotification)) { _ in
+            focusSearch()
+        }
         .onChange(of: query) { _, newValue in
             if !store.isExampleSearch { store.search(newValue) }
         }
@@ -354,11 +357,15 @@ private struct IndexingProgressPopover: View {
                         Spacer()
                         Text("\(store.waveformUniversalCount.formatted()) ready · \(store.waveformPendingCount.formatted()) pending")
                     }
+                    Text(store.refinementSnapshot.estimateDetail(for: .waveform))
+                        .foregroundStyle(.secondary)
                     HStack {
                         Text("Acoustic")
                         Spacer()
                         Text("\(store.acousticRefinedCount.formatted()) ready · \(store.acousticPendingCount.formatted()) pending · \(store.acousticFailedCount.formatted()) skipped")
                     }
+                    Text(store.refinementSnapshot.estimateDetail(for: .acoustic))
+                        .foregroundStyle(.secondary)
                     HStack {
                         Text("Semantic")
                         Spacer()
@@ -371,6 +378,11 @@ private struct IndexingProgressPopover: View {
                                     : "Unavailable — install the optional CLAP model")
                     }
                     .foregroundStyle(.secondary)
+                    Text(store.refinementSnapshot.estimateDetail(for: .semantic))
+                        .foregroundStyle(.secondary)
+                    Text("Estimates use recent files and exclude pauses and other queues. File lengths and storage speeds vary; Balanced mode has no completion deadline.")
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 .font(.system(size: 11))
             }

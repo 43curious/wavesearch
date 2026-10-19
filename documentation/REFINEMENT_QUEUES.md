@@ -41,6 +41,33 @@ pause, and draining. Run `make check`, or use `WS_CORE_LIBRARY` and
 the core. These deterministic checks do not measure real CLAP inference, power,
 idle wakeups, or warm/cold/removable/network-storage throughput and p95 latency.
 
+## Native processing estimates
+
+The macOS indexing popover estimates each queue independently from a bounded
+window of its last 20 completed one-file steps. Three samples are required
+before showing throughput and approximate remaining active processing time.
+Samples use monotonic elapsed time around actual work, including decode,
+storage, inference and publication. Successful files and published terminal
+failures resolve pending items; empty polls, transient failures, and cancelled
+steps do not contribute. Provider loading can be included in the first semantic
+step. Estimates restart from unknown when the coordinator restarts.
+
+Paused time, polling sleeps and time spent on other producers are excluded.
+Policy blockers, missing-drive backoff and unavailable semantic providers
+suspend the affected estimate. Backlog changes update the remaining-work
+calculation without treating additions/removals as measured processing.
+Durations use coarse minute/hour rounding rather than a per-second countdown.
+Variable file lengths and changing storage/inference costs make these recent
+observations approximate, rather than completion deadlines. In particular,
+Balanced may wait indefinitely for idle/AC conditions. Scheduling, queue
+fairness and work admission remain unchanged.
+
+`scripts/test-refinement-policy.sh` checks warm-up, bounded adaptation, queue
+isolation, changing pending counts, suspended display and session reset. The
+lifecycle check exercises real one-file work, playback interruption and drain.
+These checks do not calibrate estimates against representative long recordings,
+slow drives or real CLAP inference.
+
 ## Publication and retries
 
 Selecting a row leaves it pending. SQLite triggers remove it only when matching

@@ -12,6 +12,12 @@ changelog/agent documentation added afterward.
 
 ### Added
 
+- Per-queue refinement throughput and approximate active processing time in
+  the indexing popover, with warm-up and suspended estimates for policy pauses,
+  unavailable models, and missing-drive backoff.
+- An opt-in global search shortcut in Settings → General, with selectable key
+  combinations, registration conflict feedback, and search-window restoration.
+  Recorded the Spotlight/Quick Look assessment and current verification limits.
 - Global C ABI version and compiled-capability queries, with documented buffer,
   handle, concurrency and shutdown contracts and legacy/current C caller checks.
 - GitHub Actions native Linux core and macOS core/app/lifecycle/policy checks
@@ -66,6 +72,8 @@ changelog/agent documentation added afterward.
 
 ### Fixed
 
+- Avoided a large stack scratch buffer when sorting example-search results,
+  preventing a crash on native host worker threads.
 - File fingerprint extraction streams canonical PCM through bounded overlap
   buffers instead of retaining the five-minute timeline. Full Float validation
   is fused into decoding, duration rejection precedes payload reads, and bounded

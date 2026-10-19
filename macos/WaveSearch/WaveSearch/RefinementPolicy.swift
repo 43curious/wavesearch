@@ -156,6 +156,22 @@ nonisolated struct RefinementSnapshot: Sendable {
     var semanticAvailable: Bool = true
     var semanticConfigured: Bool = false
     var lastError: String?
+    var estimates: [RefinementQueue: RefinementEstimate] = [:]
+    var deferredQueues: Set<RefinementQueue> = []
+
+    func estimateDetail(for queue: RefinementQueue) -> String {
+        let pending: Int64
+        switch queue {
+        case .waveform: pending = waveformPending
+        case .acoustic: pending = acousticPending
+        case .semantic: pending = semanticPending
+        }
+        guard pending > 0 else { return "No pending work" }
+        guard mode != .fastOnly, blocker == nil, !deferredQueues.contains(queue),
+              queue != .semantic || semanticAvailable else { return "Estimate suspended" }
+        guard let estimate = estimates[queue] else { return "Learning processing speed…" }
+        return estimate.detail(pending: pending)
+    }
 
     var hasPendingWork: Bool { waveformPending + acousticPending + semanticPending > 0 }
     var isWorking: Bool { activeQueue != nil }
@@ -181,5 +197,42 @@ nonisolated struct RefinementSnapshot: Sendable {
         return semanticAvailable
             ? "Fast search, acoustic families, waveforms, and semantic search are ready"
             : "Fast search, acoustic families, and waveforms are ready; install CLAP for semantic refinement"
+    }
+}
+
+/// A bounded session-only window of completed steps. Pauses, cancelled work and
+/// empty polls never enter the sample; each producer learns its own cost.
+nonisolated struct RefinementEstimator {
+    private var samples: [RefinementQueue: [(items: Int64, seconds: Double)]] = [:]
+
+    mutating func record(_ queue: RefinementQueue, items: Int64, seconds: Double) {
+        guard items > 0, seconds.isFinite, seconds > 0 else { return }
+        var window = samples[queue, default: []]
+        window.append((items, seconds))
+        samples[queue] = Array(window.suffix(20))
+    }
+
+    var estimates: [RefinementQueue: RefinementEstimate] {
+        samples.compactMapValues { window in
+            guard window.count >= 3 else { return nil }
+            let items = window.reduce(0.0) { $0 + Double($1.items) }
+            let seconds = window.reduce(0.0) { $0 + $1.seconds }
+            return RefinementEstimate(secondsPerItem: seconds / items)
+        }
+    }
+}
+
+nonisolated struct RefinementEstimate: Sendable {
+    let secondsPerItem: Double
+
+    func detail(pending: Int64) -> String {
+        let minutes = secondsPerItem * Double(pending) / 60
+        let duration: String
+        if minutes < 1 { duration = "less than 1 min" }
+        else if minutes < 10 { duration = "about \(Int(ceil(minutes))) min" }
+        else if minutes < 60 { duration = "about \(Int(ceil(minutes / 5)) * 5) min" }
+        else { duration = "about \((minutes / 60).formatted(.number.precision(.fractionLength(1)))) hr" }
+        let rate = (60 / secondsPerItem).formatted(.number.precision(.fractionLength(1)))
+        return "\(rate) items/min · \(duration) active processing"
     }
 }

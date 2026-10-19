@@ -1931,7 +1931,15 @@ test "fingerprint indexing identifies resampled level-shifted and trimmed WAV va
     defer allocator.free(source_z);
     var abi_results = std.mem.zeroes([4]main_c.WSExampleResult);
     for (&abi_results) |*result| result.struct_size = @sizeOf(main_c.WSExampleResult);
-    const abi_count = main_c.ws_search_by_example(source_z.ptr, 1, &abi_results, abi_results.len);
+    // Native hosts can call from 512 KiB worker stacks. Keep the C path on
+    // that stack size so large sorting scratch buffers cannot regress.
+    var abi_count: c_int = -1;
+    const example_worker = try std.Thread.spawn(.{ .stack_size = 512 * 1024 }, struct {
+        fn run(path: [*:0]const u8, results: *[4]main_c.WSExampleResult, count: *c_int) void {
+            count.* = main_c.ws_search_by_example(path, 1, results, results.len);
+        }
+    }.run, .{ source_z.ptr, &abi_results, &abi_count });
+    example_worker.join();
     try std.testing.expect(abi_count >= 3);
     var found_trimmed_offset = false;
     for (abi_results[0..@intCast(abi_count)]) |*item| {

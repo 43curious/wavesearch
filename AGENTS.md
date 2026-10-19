@@ -47,6 +47,7 @@ Read these references when touching the corresponding behavior:
 | Fingerprint storage, decoding, or source hash strength | [Storage and identity](documentation/INDEXING_STORAGE_IDENTITIES.md) |
 | Database lifecycle, backups, recovery, or library moves | [Operations](OPERATIONS.md) |
 | Platform boundaries, concurrency, or resource scheduling | [Performance and portability plan](documentation/PERFORMANCE_AND_PORTABILITY_PLAN.md); [fair scheduling](documentation/REFINEMENT_QUEUES.md#fair-background-scheduling) |
+| Global search activation or macOS discovery integration | [macOS integration](documentation/MACOS_INTEGRATION.md) |
 
 Use [documentation/README.md](documentation/README.md) to find further references.
 Treat unchecked roadmap/plan items as proposals, and verify historical notes
@@ -66,6 +67,8 @@ against the implementation before relying on them.
 - Preserve atomic catalog updates, source/model identity checks, bounded
   memory use, and cooperative cancellation. An OS or runtime call may finish
   before cancellation takes effect; a canceled caller is not proof of draining.
+- Native host workers can have small stacks. Avoid large stack scratch buffers
+  when sorting core records that contain full paths.
 - Keep optional model/runtime downloads explicit and opt-in. Normal builds and
   tests must work without installing models.
 - Editor imports default to **Keep the files in place**, passing the full

@@ -30,6 +30,7 @@ final class BackgroundRefinementCoordinator {
     private var memoryConstrained = false
     private var observers: [(center: NotificationCenter, token: NSObjectProtocol)] = []
     private var schedule = RefinementSchedule()
+    private var estimator = RefinementEstimator()
     private var waveformDeferredUntil = Date.distantPast
     private var consecutiveMissingWaveforms = 0
     private var acousticDeferredUntil = Date.distantPast
@@ -58,6 +59,7 @@ final class BackgroundRefinementCoordinator {
         semanticCanBeConfigured = false
         semanticLoadAttempted = false
         schedule = RefinementSchedule()
+        estimator = RefinementEstimator()
         lastModelProbe = .distantPast
         self.configuration = configuration
         self.stateProvider = stateProvider
@@ -225,13 +227,20 @@ final class BackgroundRefinementCoordinator {
             let semanticPendingBefore = snapshot.semanticPending
             let step = Task { [weak self] in
                 guard let self else { return }
+                let start = ContinuousClock.now
+                let completed: Int64
                 switch queue {
                 case .waveform:
-                    await self.runWaveformStep()
+                    completed = await self.runWaveformStep()
                 case .acoustic:
-                    await self.runAcousticStep(folderIDs: folderIDs, pendingBefore: acousticPendingBefore)
+                    completed = await self.runAcousticStep(folderIDs: folderIDs, pendingBefore: acousticPendingBefore)
                 case .semantic:
-                    await self.runSemanticStep(folderIDs: folderIDs, pendingBefore: semanticPendingBefore)
+                    completed = await self.runSemanticStep(folderIDs: folderIDs, pendingBefore: semanticPendingBefore)
+                }
+                if !Task.isCancelled {
+                    let elapsed = start.duration(to: .now).components
+                    self.estimator.record(queue, items: completed,
+                        seconds: Double(elapsed.seconds) + Double(elapsed.attoseconds) / 1e18)
                 }
             }
             activeStep = step
@@ -350,7 +359,7 @@ final class BackgroundRefinementCoordinator {
         return snapshot
     }
 
-    private func runWaveformStep() async {
+    private func runWaveformStep() async -> Int64 {
         let claimed = await Task.detached(priority: .background) { () -> WSWaveformWorkClaim? in
             var item = WSWaveformWorkClaim()
             item.struct_size = UInt32(MemoryLayout<WSWaveformWorkClaim>.size)
@@ -358,11 +367,11 @@ final class BackgroundRefinementCoordinator {
         }.value
         guard let claimed else {
             waveformDeferredUntil = Date().addingTimeInterval(1)
-            return
+            return 0
         }
         if Task.isCancelled {
             await release(claimed)
-            return
+            return 0
         }
 
         let path = withUnsafeBytes(of: claimed.path) {
@@ -373,7 +382,7 @@ final class BackgroundRefinementCoordinator {
         }.value
         guard isRunning, !Task.isCancelled else {
             await release(claimed)
-            return
+            return 0
         }
         guard pathExists else {
             await release(claimed)
@@ -382,7 +391,7 @@ final class BackgroundRefinementCoordinator {
                 consecutiveMissingWaveforms = 0
                 waveformDeferredUntil = Date().addingTimeInterval(30)
             }
-            return
+            return 0
         }
         consecutiveMissingWaveforms = 0
 
@@ -402,10 +411,12 @@ final class BackgroundRefinementCoordinator {
                 if ws_waveform_work_renew(claimed.file_id, claimed.claim_token) != 0 { return }
             }
         }
+        var completed: Int64 = 0
         do {
             try await AudioAnalysisRepository.shared.backfillUniversal(for: file)
             try Task.checkCancellation()
             await release(claimed)
+            completed = 1
             lastError = nil
             WaveformSignposts.event("BackgroundComplete", fileID: file.id)
         } catch is CancellationError {
@@ -437,15 +448,17 @@ final class BackgroundRefinementCoordinator {
                     return (result, permanent)
                 }.value
                 if outcome.0 != 0 { await release(claimed) }
+                if outcome.0 == 0 && outcome.1 { completed = 1 }
                 lastError = outcome.1 ? detail : nil
             }
         }
         renewer.cancel()
         await renewer.value
+        return Task.isCancelled ? 0 : completed
     }
 
-    private func runAcousticStep(folderIDs: [Int32], pendingBefore: Int64) async {
-        guard !Task.isCancelled, let folderID = schedule.nextFolder(for: .acoustic, from: folderIDs) else { return }
+    private func runAcousticStep(folderIDs: [Int32], pendingBefore: Int64) async -> Int64 {
+        guard !Task.isCancelled, let folderID = schedule.nextFolder(for: .acoustic, from: folderIDs) else { return 0 }
         let expectedGeneration = ws_refinement_generation()
         let outcome = await Task.detached(priority: .background) { () -> (Int32, Int64?, String?) in
             let result = ws_acoustic_index_pending_v2(folderID, 1, expectedGeneration)
@@ -454,7 +467,7 @@ final class BackgroundRefinementCoordinator {
             let pending = ws_acoustic_status(&status) == 0 ? status.pending_count : nil
             return (result, pending, result < 0 ? ifBackendError() : nil)
         }.value
-        guard !Task.isCancelled else { return }
+        guard !Task.isCancelled else { return 0 }
         if outcome.0 < 0, outcome.2 != "Cancelled" {
             lastError = outcome.2 ?? "Acoustic refinement failed"
             try? await Task.sleep(for: .seconds(2))
@@ -468,14 +481,16 @@ final class BackgroundRefinementCoordinator {
                 acousticDeferredUntil = Date().addingTimeInterval(30)
             }
         }
+        // One-file calls can also resolve a terminal failure without a ready result.
+        return outcome.0 >= 0 ? min(1, max(Int64(outcome.0), pendingBefore - (outcome.1 ?? pendingBefore))) : 0
     }
 
-    private func runSemanticStep(folderIDs: [Int32], pendingBefore: Int64) async {
+    private func runSemanticStep(folderIDs: [Int32], pendingBefore: Int64) async -> Int64 {
         guard !Task.isCancelled,
               await ensureSemanticProvider(),
-              !Task.isCancelled else { return }
-        if pendingBefore == 0 { return }
-        guard let folderID = schedule.nextFolder(for: .semantic, from: folderIDs) else { return }
+              !Task.isCancelled else { return 0 }
+        if pendingBefore == 0 { return 0 }
+        guard let folderID = schedule.nextFolder(for: .semantic, from: folderIDs) else { return 0 }
         let expectedGeneration = ws_refinement_generation()
         let outcome = await Task.detached(priority: .background) { () -> (Int32, Int64?, String?) in
             let result = ws_clap_index_pending_v2(folderID, 1, expectedGeneration)
@@ -484,7 +499,7 @@ final class BackgroundRefinementCoordinator {
             let pending = ws_semantic_status(&status) == 0 ? status.pending_count : nil
             return (result, pending, result < 0 ? ifBackendError() : nil)
         }.value
-        guard !Task.isCancelled else { return }
+        guard !Task.isCancelled else { return 0 }
         if outcome.0 < 0, outcome.2 != "Cancelled" {
             lastError = outcome.2 ?? "Semantic refinement failed"
             try? await Task.sleep(for: .seconds(2))
@@ -498,6 +513,8 @@ final class BackgroundRefinementCoordinator {
                 semanticDeferredUntil = Date().addingTimeInterval(30)
             }
         }
+        // One-file calls can also resolve a terminal failure without a ready result.
+        return outcome.0 >= 0 ? min(1, max(Int64(outcome.0), pendingBefore - (outcome.1 ?? pendingBefore))) : 0
     }
 
     private func ensureSemanticProvider() async -> Bool {
@@ -542,7 +559,13 @@ final class BackgroundRefinementCoordinator {
         }.value
     }
 
-    private func publish(_ snapshot: RefinementSnapshot) {
+    private func publish(_ value: RefinementSnapshot) {
+        var snapshot = value
+        snapshot.estimates = estimator.estimates
+        let now = Date()
+        if now < waveformDeferredUntil { snapshot.deferredQueues.insert(.waveform) }
+        if now < acousticDeferredUntil { snapshot.deferredQueues.insert(.acoustic) }
+        if now < semanticDeferredUntil { snapshot.deferredQueues.insert(.semantic) }
         snapshotHandler?(snapshot)
     }
 

@@ -11,7 +11,13 @@ final class AppLifecycleDelegate: NSObject, NSApplicationDelegate {
         NSWindow.allowsAutomaticWindowTabbing = false
     }
 
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        // Keep the registered search shortcut available to reopen the window.
+        false
+    }
+
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        GlobalSearchShortcut.shared.stop()
         guard let store else { return .terminateNow }
         guard !terminating else { return .terminateLater }
         terminating = true
