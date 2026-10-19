@@ -5,6 +5,8 @@ current WaveSearch application.
 
 ## Performance and portability
 
+- [Library watching and file moves](LIBRARY_RECONCILIATION.md) — full-byte move
+  proofs, FSEvents reconciliation, reference preservation and acceptance limits.
 - [Lexical sound vocabulary](LEXICAL_SEARCH.md) — bounded bilingual expansion,
   exact-name protection, controlled relevance results and field-weight evaluation.
 

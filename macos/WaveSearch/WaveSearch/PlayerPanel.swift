@@ -166,6 +166,23 @@ final class PlayerController: ObservableObject {
         beginPlayback()
     }
 
+    /// A stable ID at a new URL is a verified move, even when re-indexing changes
+    /// hash mode. Keep the range/playhead while the native player reopens it.
+    func relocate(_ file: SoundFile) {
+        guard let currentFile, currentFile.id == file.id,
+              currentFile.contentHash == file.contentHash || currentFile.path != file.path else {
+            load(file)
+            return
+        }
+        guard currentFile != file else { return }
+        let range = selection
+        let position = progress
+        let playing = isPlaying || wantsPlayback
+        load(file, autoplay: playing)
+        setSelection(range)
+        seek(to: position)
+    }
+
     func playFromSelectionStart() {
         stopShuttle()
         progress = playbackRange.lowerBound

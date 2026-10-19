@@ -10,7 +10,7 @@ The checkout action is pinned to a commit.
 | Runner | Checks |
 | --- | --- |
 | `ubuntu-24.04` (x86_64) | `make check-core`: formatting, shell syntax, native Zig tests, compiled legacy/current C ABI contract, optional-harness compilation and native static library build. |
-| `macos-26` | The same native core checks, then `make check-macos-headless`: universal core XCFramework, Debug Swift app build, refinement-policy check and app lifecycle checks. Swift checks link the native library rebuilt by `check-core` using `WS_CORE_LIBRARY`/`WS_CORE_HEADERS`. |
+| `macos-26` | The same native core checks, then `make check-macos-headless`: universal core XCFramework, Debug Swift app build, refinement-policy, deterministic library-watching and app lifecycle checks. Swift checks link the native library rebuilt by `check-core` using `WS_CORE_LIBRARY`/`WS_CORE_HEADERS`. |
 
 Linux tests execute on Linux; `make check-linux` separately cross-compiles the
 library, Zig tests, audio-fuzz executable, C ABI executable and coverage harness
@@ -22,7 +22,11 @@ Window chrome and Settings appearance checks are explicitly skipped in hosted
 CI and listed in the job summary. They need a logged-in desktop with reliable
 focus; a successful headless job does not validate those interactions. Run
 `make check` locally to include them. It still runs the full core, app, policy,
-lifecycle, window and Settings sequence on macOS.
+lifecycle, watcher, window and Settings sequence on macOS. The watcher check
+injects event bursts and uses disposable real files/catalogs; native FSEvents
+delivery requires the separate opt-in `bash scripts/test-library-watching.sh --native`
+probe on a working Mac. Hosted success does not establish external-drive,
+cold-storage or foreground-latency acceptance.
 
 ## Toolchain and inputs
 
@@ -64,7 +68,7 @@ overwrites it. These bounded checks do not establish exhaustive parser safety.
 ```bash
 make check-core                 # Execute portable checks on this host
 make check-linux                # Compile Linux library + check executables only
-make check-macos-headless       # macOS app + policy/lifecycle, rebuilt XCFramework
+make check-macos-headless       # macOS app + policy/watcher/lifecycle, rebuilt XCFramework
 make check                      # Full local check, including desktop interaction
 ```
 
@@ -74,6 +78,9 @@ path and `WS_CORE_HEADERS` to the absolute `core/include` path when running the
 headless target. The default scripts instead link the freshly built universal
 XCFramework. A hosted run can only validate committed work once it has been
 pushed; local checks and workflow linting do not prove a hosted job succeeded.
+
+The watcher script also accepts these native library/header overrides. Avoid
+rebuilding the XCFramework concurrently with Swift compilation/linking against it.
 
 Peak-RSS reporting uses Zig's libc `rusage` binding. Translated glibc headers
 can place `ru_maxrss` inside an anonymous union, so directly accessing that

@@ -24,6 +24,7 @@ fn configureModule(b: *std.Build, mod: *std.Build.Module) void {
     mod.addIncludePath(b.path("src"));
     mod.addCSourceFile(.{ .file = b.path("vendor/sqlite3.c"), .flags = sqlite_flags });
     mod.addCSourceFile(.{ .file = b.path("src/sqlite_helpers.c"), .flags = &.{ "-I", "vendor" } });
+    mod.addCSourceFile(.{ .file = b.path("src/filesystem_helpers.c"), .flags = &.{} });
     mod.addCSourceFile(.{ .file = b.path("src/onnx_bridge.c"), .flags = &.{"-std=c11"} });
     if (mod.resolved_target.?.result.os.tag == .linux) {
         mod.linkSystemLibrary("m", .{});

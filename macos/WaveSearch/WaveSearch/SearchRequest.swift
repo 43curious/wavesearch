@@ -139,7 +139,7 @@ nonisolated final class SearchRequest: @unchecked Sendable {
         SearchOutcome(error: ifBackendError() ?? "Search failed", cancelled: code == WS_QUERY_CANCELLED)
     }
 
-    private static func file(_ result: WSResult, group: Int64 = 0) -> SoundFile {
+    static func file(_ result: WSResult, group: Int64 = 0) -> SoundFile {
         SoundFile(
             id: Int(result.file_id), folderId: Int(result.folder_id),
             path: withUnsafeBytes(of: result.path) { String(cString: $0.baseAddress!.assumingMemoryBound(to: CChar.self)) },

@@ -5,7 +5,7 @@ const query_cancel = @import("query.zig");
 pub const Kind = enum(u32) { unknown = 0, fast_provisional = 1, sampled = 2, full = 3 };
 pub const Algorithm = enum(u32) { unknown = 0, wyhash_size_le64_v1 = 1 };
 pub const Mode = enum { fast, normal, deep };
-pub const Identity = struct { value: i64, kind: Kind, algorithm: Algorithm };
+pub const Identity = struct { value: i64, kind: Kind, algorithm: Algorithm, sha256: ?[32]u8 = null };
 pub const Recorded = struct { hash: i64, size: i64, mtime_ns: i64, kind: Kind, algorithm: Algorithm };
 
 pub const FAST_HASH_BLOCK_SIZE: u64 = 64 * 1024;
@@ -25,11 +25,14 @@ pub fn compute(reader: audio_file.Reader, mode: Mode, expected_size: i64, expect
     const stat = try reader.handle.stat(reader.io);
     if (stat.size != expected_size or stat.mtime.nanoseconds != expected_mtime_ns) return error.FileChangedDuringScan;
     var hasher = std.hash.Wyhash.init(0);
+    var sha = std.crypto.hash.sha2.Sha256.init(.{});
+    var complete = false;
     var size_buf: [8]u8 = undefined;
     std.mem.writeInt(u64, &size_buf, stat.size, .little);
     hasher.update(&size_buf);
     var buf: [FAST_HASH_BLOCK_SIZE]u8 = undefined;
     if (deep or (!fast and stat.size <= 16 * 1024 * 1024) or (fast and stat.size <= FAST_HASH_MAX_READ)) {
+        complete = true;
         var offset: u64 = 0;
         while (offset < stat.size) {
             try query_cancel.check();
@@ -38,6 +41,7 @@ pub fn compute(reader: audio_file.Reader, mode: Mode, expected_size: i64, expect
             const n = try reader.readAll(buf[0..wanted], offset);
             if (n != wanted) return error.FileChangedDuringScan;
             hasher.update(buf[0..n]);
+            sha.update(buf[0..n]);
             offset += n;
         }
     } else if (fast) {
@@ -66,7 +70,7 @@ pub fn compute(reader: audio_file.Reader, mode: Mode, expected_size: i64, expect
     const raw_digest = hasher.final() & 0x7fff_ffff_ffff_ffff;
     const digest: i64 = @intCast(if (raw_digest == 0) 1 else raw_digest);
     const kind: Kind = if (fast) .fast_provisional else if (!deep and stat.size > 16 * 1024 * 1024) .sampled else .full;
-    return .{ .value = if (kind == .full) digest else -digest, .kind = kind, .algorithm = .wyhash_size_le64_v1 };
+    return .{ .value = if (kind == .full) digest else -digest, .kind = kind, .algorithm = .wyhash_size_le64_v1, .sha256 = if (complete) sha.finalResult() else null };
 }
 
 /// One borrowed-path source, validated against its catalog metadata. It owns

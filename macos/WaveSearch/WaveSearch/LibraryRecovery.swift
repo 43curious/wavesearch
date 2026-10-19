@@ -125,6 +125,7 @@ nonisolated enum LibraryRecovery {
         var replacement = folder
         replacement.path = url.standardizedFileURL.path
         replacement.bookmark = nil
+        replacement.volumeUUID = nil // Reconnect explicitly adopts the selected volume.
         var access = backend.authorize(replacement)
         var succeeded = false
         defer {

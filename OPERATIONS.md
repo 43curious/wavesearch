@@ -12,6 +12,13 @@ head/tail samples above 16 MiB are also marked sampled;
 the content hash. All modes build a complete snapshot before the short SQLite publication transaction, so cancellation,
 filesystem errors, or process interruption cannot expose a partial folder.
 
+The sampling limits above describe the public content hash. A new path with
+the size of a proven old source can additionally require a complete-byte
+SHA-256 read for conservative move verification. Background analysis and native
+waveform-tier storage can establish missing proofs with one complete source
+read. See [move identities and live watching](documentation/LIBRARY_RECONCILIATION.md)
+for costs, ambiguity rules and validation limits.
+
 `ws_cancel_indexing` is lock-free and may be called from a UI thread. The scan
 checks cancellation between directory entries and immediately before database
 publication. Restarting the operation resumes safely from the previous live
@@ -29,8 +36,9 @@ Unchanged entries retain compact references to the captured catalog identities;
 only new/changed entries stage full records. After a complete walk, publication
 updates moved paths and removes missing captured IDs in the same transaction.
 The revision guard rejects competing catalog publication or reopen. Full walks
-and per-file open/stat checks remain necessary; OS directory watching is not
-part of this optimization. See [staging measurements](documentation/SEARCH_OPTIMIZATION_RESULTS.md#compact-scan-staging-and-filtered-retrieval-2026-10-11).
+and per-file open/stat checks remain necessary. The macOS FSEvents coordinator
+now schedules these full-root scans after coalescing signals; it does not
+publish individual subtrees. See [staging measurements](documentation/SEARCH_OPTIMIZATION_RESULTS.md#compact-scan-staging-and-filtered-retrieval-2026-10-11).
 
 `ws_operation_status` reports active/deep/cancel state, discovered files, and
 completed/cancelled/failed operation counters. The macOS app exposes Cancel and
@@ -129,6 +137,13 @@ affected analysis normally. Explicit fingerprint repacking resumes per row, and
 restore/compaction validate both blob formats before publishing. Legacy duplicate
 counts may read whole files: keep them off-main. See
 [storage/identity contracts and costs](documentation/INDEXING_STORAGE_IDENTITIES.md).
+
+Schema 15 adds optional complete-byte move proofs. Migration retains analysis
+and leaves historical proofs unknown until a complete read establishes them.
+Older binaries reject schema 15. The native host persists volume UUIDs when
+available and refuses to scan a mountpoint on a different volume; explicit
+Reconnect adopts the selected volume. The core rejects root replacement during
+enumeration before publishing removals.
 
 ## Background refinement modes
 

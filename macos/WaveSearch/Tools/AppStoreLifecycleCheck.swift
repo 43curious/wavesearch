@@ -113,7 +113,7 @@ struct AppStoreLifecycleCheck {
         await AudioAnalysisRepository.shared.resume()
         BlockingWorkRegistry.hostFiles.resume()
         return AppStore(storageDirectory: URL(fileURLWithPath: NSTemporaryDirectory()),
-                        backend: backend, preferences: preferences, startsRefinement: false, searchBackend: searchBackend,
+                        backend: backend, preferences: preferences, startsRefinement: false, watchesLibraries: false, searchBackend: searchBackend,
                         searchRefinementWait: searchRefinementWait)
     }
 
@@ -763,7 +763,7 @@ struct AppStoreLifecycleCheck {
         }.value
         await AudioAnalysisRepository.shared.resume()
         BlockingWorkRegistry.hostFiles.resume()
-        let store = AppStore(storageDirectory: root.appendingPathComponent("catalog"), preferences: preferences, startsRefinement: false)
+        let store = AppStore(storageDirectory: root.appendingPathComponent("catalog"), preferences: preferences, startsRefinement: false, watchesLibraries: false)
         store.bootstrap()
         await store.waitUntilStarted()
         store.addFolder(at: sounds)
@@ -815,7 +815,7 @@ struct AppStoreLifecycleCheck {
                            100,97,116,97,2,0,0,0,0,0]
         try Data(wav).write(to: sounds.appendingPathComponent("click.wav"))
         let store = AppStore(storageDirectory: root.appendingPathComponent("catalog"),
-                             preferences: preferences, startsRefinement: false)
+                             preferences: preferences, startsRefinement: false, watchesLibraries: false)
         store.bootstrap()
         await store.waitUntilStarted()
         precondition(store.isReady, store.lastBackendError ?? "Live open failed")
@@ -920,7 +920,7 @@ struct AppStoreLifecycleCheck {
         let corrupt = Data("not a SQLite database".utf8)
         try corrupt.write(to: store.indexURL)
         let recovering = AppStore(storageDirectory: root.appendingPathComponent("catalog"),
-                                  preferences: preferences, startsRefinement: false)
+                                  preferences: preferences, startsRefinement: false, watchesLibraries: false)
         recovering.bootstrap()
         await recovering.waitUntilStarted()
         precondition(!recovering.isReady && recovering.canRestoreBackup, "Failed startup hid recovery")
@@ -969,7 +969,7 @@ struct AppStoreLifecycleCheck {
             bytes.append(UInt8(truncatingIfNeeded: bits >> 8))
         }
         for file in 0..<8 { try Data(bytes).write(to: sounds.appendingPathComponent("effect-\(file).wav")) }
-        let store = AppStore(storageDirectory: root.appendingPathComponent("catalog"), preferences: isolatedPreferences, startsRefinement: false)
+        let store = AppStore(storageDirectory: root.appendingPathComponent("catalog"), preferences: isolatedPreferences, startsRefinement: false, watchesLibraries: false)
         store.bootstrap()
         await store.waitUntilStarted()
         precondition(store.isReady)

@@ -14,6 +14,7 @@
 #define WS_CAP_CLAP              (UINT64_C(1) << 3)
 #define WS_CAP_EXACT_DUPLICATES  (UINT64_C(1) << 4)
 #define WS_CAP_FINGERPRINT_REPACK (UINT64_C(1) << 5)
+#define WS_CAP_FILE_LOOKUP       (UINT64_C(1) << 6)
 // Allocation-free, thread-safe, valid before init and after deinit. Capabilities
 // describe compiled APIs, not model installation, provider loading or DB state.
 // Ignore unknown bits. WS_CAP_CLAP never promises a model/runtime is available.
@@ -261,6 +262,11 @@ int ws_semantic_status(WSSemanticStatus *out);
 // Writes up to max_results WSResult structs into out.
 // Returns count written, or -1 on error.
 int  ws_list_folder(int folder_id, WSResult *out, int max_results);
+
+// Copy a committed result by stable ID or exact catalog path. Returns 1 when
+// found, 0 when absent, -1 on error; out is unchanged when absent or on error.
+int ws_file_lookup_v1(int file_id, WSResult *out);
+int ws_file_lookup_path_v1(const char *path, WSResult *out);
 
 // Generate/resume robust WAV acoustic fingerprints. max_files=0 means all.
 int ws_acoustic_index_pending(int folder_id, int max_files);

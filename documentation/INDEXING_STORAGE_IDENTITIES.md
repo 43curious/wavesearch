@@ -9,6 +9,10 @@ and an indexed fingerprint storage revision. Older binaries reject this schema;
 retain a compatible backup. Fingerprint algorithm v3 and CLAP preprocessing/model
 identities remain unchanged.
 
+Schema 15 subsequently adds optional complete-byte SHA-256 proofs for
+[conservative file moves and library reconciliation](LIBRARY_RECONCILIATION.md).
+The public hash kinds and duplicate-verification contract below remain unchanged.
+
 ## Bounded extraction
 
 `clap_audio.FingerprintReader` streams canonical 16 kHz mono blocks into

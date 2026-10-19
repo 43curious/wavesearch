@@ -10,6 +10,7 @@ const query_cancel = @import("query.zig");
 const text_mod = @import("text.zig");
 const isDelimiter = text_mod.isDelimiter;
 const normalizeText = text_mod.normalize;
+extern fn ws_directory_identity(descriptor: c_int, identity: *[2]u64) c_int;
 
 const AUDIO_EXTENSIONS = [_][]const u8{ ".wav", ".aiff", ".aif", ".aifc", ".mp3", ".flac", ".ogg", ".m4a" };
 pub const MAX_QUERY_LEN = 1024;
@@ -40,6 +41,8 @@ pub fn indexFolderWithOptions(allocator: std.mem.Allocator, folder_id: i32, path
 
     var dir = try std.Io.Dir.openDirAbsolute(io, path, .{ .iterate = true });
     defer dir.close(io);
+    var root_identity: [2]u64 = undefined;
+    if (ws_directory_identity(dir.handle, &root_identity) != 0) return error.FileChangedDuringScan;
     var walker = try dir.walk(allocator);
     defer walker.deinit();
 
@@ -77,6 +80,7 @@ pub fn indexFolderWithOptions(allocator: std.mem.Allocator, folder_id: i32, path
         const prefix_limit: u64 = if (wav and !options.fast) 2 * 1024 * 1024 else FAST_HASH_BLOCK_SIZE;
         try prefix.resize(allocator, @intCast(@min(stat.size, prefix_limit)));
         if (try file.readPositionalAll(io, prefix.items, 0) != prefix.items.len) return error.FileChangedDuringScan;
+        if (audio_file.bytes_read) |counter| counter.* += prefix.items.len;
         const reader = audio_file.Reader{ .handle = &file, .io = io, .size = stat.size, .prefix = prefix.items };
         if (wav) {
             if (options.fast)
@@ -85,7 +89,11 @@ pub fn indexFolderWithOptions(allocator: std.mem.Allocator, folder_id: i32, path
                 audio.appendMetadataTextFromFileLimit(allocator, &text, reader, 2 * 1024 * 1024) catch {};
         }
         const duration_ms = audio.durationMsFromFile(reader, full_path.items) catch 0;
-        const identity = try file_identity.compute(reader, if (options.deep) .deep else if (options.fast) .fast else .normal, file_size, mtime_ns, options.cancel);
+        var identity = try file_identity.compute(reader, if (options.deep) .deep else if (options.fast) .fast else .normal, file_size, mtime_ns, options.cancel);
+        if (identity.sha256 == null and try stage.hasMoveCandidate(entry.path, file_size)) {
+            const complete = try file_identity.compute(reader, .deep, file_size, mtime_ns, options.cancel);
+            identity.sha256 = complete.sha256;
+        }
         // Reusing a descriptor must not hide a file replaced at its path
         // while we inspected it, even if its size and mtime were preserved.
         const current = std.Io.Dir.cwd().statFile(io, full_path.items, .{}) catch return error.FileChangedDuringScan;
@@ -102,6 +110,7 @@ pub fn indexFolderWithOptions(allocator: std.mem.Allocator, folder_id: i32, path
             .content_hash = identity.value,
             .identity_kind = identity.kind,
             .hash_algorithm = identity.algorithm,
+            .sha256 = identity.sha256,
             .file_size = file_size,
             .mtime_ns = mtime_ns,
         });
@@ -110,6 +119,10 @@ pub fn indexFolderWithOptions(allocator: std.mem.Allocator, folder_id: i32, path
     // Stage's primary-key traversal gives deterministic fresh IDs without a
     // second manifest, duplicated strings, publication array or in-memory sort.
     if (options.cancel) |token| if (token.load(.acquire)) return error.Cancelled;
+    var root_check = std.Io.Dir.openDirAbsolute(io, path, .{}) catch return error.FileChangedDuringScan;
+    defer root_check.close(io);
+    var root_after: [2]u64 = undefined;
+    if (ws_directory_identity(root_check.handle, &root_after) != 0 or !std.meta.eql(root_after, root_identity)) return error.FileChangedDuringScan;
     try stage.publishAtRoot(path, options.cancel);
 }
 
@@ -664,7 +677,7 @@ fn copyResults(rows: []const db.Candidate, out: [*]types.WSResult, max: usize) u
     return count;
 }
 
-fn copyResult(row: *const db.Candidate, out: *types.WSResult) void {
+pub fn copyResult(row: *const db.Candidate, out: *types.WSResult) void {
     out.file_id = row.file_id;
     out.folder_id = row.folder_id;
     out.path = row.path;

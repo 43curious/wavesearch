@@ -2453,7 +2453,7 @@ test "compact staging preserves retained analysis, moves roots and removes only 
     try std.testing.expectEqual(@as(u32, 0), (try db.integrityCheck(true)).errors_found);
 }
 
-test "cancellation during retained path publication rolls back moves and removals" {
+test "cancellation during retained and verified move publication rolls back moves and removals" {
     const Hooks = struct {
         var cancel: std.atomic.Value(bool) = .init(false);
         fn install(handle: ?*db.c.sqlite3, _: [*c][*c]u8, _: ?*const db.c.sqlite3_api_routines) callconv(.c) c_int {
@@ -2472,7 +2472,7 @@ test "cancellation during retained path publication rolls back moves and removal
     defer fixture.deinit();
     try openFixture(&fixture);
     try db.applyFolderIndex(1, &.{
-        .{ .path = "/old/a.wav", .relative_path = "a.wav", .name = "A.wav", .search_text = "alpha", .duration_ms = 10, .content_hash = 1, .file_size = 1, .mtime_ns = 1 },
+        .{ .path = "/old/a.wav", .relative_path = "a.wav", .name = "A.wav", .search_text = "alpha", .duration_ms = 10, .content_hash = 1, .file_size = 1, .mtime_ns = 1, .sha256 = @as([32]u8, @splat(7)) },
         .{ .path = "/old/b.wav", .relative_path = "b.wav", .name = "B.wav", .search_text = "beta", .duration_ms = 10, .content_hash = 2, .file_size = 1, .mtime_ns = 1 },
     });
     try rawExec(fixture.db_path, "CREATE TRIGGER ws_test_stage_cancel AFTER UPDATE OF path ON files BEGIN SELECT ws_test_stage_cancel(); END;");
@@ -2485,6 +2485,15 @@ test "cancellation during retained path publication rolls back moves and removal
     var results: [1]main_c.WSResult = undefined;
     try std.testing.expectEqual(@as(usize, 1), try search.search(allocator, "alpha", 1, &results, results.len));
     try std.testing.expectEqualStrings("/old/a.wav", std.mem.sliceTo(&results[0].path, 0));
+    Hooks.cancel.store(false, .release);
+    var verified = try db.IndexStage.init(1, null);
+    defer verified.deinit();
+    try verified.append(.{ .path = "/old/renamed.wav", .relative_path = "renamed.wav", .name = "Renamed.wav", .search_text = "alpha", .duration_ms = 10, .content_hash = 1, .file_size = 1, .mtime_ns = 1, .sha256 = @as([32]u8, @splat(7)) });
+    try std.testing.expectError(error.Cancelled, verified.publishAtRoot("/old", &Hooks.cancel));
+    try std.testing.expect(Hooks.cancel.load(.acquire));
+    try std.testing.expectEqual(@as(c_int, 2), try db.countForFolder(1));
+    try std.testing.expectEqual(@as(?db.FileInfo, null), try db.inspectFile("renamed.wav"));
+    try std.testing.expect((try db.inspectFile("a.wav")) != null);
 }
 
 test "lexical search reads the committed snapshot while index publication is paused" {
@@ -2942,7 +2951,7 @@ test "legacy fingerprint repacking resumes across migration cancellation reopen 
     db.close();
     try rawExec(fixture.db_path, @import("storage_schema.zig").dropForTests ++ "PRAGMA user_version=13;");
     try openFixture(&fixture);
-    try std.testing.expectEqual(@as(i32, 14), try db.schemaVersion());
+    try std.testing.expectEqual(db.SCHEMA_VERSION, try db.schemaVersion());
     try std.testing.expectEqual(@as(i64, 2), try rawScalar(fixture.db_path, "SELECT COUNT(*) FROM file_fingerprints WHERE storage_version=0"));
     const first = try db.repackFingerprints(allocator, 1);
     try std.testing.expectEqual(@as(u32, 1), first.processed_count);
@@ -3003,4 +3012,241 @@ test "legacy fingerprint repacking resumes across migration cancellation reopen 
     try std.testing.expect(Hooks.failure == null);
     try std.testing.expect((try db.loadFingerprint(allocator, algorithm_id, ids[1])) == null);
     try std.testing.expectEqual(@as(i64, 1), (try db.fingerprintStatus(algorithm_id)).pending);
+}
+
+test "verified rename retains ID, embeddings, fingerprints and retimed waveform tiers" {
+    var fixture = try Fixture.init();
+    defer fixture.deinit();
+    try openFixture(&fixture);
+    try fixture.tmp.dir.createDirPath(io, "sounds/nested");
+    try writeWav(fixture.tmp.dir, "sounds/old.wav", 500, 19);
+    const root = try fixture.path("sounds");
+    defer allocator.free(root);
+    try search.indexFolderWithOptions(allocator, 1, root, .{ .fast = true });
+    const old = (try db.inspectFile("old.wav")).?;
+    _ = try db.setSemanticModel("move-proof", 2);
+    try db.upsertSemanticEmbedding(allocator, @intCast(old.id), old.content_hash, &.{ 1, 0 });
+    _ = try acoustic.indexPending(allocator, 1, 1);
+    const algorithm_id = try db.ensureFingerprintAlgorithm(fingerprint.ALGORITHM_KEY);
+    const before_acoustic = try db.fingerprintStatus(algorithm_id);
+    const config = waveform.types.WSWaveformAnalyzerConfig{
+        .struct_size = @sizeOf(waveform.types.WSWaveformAnalyzerConfig),
+        .version = 1,
+        .purpose = waveform.PURPOSE_DETAILED,
+        .flags = waveform.FLAG_LOUDNESS,
+        .backend = waveform.BACKEND_PORTABLE,
+        .reserved0 = 0,
+        .sample_rate = 8000,
+        .total_frames = 1,
+        .channel_count = 1,
+        .reserved1 = 0,
+        .source_file_size = old.file_size,
+        .source_mtime_ns = old.mtime_ns,
+        .source_content_hash = old.content_hash,
+        .reserved = .{ 0, 0 },
+    };
+    const analyzer = try waveform.Analyzer.create(allocator, config);
+    defer analyzer.deinit();
+    const sample = [_]f32{0.25};
+    try analyzer.push(.{ .struct_size = @sizeOf(waveform.types.WSWaveformPCMBuffer), .version = 1, .layout = waveform.LAYOUT_INTERLEAVED, .channel_count = 1, .frame_count = 1, .interleaved = &sample, .planes = null, .reserved = .{ 0, 0 } });
+    const result = try analyzer.finish();
+    defer result.deinit();
+    const blob = try allocator.alloc(u8, try waveform.serializedSize(result, waveform.TIER_UNIVERSAL));
+    defer allocator.free(blob);
+    _ = try waveform.serialize(result, waveform.TIER_UNIVERSAL, blob);
+    try db.storeWaveformTiers(@intCast(old.id), old.content_hash, old.file_size, old.mtime_ns, 3, blob, null);
+    try fixture.tmp.dir.rename("sounds/old.wav", fixture.tmp.dir, "sounds/nested/new.wav", io);
+    var moved = try fixture.tmp.dir.openFile(io, "sounds/nested/new.wav", .{ .mode = .read_write });
+    defer moved.close(io);
+    try moved.setTimestamps(io, .{ .modify_timestamp = .{ .new = .{ .nanoseconds = old.mtime_ns + std.time.ns_per_s } } });
+    // A hash-mode change rebinds analysis without recomputing it after complete
+    // byte verification. Deep/normal identity strength still follows the mode.
+    try search.indexFolder(allocator, 1, root);
+    const current = (try db.inspectFile("nested/new.wav")).?;
+    try std.testing.expectEqual(old.id, current.id);
+    try std.testing.expect(current.content_hash > 0);
+    try std.testing.expectEqual(@import("file_identity.zig").Kind.full, current.identity_kind);
+    try std.testing.expectEqual(@as(i64, 1), (try db.semanticStatus()).embedded_count);
+    try std.testing.expectEqual(before_acoustic.indexed, (try db.fingerprintStatus(algorithm_id)).indexed);
+    var loaded: [4096]u8 = undefined;
+    const len = (try db.loadWaveformTierBlob(@intCast(old.id), false, &loaded)).?;
+    const restored = try waveform.deserialize(allocator, loaded[0..len]);
+    defer restored.deinit();
+    try std.testing.expectEqual(current.mtime_ns, restored.source_mtime_ns);
+    try std.testing.expectEqual(current.content_hash, restored.source_content_hash);
+    try std.testing.expectEqual(@as(u32, 0), (try db.integrityCheck(true)).errors_found);
+    var output: main_c.WSResult = undefined;
+    try std.testing.expectEqual(@as(c_int, 1), main_c.ws_file_lookup_v1(@intCast(old.id), &output));
+    try std.testing.expect(std.mem.endsWith(u8, std.mem.sliceTo(&output.path, 0), "/nested/new.wav"));
+    try std.testing.expectEqual(@as(c_int, 0), main_c.ws_file_lookup_v1(2_000_000_000, &output));
+    try openFixture(&fixture);
+    try std.testing.expectEqual(old.id, (try db.inspectFile("nested/new.wav")).?.id);
+    try writeWav(fixture.tmp.dir, "sounds/nested/new.wav", 750, 41);
+    try search.indexFolder(allocator, 1, root);
+    try std.testing.expectEqual(@as(i64, 0), (try db.semanticStatus()).embedded_count);
+    try std.testing.expectEqual(@as(i64, 0), (try db.fingerprintStatus(algorithm_id)).indexed);
+    try std.testing.expectEqual(@as(?usize, null), try db.loadWaveformTierBlob(@intCast(old.id), false, &loaded));
+}
+
+test "move matching rejects copies, duplicate ambiguity and absent proofs atomically" {
+    var fixture = try Fixture.init();
+    defer fixture.deinit();
+    try openFixture(&fixture);
+    const proof: [32]u8 = @splat(7);
+    const rows = [_]db.ScannedFile{
+        .{ .path = "/root/a.wav", .relative_path = "a.wav", .name = "a.wav", .search_text = "a", .duration_ms = 1, .content_hash = -7, .file_size = 3, .mtime_ns = 1, .sha256 = proof },
+        .{ .path = "/root/unknown.wav", .relative_path = "unknown.wav", .name = "unknown.wav", .search_text = "unknown", .duration_ms = 1, .content_hash = -7, .file_size = 3, .mtime_ns = 1 },
+    };
+    try db.applyFolderIndex(1, &rows);
+    const a = (try db.inspectFile("a.wav")).?;
+    var stage = try db.IndexStage.init(1, null);
+    defer stage.deinit();
+    try stage.retainUnchanged("a.wav");
+    try stage.retainUnchanged("unknown.wav");
+    var copy = rows[0];
+    copy.path = "/root/copy.wav";
+    copy.relative_path = "copy.wav";
+    copy.name = "copy.wav";
+    try stage.append(copy);
+    try stage.publishAtRoot("/root", null);
+    const copied = (try db.inspectFile("copy.wav")).?;
+    try std.testing.expect(a.id != copied.id);
+    var ambiguous = try db.IndexStage.init(1, null);
+    defer ambiguous.deinit();
+    copy.path = "/root/new.wav";
+    copy.relative_path = "new.wav";
+    copy.name = "new.wav";
+    try ambiguous.append(copy);
+    var cancel = std.atomic.Value(bool).init(true);
+    try std.testing.expectError(error.Cancelled, ambiguous.publishAtRoot("/root", &cancel));
+    try std.testing.expectEqual(a.id, (try db.inspectFile("a.wav")).?.id);
+    // A fresh staging call after cancellation sees both old duplicate sources.
+    var retried = try db.IndexStage.init(1, null);
+    defer retried.deinit();
+    try retried.append(copy);
+    try retried.publishAtRoot("/root", null);
+    const fresh = (try db.inspectFile("new.wav")).?;
+    try std.testing.expect(fresh.id != a.id and fresh.id != copied.id);
+    // A same-sized sampled hash is not a proof; even a unique match gets no ID.
+    var unproven = try db.IndexStage.init(1, null);
+    defer unproven.deinit();
+    copy.sha256 = null;
+    copy.path = "/root/other.wav";
+    copy.relative_path = "other.wav";
+    try unproven.append(copy);
+    try unproven.publishAtRoot("/root", null);
+    try std.testing.expect(fresh.id != (try db.inspectFile("other.wav")).?.id);
+    // Cross-library moves never adopt a row from another folder snapshot.
+    const other_id = (try db.inspectFile("other.wav")).?.id;
+    copy.path = "/other-library/other.wav";
+    copy.sha256 = proof;
+    var cross = try db.IndexStage.init(2, null);
+    defer cross.deinit();
+    try cross.append(copy);
+    try cross.publishAtRoot("/other-library", null);
+    try std.testing.expect((try db.lookupFile(0, copy.path)).?.file_id != other_id);
+    try std.testing.expect((try db.lookupFile(@intCast(other_id), null)) != null);
+}
+
+test "background full-byte proof protects fast-mode moves from sampled collisions" {
+    var fixture = try Fixture.init();
+    defer fixture.deinit();
+    try openFixture(&fixture);
+    try fixture.tmp.dir.createDirPath(io, "sounds");
+    try writeWav(fixture.tmp.dir, "sounds/a.wav", 70_000, 9);
+    const root = try fixture.path("sounds");
+    defer allocator.free(root);
+    try search.indexFolderWithOptions(allocator, 1, root, .{ .fast = true });
+    const old = (try db.inspectFile("a.wav")).?;
+    const cancellation = @import("cancellation.zig");
+    const token = cancellation.begin();
+    defer cancellation.end();
+    var bytes: u64 = 0;
+    @import("audio_file.zig").bytes_read = &bytes;
+    defer @import("audio_file.zig").bytes_read = null;
+    _ = cancellation.cancel();
+    try std.testing.expectError(error.Cancelled, db.captureMoveIdentity(@intCast(old.id), old.content_hash, token));
+    try std.testing.expectEqual(@as(u64, 0), bytes);
+    // Native waveform publication establishes the same proof for every host-
+    // decoded format, without changing the fast content hash or requiring CLAP.
+    try std.testing.expectEqual(@as(c_int, 0), main_c.ws_waveform_tiers_store(@intCast(old.id), old.content_hash, old.file_size, old.mtime_ns, 3, "universal", 9, null, 0));
+    try std.testing.expectEqual(@as(u64, @intCast(old.file_size)), bytes);
+    const baseline_bytes = bytes;
+    bytes = 0;
+    try fixture.tmp.dir.rename("sounds/a.wav", fixture.tmp.dir, "sounds/b.wav", io);
+    try search.indexFolderWithOptions(allocator, 1, root, .{ .fast = true });
+    try std.testing.expectEqual(old.id, (try db.inspectFile("b.wav")).?.id);
+    const rename_bytes = bytes;
+    bytes = 0;
+    var file = try fixture.tmp.dir.openFile(io, "sounds/b.wav", .{ .mode = .read_write });
+    defer file.close(io);
+    try file.writePositionalAll(io, &.{ 55, 66 }, 150_000);
+    try file.setTimestamps(io, .{ .modify_timestamp = .{ .new = .{ .nanoseconds = old.mtime_ns } } });
+    try fixture.tmp.dir.rename("sounds/b.wav", fixture.tmp.dir, "sounds/c.wav", io);
+    try search.indexFolderWithOptions(allocator, 1, root, .{ .fast = true });
+    const different = (try db.inspectFile("c.wav")).?;
+    try std.testing.expectEqual(old.content_hash, different.content_hash);
+    try std.testing.expect(old.id != different.id);
+    std.debug.print("move proof: source_bytes={d}, baseline_bytes={d}, rename_reader_bytes={d}, collision_reader_bytes={d}; sampled collision rejected\n", .{ old.file_size, baseline_bytes, rename_bytes, bytes });
+}
+
+test "schema 14 migration preserves analysis but does not invent move proofs" {
+    var fixture = try Fixture.init();
+    defer fixture.deinit();
+    try openFixture(&fixture);
+    try fixture.tmp.dir.createDirPath(io, "sounds");
+    try writeWav(fixture.tmp.dir, "sounds/old.wav", 100, 9);
+    const root = try fixture.path("sounds");
+    defer allocator.free(root);
+    try search.indexFolder(allocator, 1, root);
+    const old = (try db.inspectFile("old.wav")).?;
+    _ = try db.setSemanticModel("migration-proof", 2);
+    try db.upsertSemanticEmbedding(allocator, @intCast(old.id), old.content_hash, &.{ 1, 0 });
+    db.close();
+    try rawExec(fixture.db_path, @import("move_schema.zig").dropForTests ++ "PRAGMA user_version=14;");
+    try openFixture(&fixture);
+    try std.testing.expectEqual(db.SCHEMA_VERSION, try db.schemaVersion());
+    try std.testing.expectEqual(@as(i64, 1), (try db.semanticStatus()).embedded_count);
+    try fixture.tmp.dir.rename("sounds/old.wav", fixture.tmp.dir, "sounds/new.wav", io);
+    try search.indexFolder(allocator, 1, root);
+    try std.testing.expect(old.id != (try db.inspectFile("new.wav")).?.id);
+    try std.testing.expectEqual(@as(u32, 0), (try db.integrityCheck(true)).errors_found);
+}
+
+test "replaced or unavailable scan roots cannot publish deletions" {
+    const Hooks = struct {
+        var dir: std.Io.Dir = undefined;
+        var fired = false;
+        var failure: ?anyerror = null;
+        fn replaceRoot() void {
+            if (fired) return;
+            fired = true;
+            dir.rename("sounds", dir, "disconnected", io) catch |err| {
+                failure = err;
+                return;
+            };
+            dir.createDirPath(io, "sounds") catch |err| {
+                failure = err;
+            };
+        }
+    };
+    var fixture = try Fixture.init();
+    defer fixture.deinit();
+    try openFixture(&fixture);
+    try fixture.tmp.dir.createDirPath(io, "sounds");
+    try writeWav(fixture.tmp.dir, "sounds/keep.wav", 100, 4);
+    const root = try fixture.path("sounds");
+    defer allocator.free(root);
+    try search.indexFolder(allocator, 1, root);
+    const old = (try db.inspectFile("keep.wav")).?;
+    try writeWav(fixture.tmp.dir, "sounds/new.wav", 70_000, 8);
+    Hooks.dir = fixture.tmp.dir;
+    Hooks.fired = false;
+    Hooks.failure = null;
+    @import("audio_file.zig").Testing.after_read = Hooks.replaceRoot;
+    defer @import("audio_file.zig").Testing.after_read = null;
+    try std.testing.expectError(error.FileChangedDuringScan, search.indexFolderWithOptions(allocator, 1, root, .{ .fast = true }));
+    try std.testing.expect(Hooks.fired and Hooks.failure == null);
+    try std.testing.expectEqual(old.id, (try db.inspectFile("keep.wav")).?.id);
+    try std.testing.expectEqual(@as(c_int, 1), try db.countForFolder(1));
 }

@@ -56,6 +56,11 @@ pub fn indexPendingExpected(allocator: std.mem.Allocator, folder_id: ?i32, max_f
         cursor = files[files.len - 1].id;
         for (files) |file| {
             if (cancel.isCancelled()) return error.Cancelled;
+            db.captureMoveIdentity(file.id, file.source_content_hash, cancel) catch |err| {
+                if (err == error.Cancelled) return err;
+                // A proof is optional for indexing; unreadable or legacy sources
+                // retain the established decode/failure path and cannot move-match.
+            };
             const landmarks = fingerprint.fromFile(allocator, io, file.path) catch |err| {
                 if (!isTerminalAudioError(err)) return err;
                 try db.recordFingerprintFailure(algorithm_id, file.id, file.source_content_hash, "decode", @errorName(err));

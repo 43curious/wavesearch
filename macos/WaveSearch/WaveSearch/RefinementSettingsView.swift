@@ -13,6 +13,14 @@ struct RefinementSettingsView: View {
     var body: some View {
         Form {
             SearchShortcutSettings()
+            Section("Library changes") {
+                Toggle("Keep libraries up to date", isOn: Binding(
+                    get: { store.keepsLibrariesUpdated }, set: { store.setKeepsLibrariesUpdated($0) }
+                ))
+                Text(store.libraryWatchStatus)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             Section("Importing into editors") {
                 Picker("Files", selection: $importBehavior) {
                     ForEach(AudioImportBehavior.allCases) { behavior in

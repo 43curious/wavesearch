@@ -7,7 +7,7 @@ import AppKit
 struct SettingsAppearanceCheck: App {
     @StateObject private var store = AppStore(
         storageDirectory: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString),
-        preferences: UserDefaults(suiteName: UUID().uuidString)!, startsRefinement: false
+        preferences: UserDefaults(suiteName: UUID().uuidString)!, startsRefinement: false, watchesLibraries: false
     )
 
     var body: some Scene {

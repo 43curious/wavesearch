@@ -12,6 +12,10 @@ source identity verification](INDEXING_STORAGE_IDENTITIES.md), with canonical v3
 output retained. Reduced-detail trigrams and on-demand universal waveforms remain
 experiments rather than assumed storage improvements.
 
+Schema 15 adds [verified file moves and macOS library watching](LIBRARY_RECONCILIATION.md).
+Events coalesce into full-root scans; subtree publication, native event-delivery
+acceptance and representative cold-storage/foreground measurements remain open.
+
 ## Scope and evidence
 
 Keep Zig, SQLite, and native frontends. The largest opportunities are eliminating unnecessary work, bounding concurrency, and keeping blocking operations away from the UI. This plan records the source review; it is not a new profiling report. References name the reviewed functions because line numbers change during implementation.

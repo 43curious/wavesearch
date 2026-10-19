@@ -113,6 +113,13 @@ Right-click a library to re-index, remove, or reconnect a moved folder. If a
 drive disconnects, the library shows **Missing drive** and its indexed files
 remain searchable.
 
+Libraries update automatically as files change. Turn **Keep libraries up to
+date** off in **Settings → General → Library changes** to scan manually.
+Verified, unambiguous moves within a library keep favourites and existing
+analysis. Older files without a complete-byte identity and ambiguous duplicates
+may receive new IDs; see [library reconciliation](documentation/LIBRARY_RECONCILIATION.md)
+for the policy and verification limits.
+
 **Settings** also provides preview volume and background refinement controls,
 system/light/dark appearance, accent and waveform colors, catalog backup and
 restore, integrity checks, storage sizes, and generated waveform cache deletion.

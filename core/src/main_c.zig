@@ -48,7 +48,7 @@ pub export fn ws_capabilities() u64 {
     const c = @import("c");
     return c.WS_CAP_QUERY_CANCELLATION | c.WS_CAP_WAVEFORM_V1 |
         c.WS_CAP_EXTERNAL_SEMANTIC | c.WS_CAP_CLAP |
-        c.WS_CAP_EXACT_DUPLICATES | c.WS_CAP_FINGERPRINT_REPACK;
+        c.WS_CAP_EXACT_DUPLICATES | c.WS_CAP_FINGERPRINT_REPACK | c.WS_CAP_FILE_LOOKUP;
 }
 
 fn lockMutations() void {
@@ -272,6 +272,33 @@ pub export fn ws_duplicate_count(content_hash: i64) c_int {
         setLastError(err);
         return -1;
     };
+}
+
+/// Copy one committed result without running a search. No borrowed buffers escape.
+pub export fn ws_file_lookup_v1(file_id: c_int, out: ?*WSResult) c_int {
+    if (file_id <= 0 or out == null) {
+        setLastErrorMessage("InvalidArgument");
+        return -1;
+    }
+    const row = (db.lookupFile(file_id, null) catch |err| {
+        setLastError(err);
+        return -1;
+    }) orelse return 0;
+    search.copyResult(&row, out.?);
+    return 1;
+}
+
+pub export fn ws_file_lookup_path_v1(path: ?[*:0]const u8, out: ?*WSResult) c_int {
+    if (path == null or out == null) {
+        setLastErrorMessage("InvalidArgument");
+        return -1;
+    }
+    const row = (db.lookupFile(0, std.mem.span(path.?)) catch |err| {
+        setLastError(err);
+        return -1;
+    }) orelse return 0;
+    search.copyResult(&row, out.?);
+    return 1;
 }
 
 pub export fn ws_file_identity_v1(file_id: c_int, out: ?*WSFileIdentity) c_int {
@@ -1206,6 +1233,16 @@ pub export fn ws_waveform_tiers_store(
             return -1;
         };
         break :blk ptr[0..@intCast(detailed_size)];
+    };
+    // Complete native waveform analysis can establish move identity for formats
+    // without a core decoder too. Keep this optional I/O outside the DB lock.
+    const proof_cancel = cancellation.begin();
+    defer cancellation.end();
+    db.captureMoveIdentity(file_id, content_hash, proof_cancel) catch |err| {
+        if (err == error.Cancelled) {
+            setLastError(err);
+            return -1;
+        }
     };
     db.storeWaveformTiers(file_id, content_hash, file_size, mtime_ns, @intCast(codec_version), universal_ptr[0..@intCast(universal_size)], detailed) catch |err| {
         setLastError(err);

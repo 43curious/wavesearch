@@ -12,6 +12,10 @@ changelog/agent documentation added afterward.
 
 ### Added
 
+- Automatic macOS library watching, enabled by default with a General setting.
+  Coalesced FSEvents reconcile one library at a time, defer to foreground work,
+  recover from downtime/lost events, and stop/drain before library teardown.
+  Manual scanning remains available when native watching cannot start.
 - Native selectable results with accessible sound summaries and actions,
   a labeled preview-position slider, waveform time/range/status values,
   search/scan/pause announcements, and Help → Keyboard Shortcuts (also **?**).
@@ -92,6 +96,11 @@ changelog/agent documentation added afterward.
 
 ### Fixed
 
+- Unambiguous file moves within a library preserve IDs, valid analysis,
+  favourites, selection and preview marks using complete-byte SHA-256 proof.
+  Schema 15 preserves existing analysis without guessing missing proofs;
+  copies, ambiguous duplicates and cross-library moves get new IDs. Volume/root
+  checks preserve the previous snapshot when a scan loses its source.
 - Bare preview/navigation keys now require results focus. Sidebar, text,
   slider, button, picker, and modal-window input retains native behavior;
   Escape moves from search to results and back without clearing control focus

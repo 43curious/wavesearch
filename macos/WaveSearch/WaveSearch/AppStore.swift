@@ -25,6 +25,19 @@ nonisolated struct SoundFile: Identifiable, Hashable, Sendable {
 @MainActor
 final class AppStore: ObservableObject {
     @Published var isSidebarVisible = true
+    @Published private(set) var keepsLibrariesUpdated = true
+    @Published private(set) var libraryWatchStatus = "Waiting for available libraries"
+    private let watchesLibraries: Bool
+    private let watchSource: LibraryWatchSource
+    private lazy var libraryWatcher = LibraryWatchCoordinator(source: watchSource) { [weak self] id in
+        guard let self, self.canModifyLibraries, !self.isSearching,
+              !PlayerController.shared.isPlaying, !PlayerController.shared.isPreparing,
+              !PlayerController.shared.isAnalyzingWaveform,
+              let folder = self.folders.first(where: { $0.id == id && !$0.isMissing }) else { return false }
+        self.indexFolder(folder, automatic: true)
+        return self.isMetadataScanning
+    }
+
     @Published var folders: [LibraryFolder] = []
     @Published private(set) var isReady = false
     @Published private(set) var isLibraryChanging = false
@@ -43,7 +56,7 @@ final class AppStore: ObservableObject {
     @Published var selectedFile: SoundFile? = nil
     @Published var isIndexing: Bool = false
     @Published var isMetadataScanning: Bool = false {
-        didSet { refinementCoordinator.policyDidChange() }
+        didSet { refinementCoordinator.policyDidChange(); libraryWatcher.wake() }
     }
     @Published var isRefinementPaused: Bool = false {
         didSet {
@@ -68,7 +81,11 @@ final class AppStore: ObservableObject {
     @Published var indexingExpectedCount: UInt64 = 0
     @Published var indexingStartedAt: Date?
     @Published var isSearching: Bool = false {
-        didSet { refinementCoordinator.policyDidChange() }
+        didSet {
+            refinementCoordinator.policyDidChange()
+            if isSearching { deferAutomaticScan() }
+            libraryWatcher.wake()
+        }
     }
     @Published var lastBackendError: String? = nil
     @Published private(set) var recoveryStatus: String?
@@ -79,6 +96,7 @@ final class AppStore: ObservableObject {
     private var storageTask: Task<Void, Never>?
     @Published var isExampleSearch: Bool = false
     @Published var exampleSourceName: String = ""
+    private var exampleSourceURL: URL?
     @Published private(set) var favouritePaths: Set<String> = []
 
     private var nextFolderId: Int = 1
@@ -129,6 +147,8 @@ final class AppStore: ObservableObject {
     private var indexTask: Task<Void, Never>?
     private var indexProgressTask: Task<Void, Never>?
     private var indexingGeneration: Int = 0
+    private var automaticScanID: Int?
+    private var automaticScanDeferred = false
     private var activeSearchOperations = 0
     private var lastSearchRequest: String = ""
     private let refinementCoordinator = BackgroundRefinementCoordinator()
@@ -136,6 +156,7 @@ final class AppStore: ObservableObject {
 
     init(storageDirectory: URL? = nil, backend: LibraryBackend = .live,
          preferences: UserDefaults = .standard, startsRefinement: Bool = true,
+         watchesLibraries: Bool = true, watchSource: LibraryWatchSource? = nil,
          searchBackend: @escaping SearchRequest.Backend = { SearchRequest.execute($0, lexicalOnly: $1) },
          searchRefinementWait: @escaping SearchRequest.RefinementWait = { try await SearchRequest.waitForRefinement(until: $0) }) {
         self.searchBackend = searchBackend
@@ -143,6 +164,9 @@ final class AppStore: ObservableObject {
         self.backend = backend
         self.preferences = preferences
         self.startsRefinement = startsRefinement
+        self.watchesLibraries = watchesLibraries
+        self.watchSource = watchSource ?? .live
+        keepsLibrariesUpdated = preferences.object(forKey: "ws_watch_libraries_v1") as? Bool ?? true
         let appSupport = FileManager.default.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask
@@ -176,6 +200,7 @@ final class AppStore: ObservableObject {
         indexTask?.cancel()
         indexProgressTask?.cancel()
         stopAvailabilityMonitoring()
+        libraryWatcher.stop()
         refinementCoordinator.stop()
         _ = ws_cancel_indexing()
         backendWork.suspend()
@@ -231,11 +256,13 @@ final class AppStore: ObservableObject {
             lastBackendError = opened.error
             guard opened.opened else { return }
             folders = opened.folders
+            saveFolders() // Persist discovered volume identities for later mount checks.
             nextFolderId = (folders.map(\.id).max() ?? 0) + 1
             isReady = true
             PlayerController.shared.resume()
             startRefinement()
             startAvailabilityMonitoring()
+            updateLibraryWatching()
             refreshSearch()
         }
     }
@@ -336,11 +363,26 @@ final class AppStore: ObservableObject {
     private func observePlayerActivity() {
         PlayerController.shared.$isPlaying
             .removeDuplicates()
-            .sink { [weak self] _ in self?.refinementCoordinator.policyDidChange() }
+            .sink { [weak self] playing in
+                self?.refinementCoordinator.policyDidChange()
+                if playing { self?.deferAutomaticScan() }
+                self?.libraryWatcher.wake()
+            }
             .store(in: &playerSubscriptions)
         PlayerController.shared.$isAnalyzingWaveform
             .removeDuplicates()
-            .sink { [weak self] _ in self?.refinementCoordinator.policyDidChange() }
+            .sink { [weak self] analyzing in
+                self?.refinementCoordinator.policyDidChange()
+                if analyzing { self?.deferAutomaticScan() }
+                self?.libraryWatcher.wake()
+            }
+            .store(in: &playerSubscriptions)
+        PlayerController.shared.$isPreparing
+            .removeDuplicates()
+            .sink { [weak self] preparing in
+                if preparing { self?.deferAutomaticScan() }
+                self?.libraryWatcher.wake()
+            }
             .store(in: &playerSubscriptions)
     }
 
@@ -407,6 +449,7 @@ final class AppStore: ObservableObject {
             isLibraryChanging = false
             libraryChangeTask = nil
             refinementCoordinator.librariesDidChange()
+            updateLibraryWatching()
             refreshAvailability()
             indexFolder(access.folder)
         }
@@ -415,6 +458,7 @@ final class AppStore: ObservableObject {
     func removeFolder(_ folder: LibraryFolder) {
         guard canModifyLibraries, folders.contains(where: { $0.id == folder.id }) else { return }
         isLibraryChanging = true
+        libraryWatcher.stop()
         currentSearchID = nil
         searchWorker.cancel()
         refinementCoordinator.stop()
@@ -454,6 +498,7 @@ final class AppStore: ObservableObject {
             isLibraryChanging = false
             libraryChangeTask = nil
             startRefinement()
+            updateLibraryWatching()
             refreshAvailability()
             refreshSearch()
         }
@@ -657,6 +702,7 @@ final class AppStore: ObservableObject {
     ) {
         guard canModifyLibraries || (allowUnopened && canRestoreBackup) else { return }
         isLibraryChanging = true
+        libraryWatcher.stop()
         recoveryStatus = status
         recoveryError = nil
         currentSearchID = nil
@@ -693,6 +739,7 @@ final class AppStore: ObservableObject {
             PlayerController.shared.resume()
             isLibraryChanging = false
             startRefinement()
+            updateLibraryWatching()
             if isReady { startAvailabilityMonitoring() }
             refreshAvailability()
             refreshSearch()
@@ -700,8 +747,11 @@ final class AppStore: ObservableObject {
         }
     }
 
-    func indexFolder(_ folder: LibraryFolder, deep: Bool = false) {
+    func indexFolder(_ folder: LibraryFolder, deep: Bool = false, automatic: Bool = false) {
         guard canModifyLibraries, !folder.isMissing else { return }
+        libraryWatcher.discard(folder.id)
+        automaticScanID = automatic ? folder.id : nil
+        automaticScanDeferred = false
 
         indexingGeneration &+= 1
         let generation = indexingGeneration
@@ -730,28 +780,39 @@ final class AppStore: ObservableObject {
         let fid = Int32(folder.id)
         let path = folder.path
         let folderName = folder.name
+        let favourites = Array(favouritePaths)
+        let selected = selectedFile
         let backend = backend
 
         indexTask = Task {
+            defer {
+                if generation == indexingGeneration { automaticScanID = nil }
+            }
+            var scanFolder = folder
             // A bookmark unavailable at startup may become resolvable after mount.
             if activeScopes[folder.id] == nil,
                let access = await backendWork.run({ backend.authorize(folder) }) {
+                scanFolder = access.folder
                 if let scope = access.scope { activeScopes[folder.id] = scope }
                 if !isShuttingDown, let index = folders.firstIndex(where: { $0.id == folder.id }) {
                     folders[index].bookmark = access.folder.bookmark
+                    folders[index].volumeUUID = access.folder.volumeUUID
+                    folders[index].isMissing = access.folder.isMissing
                     saveFolders()
+                    updateLibraryWatching()
                 }
             }
             let accessURL = activeScopes[folder.id]
-            let scan = await backendWork.run(priority: .userInitiated) { () -> (result: Int32, count: Int32, error: String?) in
-                guard !Task.isCancelled else { return (-1, 0, "Cancelled") }
+            let expectedFolder = scanFolder
+            let scan = await backendWork.run(priority: automatic ? .utility : .userInitiated) { () -> LibraryScanResult in
+                guard !Task.isCancelled else { return .init(result: -1, count: 0, error: "Cancelled") }
                 let scoped = accessURL?.startAccessingSecurityScopedResource() ?? false
                 defer { if scoped { accessURL?.stopAccessingSecurityScopedResource() } }
-                let flags: UInt32 = deep ? UInt32(WS_INDEX_DEEP) : UInt32(WS_INDEX_FAST)
-                let result = path.withCString { ws_index_folder_ex(fid, $0, flags) }
-                let error = result < 0 ? ifBackendError() : nil
-                let count = ws_folder_count(fid)
-                return (result, count, error ?? (count < 0 ? ifBackendError() : nil))
+                guard backend.availability([expectedFolder]).first?.isMissing == false else {
+                    return .init(result: -1, count: 0, error: "Library is unavailable or its volume changed; previous index preserved")
+                }
+                guard !Task.isCancelled else { return .init(result: -1, count: 0, error: "Cancelled") }
+                return backend.scan(fid, path, deep, favourites, selected?.id)
             }
 
             guard !isShuttingDown, generation == indexingGeneration else { return }
@@ -768,13 +829,17 @@ final class AppStore: ObservableObject {
                 indexTask = nil
                 indexProgressTask?.cancel()
                 indexProgressTask = nil
-                indexingPhase = scan.error == "Cancelled" ? "Cancelled" : "Index failed"
+                indexingPhase = scan.error == "Cancelled"
+                    ? (automaticScanDeferred ? "Waiting for foreground work" : "Cancelled") : "Index failed"
                 if scan.error == "Cancelled" {
-                    indexingProgress = "Index cancelled; previous searchable index preserved"
+                    indexingProgress = automaticScanDeferred
+                        ? "File changes remain queued until foreground work finishes"
+                        : "Index cancelled; previous searchable index preserved"
                 } else {
                     lastBackendError = scan.error ?? "Unknown backend error"
                     indexingProgress = "Index failed for \(folderName)"
                 }
+                if automatic, scan.error != "Cancelled" { libraryWatcher.retry(folder.id) }
                 clearIndexingDisplay(after: .seconds(4), operationStart: operationStart)
                 return
             }
@@ -787,6 +852,20 @@ final class AppStore: ObservableObject {
             indexingExpectedCount = UInt64(scan.count)
             if let idx = folders.firstIndex(where: { $0.id == Int(fid) }) {
                 folders[idx].fileCount = Int(scan.count)
+            }
+            // Only update favourites still present: a user may toggle one while
+            // the scan runs. Missing references remain portable/user-owned state.
+            for (oldPath, newPath) in scan.favouriteMoves where favouritePaths.contains(oldPath) {
+                favouritePaths.remove(oldPath)
+                favouritePaths.insert(newPath)
+            }
+            preferences.set(favouritePaths.sorted(), forKey: favouritesKey)
+            if selectedFile?.id == selected?.id, var current = scan.selectedFile {
+                if current.contentHash == selectedFile?.contentHash || current.path != selectedFile?.path {
+                    current.acousticGroupId = selectedFile?.acousticGroupId ?? 0
+                }
+                selectedFile = current
+                PlayerController.shared.relocate(current)
             }
             // Searchability is the foreground completion boundary. Expensive
             // refinement continues one file at a time at background priority.
@@ -821,6 +900,8 @@ final class AppStore: ObservableObject {
 
     func cancelIndexing() {
         if isMetadataScanning {
+            automaticScanDeferred = false
+            for folder in folders { libraryWatcher.discard(folder.id) }
             indexTask?.cancel()
             _ = ws_cancel_indexing()
             indexingPhase = "Cancelling scan"
@@ -861,11 +942,16 @@ final class AppStore: ObservableObject {
 
     func refreshSearch() {
         lastSearchRequest = ""
-        search(query)
+        if isExampleSearch, let url = exampleSourceURL {
+            submitSearch(.example(url))
+        } else {
+            search(query)
+        }
     }
 
     func search(_ q: String) {
         isExampleSearch = false
+        exampleSourceURL = nil
         query = q
         guard canUseLibrary else { return }
         let trimmed = q.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -968,6 +1054,7 @@ final class AppStore: ObservableObject {
         guard canUseLibrary else { return }
         lastSearchRequest = ""
         isExampleSearch = true
+        exampleSourceURL = url
         exampleSourceName = url.deletingPathExtension().lastPathComponent
         query = ""
         submitSearch(.example(url))
@@ -1021,12 +1108,46 @@ final class AppStore: ObservableObject {
         }
     }
 
+    func setKeepsLibrariesUpdated(_ enabled: Bool) {
+        keepsLibrariesUpdated = enabled
+        preferences.set(enabled, forKey: "ws_watch_libraries_v1")
+        updateLibraryWatching()
+    }
+
+    private func deferAutomaticScan() {
+        guard isMetadataScanning, let id = automaticScanID,
+              let folder = folders.first(where: { $0.id == id }) else { return }
+        automaticScanDeferred = true
+        libraryWatcher.receive(.init(paths: [folder.path]))
+        indexTask?.cancel()
+        _ = ws_cancel_indexing()
+        indexingPhase = "Waiting for foreground work"
+        indexingProgress = "File changes remain queued until foreground work finishes"
+    }
+
+    private func updateLibraryWatching() {
+        guard watchesLibraries, keepsLibrariesUpdated, canUseLibrary else {
+            libraryWatcher.stop()
+            libraryWatchStatus = "Automatic watching is off. Use Re-index to refresh a library."
+            return
+        }
+        libraryWatcher.update(folders)
+        libraryWatchStatus = libraryWatcher.isWatching
+            ? "File changes are coalesced and scanned when foreground work is idle. Manual Re-index and Deep Re-index remain available."
+            : folders.contains(where: { !$0.isMissing })
+                ? "File watching is unavailable. Use Re-index to refresh libraries, or toggle this setting to retry."
+                : "Waiting for available libraries"
+    }
+
     private func startAvailabilityMonitoring() {
         guard availabilityTimer == nil else { return }
         let center = NSWorkspace.shared.notificationCenter
         for name in [NSWorkspace.didMountNotification, NSWorkspace.didUnmountNotification, NSWorkspace.didWakeNotification] {
             availabilityObservers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.refreshAvailability() }
+                MainActor.assumeIsolated {
+                    self?.refreshAvailability()
+                    if name == NSWorkspace.didWakeNotification { self?.libraryWatcher.requestFullReconciliation() }
+                }
             })
         }
         availabilityTimer = Task { [weak self] in
@@ -1069,7 +1190,7 @@ final class AppStore: ObservableObject {
                     folders[index].isMissing = observation.isMissing
                     changed = true
                 }
-                if changed { refinementCoordinator.librariesDidChange() }
+                if changed { refinementCoordinator.librariesDidChange(); updateLibraryWatching() }
             }
         }
     }

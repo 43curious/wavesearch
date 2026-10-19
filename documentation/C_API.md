@@ -34,7 +34,8 @@ exist; it does not imply installed models, a compatible runtime, a loaded
 provider or any embeddings. Use `ws_semantic_status` after initialization for
 runtime state. The other bits cover external semantic embeddings, query-local
 cancellation, streaming waveform v1, exact duplicate verification and fingerprint
-storage repacking, as named in the header.
+storage repacking, as named in the header. `WS_CAP_FILE_LOOKUP` adds committed
+row lookup by stable ID or exact path; it does not imply filesystem existence.
 
 Additive functions and capability bits retain the ABI version. Existing function
 signatures, struct layouts, capability-bit assignments and ownership semantics
@@ -62,6 +63,12 @@ and bytes for serialized caches. Initialize every `WSExampleResult` element's
 `struct_size`, including unused capacity. Read only the count returned by a
 successful array call. Discard output on failure/cancellation unless that
 function explicitly documents a size-query result.
+
+`ws_file_lookup_v1` and `ws_file_lookup_path_v1` return 1 when found, 0 when
+absent and -1 on error. They leave output unchanged on absent/error and copy
+the same inline `WSResult` layout used by search. Unlike legacy search-result
+truncation, these lookups reject paths/names that cannot fit losslessly in those
+arrays. Inputs and output are caller-owned for the duration of the call.
 
 Zero-initialize versioned structs and set `struct_size = sizeof(the declared
 type)`. Status, work, identity, verification and storage outputs accept sizes at
@@ -101,6 +108,15 @@ host admission, a UI-latency guarantee, or lifecycle isolation between calls.
 | Legacy `ws_waveform` | Can decode without an open catalog; uses the catalog as a best-effort cache when open. | Synchronous file/DSP work runs outside the mutation lock; cache publication checks catalog/source identity. Drain it with other source/catalog work. |
 | Streaming waveform analyzer | No catalog needed. `create` returns an owned analyzer; `finish` returns a separately owned immutable result. Destroy both exactly once. | Sequential create/push/finish on each analyzer; finish at most once. Concurrent cancel is allowed. Join push/finish and cancellers before destroy. PCM and plane arrays are borrowed only during push. |
 | Waveform results | No catalog needed. Create/deserialize copy input into a library-owned handle. Results outlive their analyzer and can survive catalog shutdown. | Immutable handles allow concurrent info/copy/serialize calls with separate output buffers. Join all readers before result-destroy. NULL analyzer/result destroy is harmless. |
+
+`ws_waveform_tiers_store` can perform one complete source read to establish a
+missing schema-15 move proof, including for formats decoded by the host. This
+optional proof read occurs outside the SQLite mutex and cooperates with
+scan/refinement cancellation; cancellation returns -1 with a diagnostic. Keep
+source permissions and admitted-work lifetime until the call returns. Acoustic
+and semantic producers can establish the same proof. No normal build or test
+downloads a model. See [move reconciliation](LIBRARY_RECONCILIATION.md) for proof
+invalidation, migration and analysis preservation.
 
 Provider loading verifies files and builds sessions outside its publication lock
 so lexical search can continue. Unload detaches the provider, prevents new

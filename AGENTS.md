@@ -40,7 +40,7 @@ Read these references when touching the corresponding behavior:
 | CI or build/check entry points | [Continuous integration](documentation/CI.md) |
 | Playback, waveforms, selected-range imports | [Audio preview](documentation/WAVEFORM_AND_AUDIO_PREVIEW.md); [algorithm](documentation/WAVEFORM_ALGORITHM.md); [cache](documentation/WAVEFORM_CACHE_V10.md) |
 | Search ranking, storage, or performance | [Search optimizations](documentation/SEARCH_OPTIMIZATION_RESULTS.md); [lexical vocabulary](documentation/LEXICAL_SEARCH.md); [benchmarks](BENCHMARKS.md) |
-| Filesystem scans or snapshot publication | [Compact staging](documentation/SEARCH_OPTIMIZATION_RESULTS.md#compact-scan-staging-and-filtered-retrieval-2026-10-11); [Operations](OPERATIONS.md) |
+| Filesystem scans, watching, or file moves | [Reconciliation and move proofs](documentation/LIBRARY_RECONCILIATION.md); [Operations](OPERATIONS.md) |
 | Refinement queues, retries, or queue migration | [Durable refinement](documentation/REFINEMENT_QUEUES.md) |
 | CLAP loading, installation, preprocessing, or semantic coverage | [Model contract](core/models/README.md); [relevance acceptance](core/models/RELEVANCE.md); [coverage experiment](documentation/SEMANTIC_COVERAGE_EXPERIMENT.md) |
 | Fingerprints, duplicate families, or example search | [Acoustic search](ACOUSTIC_SEARCH.md) |
@@ -67,6 +67,9 @@ against the implementation before relying on them.
 - Preserve atomic catalog updates, source/model identity checks, bounded
   memory use, and cooperative cancellation. An OS or runtime call may finish
   before cancellation takes effect; a canceled caller is not proof of draining.
+- Treat filesystem events as invalidation hints for complete snapshots. Transfer
+  individual file identity only with unambiguous complete-byte proof. Stop/drain
+  native watches before library teardown and keep missing-volume scans safe.
 - Native host workers can have small stacks. Avoid large stack scratch buffers
   when sorting core records that contain full paths.
 - Keep optional model/runtime downloads explicit and opt-in. Normal builds and
@@ -103,7 +106,10 @@ Use existing checks appropriate to the change; fix failures before finishing.
   `git diff --check`; an application rebuild is unnecessary.
 - When core code changes, rebuild the library used by Swift checks rather than
   testing against a stale XCFramework. The lifecycle and refinement-policy
-  scripts support `WS_CORE_LIBRARY` and `WS_CORE_HEADERS` overrides.
+  scripts and `test-library-watching.sh` support `WS_CORE_LIBRARY` and
+  `WS_CORE_HEADERS` overrides. Watcher checks inject events by default;
+  `--native` additionally needs working FSEvents. Unrelated AppStore fixtures
+  should set `watchesLibraries: false` to avoid unsolicited reconciliation.
 - Run benchmarks and real-audio acceptance only when relevant. Use disposable
   fixtures/catalogs, and keep synthetic, cold-storage, real-audio, and GUI
   results distinct. An emitted drag URL does not prove a DAW imported it.

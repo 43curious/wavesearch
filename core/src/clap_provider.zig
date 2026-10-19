@@ -239,6 +239,9 @@ pub fn indexPendingExpected(allocator: std.mem.Allocator, folder_id: ?i32, max_f
                 result.failed += 1;
                 continue;
             }
+            db.captureMoveIdentity(file.id, file.source_content_hash, cancel) catch |err| {
+                if (err == error.Cancelled) return err;
+            };
             var embedding: [onnx.EMBEDDING_DIMENSION]f32 = undefined;
             provider.embedAudioWithCancellation(file.path, cancel, &embedding) catch |err| {
                 // Only deterministic file/codec defects are terminal. Runtime,

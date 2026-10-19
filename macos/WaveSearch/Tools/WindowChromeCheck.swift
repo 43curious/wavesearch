@@ -14,7 +14,7 @@ struct WindowChromeCheck: App {
         .appendingPathComponent("wavesearch-chrome-\(UUID().uuidString)")
     @StateObject private var store = AppStore(
         storageDirectory: directory,
-        preferences: UserDefaults(suiteName: UUID().uuidString)!, startsRefinement: false
+        preferences: UserDefaults(suiteName: UUID().uuidString)!, startsRefinement: false, watchesLibraries: false
     )
 
     var body: some Scene {
