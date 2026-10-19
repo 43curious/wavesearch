@@ -12,6 +12,9 @@ changelog/agent documentation added afterward.
 
 ### Added
 
+- Deterministic, model-free WAV/AIFF mutation checks in the core test suite,
+  with bounded inputs and allocation budgets, saved replay inputs, and duration
+  filter properties. Longer campaigns are available through `zig build audio-fuzz`.
 - Per-queue refinement throughput and approximate active processing time in
   the indexing popover, with warm-up and suspended estimates for policy pauses,
   unavailable models, and missing-drive backoff.
@@ -72,6 +75,8 @@ changelog/agent documentation added afterward.
 
 ### Fixed
 
+- Combined duration filters now intersect regardless of order, including
+  approximate equality; duration filters exclude unknown catalog durations.
 - Avoided a large stack scratch buffer when sorting example-search results,
   preventing a crash on native host worker threads.
 - File fingerprint extraction streams canonical PCM through bounded overlap

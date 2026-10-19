@@ -39,6 +39,25 @@ never invoke optional model/runtime installers or real-audio fixture downloads;
 model-dependent acceptance tests remain opt-in. Fixture catalogs and test audio
 are disposable. No release artifacts are signed for distribution or published.
 
+Core tests also run a deterministic, model-free audio mutation campaign over
+WAV/AIFF preprocessing, duration and metadata readers, and query parsing. Inputs
+are capped at 8 KiB, parser allocation uses a 4 MiB buffer, and the default
+campaign checks its 30-second budget between cases. The current input is saved
+before execution to `core/zig-out/audio-fuzz-current.bin` for crash replay.
+Generated seeds include truncations, hostile chunk sizes, PCM/Float formats,
+and metadata; duration-filter properties also run in the unit tests.
+
+From `core/`, run a longer campaign or replay a saved input:
+
+```bash
+zig build audio-fuzz -- run 10000 0x5753 zig-out/audio-fuzz-current.bin 120
+zig build audio-fuzz -- replay zig-out/audio-fuzz-current.bin
+```
+
+The run arguments are mutation count, seed, artifact path, and time budget in
+seconds. Copy a failing artifact before starting another campaign, which
+overwrites it. These bounded checks do not establish exhaustive parser safety.
+
 ## Local reproduction
 
 ```bash

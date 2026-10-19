@@ -27,6 +27,7 @@ test "module tests are included" {
     std.testing.refAllDecls(@import("refinement_schedule.zig"));
     std.testing.refAllDecls(@import("semantic_segments.zig"));
     std.testing.refAllDecls(@import("coverage_relevance.zig"));
+    std.testing.refAllDecls(@import("audio_fuzz.zig"));
 }
 const abi_c = @import("c");
 const env_c = @import("c");
@@ -247,6 +248,10 @@ test "FTS query building quotes tokens and duration parsing is bounded" {
     try std.testing.expect(!parsed.impossible);
     try std.testing.expect(search.parseSearchQuery("<0ms").impossible);
     try std.testing.expect(search.parseSearchQuery(">2s <1s").impossible);
+    try std.testing.expect(search.parseSearchQuery("<1ms").impossible);
+    try std.testing.expect(search.parseSearchQuery(">2s =1s").impossible);
+    try std.testing.expect(search.parseSearchQuery("=1s >2s").impossible);
+    try std.testing.expect(search.parseSearchQuery("=1s =3s").impossible);
 }
 
 test "fresh schema is current and future schemas are rejected" {

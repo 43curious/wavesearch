@@ -86,6 +86,20 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run native Zig tests with vendored SQLite");
     test_step.dependOn(&run_tests.step);
 
+    const fuzz_mod = b.createModule(.{
+        .root_source_file = b.path("src/audio_fuzz.zig"),
+        .target = target,
+        .optimize = .safe,
+        .link_libc = true,
+    });
+    configureModule(b, fuzz_mod);
+    const fuzz_exe = b.addExecutable(.{ .name = "audio-fuzz", .root_module = fuzz_mod });
+    const run_fuzz = b.addRunArtifact(fuzz_exe);
+    run_fuzz.addPassthruArgs();
+    b.step("audio-fuzz", "Bounded model-free audio mutation fuzzing; run [iterations seed artifact] or replay path").dependOn(&run_fuzz.step);
+    const short_fuzz = b.addRunArtifact(fuzz_exe);
+    test_step.dependOn(&short_fuzz.step);
+
     const waveform_abi_mod = b.createModule(.{
         .target = target,
         .optimize = .safe,

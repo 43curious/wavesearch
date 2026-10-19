@@ -147,6 +147,9 @@ They exclude pauses and other queues; Balanced mode cannot promise a finish time
 | `impact =1.5s` | Around 1.5 seconds |
 | `click <500ms` | Shorter than 500 milliseconds |
 
+Multiple duration filters intersect regardless of order. Equality allows
+±250 milliseconds, and duration filters exclude files with unknown duration.
+
 WAV metadata search includes `bext`, `iXML`, and `LIST/INFO` when present.
 
 ## Optional semantic search

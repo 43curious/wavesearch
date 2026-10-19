@@ -211,9 +211,12 @@ pub fn parseSearchQuery(query: []const u8) ParsedQuery {
     var it = std.mem.tokenizeAny(u8, query, " \t\n\r");
     while (it.next()) |part| {
         if (parseDurationFilter(part)) |filter| {
+            // Zero denotes unknown duration in the catalog and an unbounded
+            // upper limit in retrieval. Duration filters match known values.
+            parsed.min_ms = @max(parsed.min_ms, 1);
             switch (filter.op) {
                 .lt => {
-                    if (filter.ms == 0) {
+                    if (filter.ms <= 1) {
                         parsed.impossible = true;
                     } else {
                         const exclusive_max = filter.ms - 1;
@@ -228,8 +231,9 @@ pub fn parseSearchQuery(query: []const u8) ParsedQuery {
                     }
                 },
                 .eq => {
-                    parsed.min_ms = @max(0, filter.ms -| 250);
-                    parsed.max_ms = filter.ms +| 250;
+                    parsed.min_ms = @max(parsed.min_ms, filter.ms -| 250);
+                    const upper = filter.ms +| 250;
+                    parsed.max_ms = if (parsed.max_ms == 0) upper else @min(parsed.max_ms, upper);
                 },
             }
         } else {
