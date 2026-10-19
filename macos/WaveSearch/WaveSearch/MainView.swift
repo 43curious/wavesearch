@@ -56,7 +56,10 @@ struct MainView: View {
     private func installKeyboardMonitor() {
         guard keyMonitor == nil else { return }
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            guard event.window?.identifier?.rawValue == "main" else { return event }
+            // Arrow keys can carry function/numeric-pad flags; Caps Lock also
+            // must not disable the normal preview/navigation commands.
+            let modifiers = event.modifierFlags.intersection([.command, .control, .option, .shift])
 
             if modifiers == .command, event.keyCode == 40 { // ⌘K
                 focusSearch()
@@ -93,10 +96,10 @@ struct MainView: View {
             case 36, 76: // Return / Enter
                 store.playSelectedResult()
                 return nil
-            case 38: // j
+            case 38, 125: // j / Down
                 store.selectNextResult()
                 return nil
-            case 40: // k
+            case 40, 126: // k / Up
                 store.selectPreviousResult()
                 return nil
             case 5: // g, gg → first result
@@ -115,6 +118,12 @@ struct MainView: View {
                 return nil
             case 37: // l
                 PlayerController.shared.stepForward()
+                return nil
+            case 34: // i
+                PlayerController.shared.markIn()
+                return nil
+            case 31: // o
+                PlayerController.shared.markOut()
                 return nil
             case 11: // b, reveal in Finder
                 store.revealSelectedResult()
@@ -577,8 +586,7 @@ struct ResultsList: View {
                                             store.selectFile(file)
                                         }
                                         .onTapGesture(count: 2) {
-                                            store.selectFile(file)
-                                            PlayerController.shared.playFromSelectionStart()
+                                            store.selectFile(file, autoplay: true)
                                         }
                                         .onDrag {
                                             itemProviderForAudioImport(file)

@@ -34,17 +34,25 @@ final class PlayerController: ObservableObject {
     @Published private(set) var volume: Double = 0.8
     @Published private(set) var normalizationGainDB: Double = 0
     @Published private(set) var isAnalyzingWaveform: Bool = false
+    @Published private(set) var isPreparing = false
+    @Published private(set) var selection: ClosedRange<Double>?
+    @Published private(set) var loops = false
+    @Published private(set) var previewRate: PreviewRate = .normal
+    @Published private(set) var autoplayOnSelect: Bool
 
     private var player: AVAudioPlayer?
     private var timer: Timer?
     private var shuttleTimer: Timer?
     private let preparationWorker: LatestRequestWorker<URL, PreparedPreviewPlayer?>
     private var isSuspended = false
+    private var wantsPlayback = false
     private var analysisLoadTask: Task<Void, Never>?
     private let maxShuttleMultiplier: Double = 32
     private let volumeDefaultsKey = "ws_preview_volume_v1"
+    private let preferences: UserDefaults
+    static let autoplayKey = "ws_preview_autoplay_v1"
 
-    init(prepare: @escaping @Sendable (URL) -> PreparedPreviewPlayer? = { url in
+    init(preferences: UserDefaults = .standard, prepare: @escaping @Sendable (URL) -> PreparedPreviewPlayer? = { url in
         guard !Task.isCancelled, let player = try? AVAudioPlayer(contentsOf: url) else { return nil }
         guard !Task.isCancelled else { return nil }
         player.enableRate = true
@@ -53,6 +61,8 @@ final class PlayerController: ObservableObject {
         guard !Task.isCancelled else { return nil }
         return PreparedPreviewPlayer(player)
     }) {
+        self.preferences = preferences
+        autoplayOnSelect = preferences.bool(forKey: Self.autoplayKey)
         preparationWorker = LatestRequestWorker(operation: { url in
             let task = Task.detached(priority: .userInitiated) { () -> PreparedPreviewPlayer? in
                 guard !Task.isCancelled else { return nil }
@@ -65,14 +75,18 @@ final class PlayerController: ObservableObject {
                 task.cancel()
             }
         })
-        if UserDefaults.standard.object(forKey: volumeDefaultsKey) != nil {
-            volume = min(max(UserDefaults.standard.double(forKey: volumeDefaultsKey), 0), 1)
+        if preferences.object(forKey: volumeDefaultsKey) != nil {
+            volume = min(max(preferences.double(forKey: volumeDefaultsKey), 0), 1)
         }
     }
 
-    func load(_ file: SoundFile) {
+    /// nil follows the preference; explicit true also restarts an existing source.
+    func load(_ file: SoundFile, autoplay: Bool? = nil) {
         guard !isSuspended else { return }
-        if currentFile == file { return }
+        if currentFile == file {
+            if autoplay == true { playFromSelectionStart() }
+            return
+        }
 
         preparationWorker.cancel()
         analysisLoadTask?.cancel()
@@ -88,14 +102,22 @@ final class PlayerController: ObservableObject {
         normalizationGainDB = 0
         isAnalyzingWaveform = true
         isPlaying = false
+        isPreparing = true
+        wantsPlayback = autoplay ?? autoplayOnSelect
+        selection = nil
         progress = 0
         duration = 0
 
         preparationWorker.submit(fileURL) { [weak self] prepared in
             guard let self, self.currentFile == file else { return }
             self.player = prepared?.takePlayer()
+            self.isPreparing = false
             self.duration = self.player?.duration ?? 0
+            self.player?.currentTime = self.duration * self.progress
+            self.configureTransport()
             self.applyOutputGain(fade: false)
+            if self.wantsPlayback { self.beginPlayback() }
+            if self.player == nil { self.wantsPlayback = false }
         }
 
         analysisLoadTask = Task { [weak self] in
@@ -133,40 +155,34 @@ final class PlayerController: ObservableObject {
     }
 
     func togglePlayPause() {
-        guard let player else { return }
         stopShuttle()
 
-        if isPlaying {
-            player.pause()
-            stopTimer()
-            isPlaying = false
+        if isPlaying || wantsPlayback {
+            stopPlayback()
             return
         }
 
-        player.play()
-        isPlaying = true
-        startTimer()
+        wantsPlayback = currentFile != nil
+        beginPlayback()
     }
 
     func playFromSelectionStart() {
-        guard let player else { return }
         stopShuttle()
-        player.currentTime = 0
-        progress = 0
-        if !isPlaying {
-            player.play()
-            isPlaying = true
-            startTimer()
-        }
+        progress = playbackRange.lowerBound
+        player?.currentTime = duration * progress
+        wantsPlayback = currentFile != nil
+        beginPlayback()
     }
 
     func stopPlayback() {
-        guard let player else { return }
-        player.pause()
+        wantsPlayback = false
+        player?.pause()
         stopTimer()
         stopShuttle()
         isPlaying = false
-        progress = duration > 0 ? player.currentTime / duration : 0
+        if let player, duration > 0 {
+            progress = min(max(player.currentTime / duration, playbackRange.lowerBound), playbackRange.upperBound)
+        }
     }
 
     func stepBackward() {
@@ -186,6 +202,9 @@ final class PlayerController: ObservableObject {
         stopTimer()
         stopShuttle()
         isPlaying = false
+        isPreparing = false
+        wantsPlayback = false
+        selection = nil
         progress = 0
         duration = 0
         waveformData = nil
@@ -207,7 +226,73 @@ final class PlayerController: ObservableObject {
     func setVolume(_ value: Double) {
         volume = min(max(value, 0), 1)
         applyOutputGain(fade: true)
-        UserDefaults.standard.set(volume, forKey: volumeDefaultsKey)
+        preferences.set(volume, forKey: volumeDefaultsKey)
+    }
+
+    func setAutoplayOnSelect(_ enabled: Bool) {
+        autoplayOnSelect = enabled
+        preferences.set(enabled, forKey: Self.autoplayKey)
+        if !enabled && isPreparing { wantsPlayback = false }
+    }
+
+    func setLoops(_ enabled: Bool) {
+        loops = enabled
+        configureTransport()
+    }
+
+    func setPreviewRate(_ rate: PreviewRate) {
+        stopShuttle()
+        previewRate = rate
+        configureTransport()
+        if isPlaying { startTimer() }
+    }
+
+    /// Fractions are shared with the waveform/export UI and reset per source.
+    func setSelection(_ range: ClosedRange<Double>?) {
+        if let range, range.lowerBound.isFinite, range.upperBound.isFinite {
+            let lower = min(max(range.lowerBound, 0), 1)
+            let upper = min(max(range.upperBound, 0), 1)
+            selection = lower < upper ? lower...upper : nil
+        } else {
+            selection = nil
+        }
+        configureTransport()
+        if isPlaying, !playbackRange.contains(progress) { seek(to: playbackRange.lowerBound) }
+    }
+
+    func markIn() {
+        guard currentFile != nil else { return }
+        let upper = selection?.upperBound ?? 1
+        setSelection(progress...(progress < upper ? upper : 1))
+    }
+
+    func markOut() {
+        guard currentFile != nil else { return }
+        let lower = selection?.lowerBound ?? 0
+        setSelection((progress > lower ? lower : 0)...progress)
+    }
+
+    private var playbackRange: ClosedRange<Double> { selection ?? 0...1 }
+
+    private func configureTransport() {
+        player?.rate = shuttleSpeed == 2 ? 2 : Float(previewRate.rawValue)
+        // Whole-source looping is native; selected ranges use the progress tick.
+        player?.numberOfLoops = loops && selection == nil ? -1 : 0
+    }
+
+    private func beginPlayback() {
+        guard wantsPlayback, let player, duration > 0 else { return }
+        if progress < playbackRange.lowerBound || progress >= playbackRange.upperBound {
+            progress = playbackRange.lowerBound
+            player.currentTime = duration * progress
+        }
+        configureTransport()
+        isPlaying = player.play()
+        wantsPlayback = isPlaying
+        if isPlaying {
+            WaveformSignposts.event("PreviewStarted", fileID: currentFile?.id ?? 0)
+            startTimer()
+        }
     }
 
     private func applyOutputGain(fade: Bool) {
@@ -222,27 +307,46 @@ final class PlayerController: ObservableObject {
     }
 
     func seek(to fraction: Double) {
-        guard let player else { return }
+        guard currentFile != nil, fraction.isFinite else { return }
         stopShuttle()
         let clamped = min(max(fraction, 0), 1)
-        player.currentTime = duration * clamped
+        player?.currentTime = duration * clamped
         progress = clamped
+        if isPlaying { startTimer() }
     }
 
     private func startTimer() {
-        stopShuttle()
         stopTimer()
         timer = Timer.scheduledTimer(withTimeInterval: 0.04, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self, let player = self.player, self.duration > 0 else { return }
 
-                let currentProgress = player.currentTime / self.duration
-                self.progress = currentProgress
+                self.updatePlayback(player)
+            }
+        }
+    }
 
-                if !player.isPlaying {
-                    self.isPlaying = false
-                    self.stopTimer()
-                }
+    private func updatePlayback(_ player: AVAudioPlayer) {
+        let range = playbackRange
+        let position = player.currentTime / duration
+        // Native time can briefly precede a requested seek. Keep the visible
+        // playhead within the audition range while testing the raw end position.
+        progress = min(max(position, range.lowerBound), range.upperBound)
+        if position >= range.upperBound || !player.isPlaying {
+            if loops && wantsPlayback {
+                player.currentTime = duration * range.lowerBound
+                progress = range.lowerBound
+                isPlaying = player.play()
+                wantsPlayback = isPlaying
+                if !isPlaying { stopTimer(); stopShuttle() }
+            } else {
+                player.pause()
+                player.currentTime = duration * range.upperBound
+                progress = range.upperBound
+                wantsPlayback = false
+                isPlaying = false
+                stopTimer()
+                stopShuttle()
             }
         }
     }
@@ -250,6 +354,7 @@ final class PlayerController: ObservableObject {
     private func startShuttle(direction: Double) {
         guard let player, duration > 0 else { return }
 
+        wantsPlayback = false
         stopTimer()
 
         let sameDirection = shuttleSpeed.sign == direction.sign && shuttleSpeed != 0
@@ -263,38 +368,38 @@ final class PlayerController: ObservableObject {
         if shuttleSpeed == 2 {
             player.enableRate = true
             player.rate = 2
-            if !player.isPlaying {
-                player.play()
+            let position = player.currentTime / duration
+            if position < playbackRange.lowerBound || position >= playbackRange.upperBound {
+                player.currentTime = duration * playbackRange.lowerBound
             }
-            isPlaying = true
+            isPlaying = player.isPlaying || player.play()
+            wantsPlayback = isPlaying
+            guard isPlaying else { stopShuttle(); return }
 
             shuttleTimer = Timer.scheduledTimer(withTimeInterval: 0.04, repeats: true) { [weak self] _ in
                 MainActor.assumeIsolated {
                     guard let self, let player = self.player, self.duration > 0 else { return }
-                    self.progress = player.currentTime / self.duration
-
-                    if !player.isPlaying || player.currentTime >= self.duration {
-                        self.isPlaying = false
-                        self.stopShuttle()
-                    }
+                    self.updatePlayback(player)
                 }
             }
             return
         }
 
         player.pause()
-        player.rate = 1
+        player.rate = Float(previewRate.rawValue)
         isPlaying = false
 
         shuttleTimer = Timer.scheduledTimer(withTimeInterval: 0.04, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self, let player = self.player, self.duration > 0 else { return }
 
-                let newTime = min(max(player.currentTime + self.shuttleSpeed * 0.04, 0), self.duration)
+                let lower = self.duration * self.playbackRange.lowerBound
+                let upper = self.duration * self.playbackRange.upperBound
+                let newTime = min(max(player.currentTime + self.shuttleSpeed * 0.04, lower), upper)
                 player.currentTime = newTime
                 self.progress = newTime / self.duration
 
-                if newTime <= 0 || newTime >= self.duration {
+                if newTime <= lower || newTime >= upper {
                     self.stopShuttle()
                 }
             }
@@ -309,9 +414,15 @@ final class PlayerController: ObservableObject {
     private func stopShuttle() {
         shuttleTimer?.invalidate()
         shuttleTimer = nil
-        player?.rate = 1
+        player?.rate = Float(previewRate.rawValue)
         shuttleSpeed = 0
     }
+}
+
+enum PreviewRate: Double, CaseIterable, Identifiable {
+    case half = 0.5, slow = 0.75, normal = 1, fast = 1.5, double = 2
+    var id: Double { rawValue }
+    var title: String { "\(rawValue.formatted())×" }
 }
 
 struct AudioFileMetadata: Sendable {
@@ -483,6 +594,8 @@ struct GlobalPlaybackBar: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(file == nil)
+                .accessibilityLabel(player.isPlaying ? "Pause preview" : "Play preview")
+                .help(player.isPreparing ? "Playback will start when preparation finishes" : "Play or pause preview (Space)")
 
                 Text(timeString(player.duration))
                     .frame(width: 58, alignment: .leading)
@@ -508,6 +621,29 @@ struct PlayerPanel: View {
                 .font(.system(size: 20, weight: .semibold))
                 .lineLimit(2)
 
+            HStack(spacing: 12) {
+                Toggle("Loop", isOn: Binding(get: { player.loops }, set: { player.setLoops($0) }))
+                    .toggleStyle(.button)
+                    .help("Loop the selected range, or the whole file when no range is selected")
+                Picker("Rate", selection: Binding(get: { player.previewRate }, set: { player.setPreviewRate($0) })) {
+                    ForEach(PreviewRate.allCases) { rate in Text(rate.title).tag(rate) }
+                }
+                .frame(width: 130)
+                Button("In") { player.markIn() }.help("Set the in point at the playhead (i)")
+                Button("Out") { player.markOut() }.help("Set the out point at the playhead (o)")
+                Button("Clear Range") { player.setSelection(nil) }
+                    .disabled(player.selection == nil)
+                Spacer()
+                if let range = player.selection {
+                    Text("\(timeString(range.lowerBound * player.duration)) – \(timeString(range.upperBound * player.duration))")
+                        .monospacedDigit()
+                        .accessibilityLabel("Preview range")
+                }
+            }
+            .font(.system(size: 11))
+            .controlSize(.small)
+            .disabled(player.currentFile != file)
+
             WaveformView(
                 data: player.currentFile == file ? player.waveformData : nil,
                 progress: player.progress,
@@ -516,7 +652,8 @@ struct PlayerPanel: View {
                 },
                 dragPayloadProvider: { start, end in
                     try await dragPayloadForClip(file: file, startFraction: start, endFraction: end)
-                }
+                },
+                selection: Binding(get: { player.selection }, set: { player.setSelection($0) })
             )
             .id("\(file.id):\(file.contentHash):\(file.path)")
             .frame(maxWidth: .infinity)
@@ -526,11 +663,8 @@ struct PlayerPanel: View {
         .padding(.top, 28)
         .padding(.bottom, 20)
         .frame(maxWidth: .infinity, alignment: .topLeading)
-        .frame(height: 340)
+        .frame(height: 380)
         .background(AppTheme.panelSunken)
-        .task(id: "\(file.id):\(file.contentHash)") {
-            player.load(file)
-        }
     }
 }
 

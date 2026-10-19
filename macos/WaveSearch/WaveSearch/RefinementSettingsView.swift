@@ -32,6 +32,11 @@ struct RefinementSettingsView: View {
                 }
             }
             Section("Audio preview") {
+                Toggle("Autoplay selected sounds", isOn: Binding(
+                    get: { player.autoplayOnSelect }, set: { player.setAutoplayOnSelect($0) }
+                ))
+                Text("Start playback once the newest selected sound is ready. Off by default.")
+                    .foregroundStyle(.secondary)
                 HStack {
                     Text("Preview volume")
                     Slider(value: Binding(get: { player.volume }, set: { player.setVolume($0) }), in: 0...1)

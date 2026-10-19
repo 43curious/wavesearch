@@ -81,6 +81,7 @@ struct WindowChromeCheck: App {
                         try? await Task.sleep(for: .milliseconds(400))
                         precondition(open == snapshot().colorAt(x: 100, y: 200), "Menu shortcut must reopen sidebar")
                         await checkGlobalShortcut(window: window)
+                        try await checkAuditionKeys(window: window)
                         await store.shutdown()
                         try? FileManager.default.removeItem(at: Self.directory)
                         print("PASS: sidebar toolbar/menu shortcut, single Settings command, no native window tabs")
@@ -92,6 +93,63 @@ struct WindowChromeCheck: App {
         .windowToolbarStyle(.unifiedCompact(showsTitle: false))
         .commands { WaveSearchCommands(store: store) }
         Settings { AppSettingsView().environmentObject(store) }
+    }
+
+    @MainActor
+    private func checkAuditionKeys(window: NSWindow) async throws {
+        let root = Self.directory.appendingPathComponent("audio")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        // Silent mono PCM16 at 8 kHz, one second per file. No user library.
+        var bytes = Data([82,73,70,70,164,62,0,0,87,65,86,69,102,109,116,32,
+                          16,0,0,0,1,0,1,0,64,31,0,0,128,62,0,0,2,0,16,0,
+                          100,97,116,97,128,62,0,0])
+        bytes.append(Data(repeating: 0, count: 16000))
+        try bytes.write(to: root.appendingPathComponent("first.wav"))
+        try bytes.write(to: root.appendingPathComponent("second.wav"))
+        store.addFolder(at: root)
+        await store.waitForLibraryChange()
+        await store.waitForIndexing()
+        store.selectedFolderId = store.folders.first!.id
+        store.search("")
+        await store.waitForSearch()
+        precondition(store.results.count == 2)
+        // The shortcut test may have recreated the main window.
+        let main = NSApp.windows.first { $0.identifier?.rawValue == "main" && $0.isVisible } ?? window
+        main.makeKeyAndOrderFront(nil)
+        func key(_ code: UInt16, _ text: String) async {
+            let flags: NSEvent.ModifierFlags = [125, 126].contains(code) ? [.function, .numericPad] : []
+            NSApp.sendEvent(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags,
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: main.windowNumber,
+                context: nil, characters: text, charactersIgnoringModifiers: text,
+                isARepeat: false, keyCode: code)!)
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        await key(53, "\u{1b}") // Leave the search field before preview commands.
+        store.selectFirstResult()
+        await key(125, "\u{f701}")
+        precondition(store.selectedResultIndex == 1, "Down arrow did not select the next sound")
+        await key(126, "\u{f700}")
+        precondition(store.selectedResultIndex == 0, "Up arrow did not select the previous sound")
+        let player = PlayerController.shared
+        player.stopPlayback()
+        player.seek(to: 0.2)
+        await key(34, "i")
+        player.seek(to: 0.6)
+        await key(31, "o")
+        precondition(player.selection == 0.2...0.6, "Keyboard marks did not reach the waveform/player range")
+        await key(36, "\r")
+        precondition(player.isPlaying && player.progress >= 0.2 && player.progress < 0.6,
+                     "Return failed: playing=\(player.isPlaying) preparing=\(player.isPreparing) progress=\(player.progress) duration=\(player.duration) source=\(player.currentFile?.name ?? "none")")
+        await key(49, " ")
+        precondition(!player.isPlaying)
+        NotificationCenter.default.post(name: GlobalSearchShortcut.focusNotification, object: nil)
+        try await Task.sleep(for: .milliseconds(100))
+        precondition(main.firstResponder is NSTextView)
+        player.setSelection(nil)
+        await key(34, "i")
+        await key(31, "o")
+        precondition(player.selection == nil, "Preview commands intercepted search-field editing")
+        print("PASS: native arrow navigation, i/o range, Return, Space and text-input focus")
     }
 
     @MainActor

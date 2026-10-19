@@ -12,6 +12,10 @@ changelog/agent documentation added afterward.
 
 ### Added
 
+- Selection-aware preview with shared waveform/in/out marks, deferred Return
+  and double-click playback, opt-in autoplay after preparation, whole-file/range
+  looping, 0.5×–2× rate controls and Up/Down result navigation. New native checks
+  cover preparation replacement, transport boundaries and text-input focus.
 - Bounded symmetric English/Spanish sound vocabulary, including whoosh variants,
   sfx/fx and explicit sound terms/plurals, with model-free lexical judgments and
   a disposable filename-weight experiment. Exact filenames retain priority;
@@ -82,6 +86,8 @@ changelog/agent documentation added afterward.
 
 ### Fixed
 
+- Global shortcut restoration explicitly makes the visible search window key
+  before focusing its field, fixing intermittent minimize-to-search activation.
 - Combined duration filters now intersect regardless of order, including
   approximate equality; duration filters exclude unknown catalog durations.
 - Avoided a large stack scratch buffer when sorting example-search results,

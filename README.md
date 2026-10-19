@@ -90,6 +90,9 @@ library and checks; Linux and Windows desktop apps are future work.
    Balanced waits until the Mac is idle and on AC power.
 3. Select a result to preview it. Click the waveform to seek, or press
    **Space** to play/pause when the search field is not focused.
+   Drag to select a range or set **i / o** at the playhead; **Return** plays
+   from its in point and stops at its out point. The preview panel offers
+   **Loop**, **Rate** (0.5×–2×) and **Clear Range** controls.
 4. Drag a result into your editor. To drag a waveform range, select it first,
    release the mouse, then drag from inside the selection.
 5. Open **Settings → General** to choose how editor imports handle files:
@@ -114,6 +117,9 @@ remain searchable.
 system/light/dark appearance, accent and waveform colors, catalog backup and
 restore, integrity checks, storage sizes, and generated waveform cache deletion.
 Exported media remains available because editing projects may reference it.
+**Settings → General → Audio preview** also offers **Autoplay selected sounds**,
+off by default. Playback waits for the newest selected file to finish preparing.
+Rate and loop settings affect preview only; selections reset when files change.
 
 In **Settings → General**, enable a global search shortcut to bring WaveSearch
 forward and focus search from another app. Choose from the listed combinations;
@@ -134,11 +140,11 @@ They exclude pauses and other queues; Balanced mode cannot promise a finish time
 | **⌃⌘S** | Show/hide the sidebar |
 | **⌘,** | Open Settings |
 | **Esc** | Leave search |
-| **j / k** | Next / previous result |
+| **j / k** or **↓ / ↑** | Next / previous result |
 | **gg / G** | First / last result |
 | **Return** | Play the selected result from the in point |
 | **Space** | Play/pause outside text input |
-| **h / l** | Step backward / forward |
+| **h / l** | Shuttle backward / forward; repeat to accelerate |
 | **i / o** | Set in / out points |
 | **b** | Reveal the selected file in Finder |
 

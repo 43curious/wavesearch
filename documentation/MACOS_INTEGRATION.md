@@ -19,7 +19,9 @@ macOS or applications can reserve/intercept keys in ways registration cannot
 detect; test the chosen combination with the apps you use.
 
 SwiftUI's [openWindow action](https://developer.apple.com/documentation/swiftui/openwindowaction)
-opens the scene. A focus notification handles already visible content; newly
+opens the scene. The restored visible main window is explicitly made key before
+requesting search focus: scene restoration alone can leave it visible without
+keyboard activation. A focus notification handles already visible content; newly
 created content also focuses search on appearance. This route performs no
 catalog, filesystem, decoding or inference work.
 

@@ -120,6 +120,11 @@ struct SearchShortcutActivation: ViewModifier {
                 NSApp.activate(ignoringOtherApps: true)
                 Task { @MainActor in
                     await Task.yield()
+                    // Scene restoration can show a minimized window without
+                    // making it key. Focus needs an explicit native handoff.
+                    NSApp.windows.first {
+                        $0.identifier?.rawValue == "main" && $0.isVisible
+                    }?.makeKeyAndOrderFront(nil)
                     NotificationCenter.default.post(name: GlobalSearchShortcut.focusNotification, object: nil)
                 }
             }

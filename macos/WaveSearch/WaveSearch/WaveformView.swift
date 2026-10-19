@@ -7,7 +7,7 @@ struct WaveformView: View {
     let onSeek: (Double) -> Void
     let dragPayloadProvider: (Double, Double) async throws -> WaveformDragPayload
 
-    @State private var selection: ClosedRange<Double>?
+    @Binding var selection: ClosedRange<Double>?
     @State private var renderedData: WaveformData?
     @State private var outgoingData: WaveformData?
     @State private var transitionProgress: Double = 1
@@ -92,9 +92,6 @@ struct WaveformView: View {
                 outgoingData = nil
                 transitionProgress = 1
             }
-        }
-        .onChange(of: data?.signature) { _, _ in
-            selection = nil
         }
     }
 

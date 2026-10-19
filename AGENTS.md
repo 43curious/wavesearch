@@ -71,6 +71,8 @@ against the implementation before relying on them.
   when sorting core records that contain full paths.
 - Keep optional model/runtime downloads explicit and opt-in. Normal builds and
   tests must work without installing models.
+- Keep temporary preview ranges in `PlayerController` so waveform selection,
+  keyboard marks, auditioning, and selected-range exports share the same bounds.
 - Editor imports default to **Keep the files in place**, passing the full
   original URL even for a selected range. **Copy files to Exports** copies whole
   files unchanged and renders partial selections as PCM24 WAVs. Exports are

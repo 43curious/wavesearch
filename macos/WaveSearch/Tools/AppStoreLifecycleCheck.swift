@@ -79,6 +79,7 @@ struct AppStoreLifecycleCheck {
         await searchesAreBoundedStagedAndDrained()
         await browsingAppendsPagesAndRetries()
         await playbackPreparationIsBoundedAndDrained()
+        try await selectionAuditioning()
         try await externalAudioExamples()
         try await liveLibrarySmokeTest()
         try await refinementProgressesBeforeWaveformBacklogDrains()
@@ -368,6 +369,110 @@ struct AppStoreLifecycleCheck {
         newest.release()
         await drain.value
         precondition(drained && events.values == ["A", "C"])
+    }
+
+    private static func selectionAuditioning() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("wavesearch-audition-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let suite = "wavesearch-audition-\(UUID().uuidString)"
+        let prefs = UserDefaults(suiteName: suite)!
+        defer { prefs.removePersistentDomain(forName: suite) }
+        try await Task.detached {
+            let format = AVAudioFormat(standardFormatWithSampleRate: 48000, channels: 1)!
+            let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 48000)!
+            buffer.frameLength = 48000
+            buffer.floatChannelData![0].initialize(repeating: 0, count: 48000)
+            for name in ["A", "B", "C", "D"] {
+                let file = try AVAudioFile(forWriting: root.appendingPathComponent("\(name).wav"), settings: format.settings)
+                try file.write(from: buffer)
+            }
+        }.value
+        let first = Gate(), latest = Gate(), paused = Gate(), events = Events()
+        let player = PlayerController(preferences: prefs, prepare: { url in
+            let name = url.deletingPathExtension().lastPathComponent
+            events.add(name)
+            // Return a real player even after cancellation to exercise stale delivery.
+            if events.count(name) == 1 {
+                if name == "A" { first.block() }
+                if name == "C" { latest.block() }
+                if name == "D" { paused.block() }
+            }
+            guard let native = try? AVAudioPlayer(contentsOf: url) else { return nil }
+            native.enableRate = true
+            native.prepareToPlay()
+            return PreparedPreviewPlayer(native)
+        })
+        func file(_ name: String, id: Int = 1) -> SoundFile {
+            SoundFile(id: id, folderId: 1, path: root.appendingPathComponent("\(name).wav").path,
+                      name: "\(name).wav", durationMs: 1000, contentHash: Int64(id))
+        }
+        func ready() async {
+            let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+            while player.isPreparing && ContinuousClock.now < deadline {
+                try? await Task.sleep(for: .milliseconds(2))
+            }
+            precondition(!player.isPreparing, "Playback preparation did not complete")
+        }
+        precondition(!player.autoplayOnSelect)
+        player.setVolume(0)
+        player.load(file("A"), autoplay: true)
+        await first.entered.wait()
+        player.load(file("B"), autoplay: true)
+        player.load(file("C"), autoplay: true)
+        player.seek(to: 0.25)
+        player.markIn()
+        player.seek(to: 0.45)
+        player.markOut()
+        player.playFromSelectionStart() // Return during preparation must be remembered.
+        precondition(player.selection == 0.25...0.45 && !player.isPlaying)
+        first.release()
+        await latest.entered.wait()
+        precondition(events.values == ["A", "C"] && !player.isPlaying)
+        latest.release()
+        await ready()
+        precondition(player.currentFile?.name == "C.wav" && player.isPlaying && player.progress >= 0.25,
+                     "Only the newest prepared source should autoplay from its in point")
+        player.setPreviewRate(.double)
+        try await Task.sleep(for: .milliseconds(240))
+        precondition(!player.isPlaying && abs(player.progress - 0.45) < 0.001,
+                     "Non-looping preview did not stop at the out point")
+        player.setLoops(true)
+        player.playFromSelectionStart()
+        try await Task.sleep(for: .milliseconds(300))
+        precondition(player.isPlaying && player.progress >= 0.25 && player.progress < 0.55,
+                     "Range loop failed: playing=\(player.isPlaying) progress=\(player.progress)")
+        player.setSelection(nil)
+        player.playFromSelectionStart()
+        try await Task.sleep(for: .milliseconds(650))
+        precondition(player.isPlaying && player.progress < 1, "Native whole-file looping stopped at EOF")
+        player.setLoops(false)
+        player.stopPlayback()
+        player.load(file("D"), autoplay: true)
+        await paused.entered.wait()
+        precondition(player.selection == nil)
+        player.stopPlayback()
+        paused.release()
+        await ready()
+        precondition(!player.isPlaying, "Pause during preparation did not revoke queued playback")
+        player.setAutoplayOnSelect(true)
+        precondition(PlayerController(preferences: prefs).autoplayOnSelect, "Autoplay preference did not persist")
+        // Warm generated WAVs; this measures the native play() handoff, not
+        // physical audio output or cold/removable-storage first-audio latency.
+        var samples: [Double] = []
+        for index in 0..<5 {
+            let started = ContinuousClock.now
+            player.load(file("A", id: index + 10))
+            await ready()
+            precondition(player.isPlaying)
+            let elapsed = started.duration(to: .now).components
+            samples.append(Double(elapsed.seconds) * 1000 + Double(elapsed.attoseconds) / 1e15)
+        }
+        samples.sort()
+        print("audition warm_generated_wav selection_to_play_handoff_ms p50=\(samples[2]) p95=\(samples[4])")
+        await player.stopAndDrain()
+        precondition(!player.isPlaying && player.currentFile == nil && player.selection == nil)
+        print("PASS: newest-source autoplay, deferred Return, in/out marks, range/whole-file loops, rate, pause and drain")
     }
 
     private static func lexicalResultsPrecedeRefinementDebounce() async {

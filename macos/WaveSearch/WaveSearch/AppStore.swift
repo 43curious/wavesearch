@@ -929,10 +929,10 @@ final class AppStore: ObservableObject {
         return results.firstIndex(of: selectedFile)
     }
 
-    func selectFile(_ file: SoundFile) {
+    func selectFile(_ file: SoundFile, autoplay: Bool? = nil) {
         guard canUseLibrary else { return }
         selectedFile = file
-        PlayerController.shared.load(file)
+        PlayerController.shared.load(file, autoplay: autoplay)
     }
 
     func chooseSearchExample() {
@@ -973,14 +973,11 @@ final class AppStore: ObservableObject {
         submitSearch(.example(url))
     }
 
-    func selectResult(at index: Int, autoplay: Bool = false) {
+    func selectResult(at index: Int, autoplay: Bool? = nil) {
         guard !results.isEmpty else { return }
         let clamped = min(max(index, 0), results.count - 1)
         let file = results[clamped]
-        selectFile(file)
-        if autoplay {
-            PlayerController.shared.playFromSelectionStart()
-        }
+        selectFile(file, autoplay: autoplay)
     }
 
     func selectNextResult() {

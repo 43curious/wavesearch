@@ -14,9 +14,9 @@ understandable and usable without opening an editor. It provides:
   DaVinci Resolve.
 - Versioned memory and SQLite caches.
 
-The complete recording is always visible. The current UI intentionally has no
-waveform zoom, scrolling, timeline ruler, permanent in/out points, or range
-buttons.
+The complete recording is always visible. The current UI has no waveform zoom,
+scrolling, timeline ruler, or permanent in/out points. Preview ranges are shared
+between the waveform, keyboard marks and player, and reset when files change.
 
 ## 2. User interaction
 
@@ -34,6 +34,33 @@ The waveform displays progress in two ways:
 The line is kept just inside the Canvas edge at the beginning and end, so it
 remains visible at both `0%` and `100%`. Updating the playhead never starts audio
 analysis again.
+
+**Return** and double-click playback start at the active range's in point (zero
+without a range) and stop at its out point. **Space** pauses/resumes. Requests
+made while the selected source is preparing wait for that preparation; pausing
+revokes queued playback. Latest-request admission and generation checks prevent
+superseded preparations from starting audio. A preparation failure clears queued
+play intent.
+
+The panel's **In**/**Out** buttons and **i**/**o** keys set range boundaries at
+the displayed playhead. Setting an in point past the previous out resets out to
+the end; setting out before in resets in to zero. **Clear Range** restores full
+source auditioning. **Up/Down** and **j/k** navigate results. Preview keys are
+limited to the main window and leave normal text-input editing intact.
+
+**Settings → General → Audio preview → Autoplay selected sounds** is off by
+default and persists independently of preview volume. When enabled, selection
+starts playback only after the newest source is prepared. The panel's **Loop**
+and **Rate** controls are session settings, retained across selected files. Rates
+are 0.5×, 0.75×, 1×, 1.5× and 2×. These controls never modify sources or rendered
+exports. The existing h/l shuttle remains available and explicit rate selection
+ends shuttling.
+
+Whole-file looping uses AVAudioPlayer's native loop count. Selected-range stop
+and loop boundaries are checked on the 40 ms progress timer; they are approximate
+preview boundaries, not sample-accurate or guaranteed gapless loops. Main-thread
+scheduling can delay a tick, and higher rates increase the audible overshoot.
+Selected-range exports still use the exact frame-boundary rules below.
 
 ### Seeking
 
@@ -55,7 +82,7 @@ translucent blue rectangle shows that range. Dragging from either direction is
 supported.
 
 Starting another selection outside the current range replaces the old range.
-Selections are temporary UI state; they are not saved to SQLite and are cleared
+Selections are temporary player state; they are not saved to SQLite and are cleared
 when the selected source file changes.
 
 ### Dragging a selected range
@@ -354,6 +381,21 @@ The selected-range output is always PCM WAV for predictable interchange.
 
 ## 13. Validation
 
+The app lifecycle check uses disposable silent WAVs and real AVAudioPlayers to
+exercise blocked/rapid replacement, Return during preparation, cancellation by
+pause, selected-range stopping/looping, native full-file looping, 2× preview,
+autoplay preference persistence and shutdown draining. The native window check
+injects Up/Down, i/o, Return and Space events and verifies that search text entry
+does not trigger preview commands.
+
+A run of five warm generated one-second WAV selections measured
+31.5 ms p50 and 42.5 ms p95 from selection to the native `play()` handoff, including
+2 ms readiness polling. This is not a measurement of physical first-audio output
+or cold/removable-storage performance. `FileSelected` and `PreviewStarted`
+signposts support tracing those workflows; representative cold-drive and audible
+latency acceptance remains unverified. Hover audition and neighbour prefetch are
+not enabled without those measurements, avoiding extra speculative file reads.
+
 The implementation has been checked with:
 
 - Digital silence.
@@ -397,6 +439,9 @@ checking and exercised with a runtime smoke launch.
 - Only the first two channels are drawn.
 - Selection has no draggable edge handles or numeric time fields.
 - Selection is temporary and is not restored after changing files or relaunching.
+- Selected-range loops use a UI timer and can overshoot or introduce a gap;
+  whole-source loops use native playback. Cold-drive first-audio latency has not
+  been established by the generated-fixture check.
 - Partial selections in Copy mode export as PCM24 WAV; whole-file copies preserve
   the source container. Keep-in-place drags supply the full original file.
 - Loudness protection uses sample peak rather than oversampled true peak.
