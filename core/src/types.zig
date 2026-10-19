@@ -19,6 +19,22 @@ pub const WSResult = extern struct {
     content_hash: i64,
 };
 
+pub const WSFileMetadata = extern struct {
+    struct_size: u32,
+    version: u32,
+    file_id: c_int,
+    known_fields: u32,
+    flags: u32,
+    channels: u32,
+    sample_rate: u32,
+    bit_depth: u32,
+    encoding: u32,
+    reserved: u32,
+    content_hash: i64,
+    file_size: i64,
+    mtime_ns: i64,
+};
+
 pub const WSFileIdentity = extern struct {
     struct_size: u32,
     version: u32,

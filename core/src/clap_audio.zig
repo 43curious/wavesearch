@@ -125,9 +125,20 @@ pub fn durationMsFile(io: std.Io, path: []const u8) !i32 {
     return durationMsFromFile(.{ .handle = &file, .io = io, .size = stat.size });
 }
 
+pub const HeaderInfo = struct { duration_ms: i32, channels: u32, sample_rate: u32, bit_depth: u32, encoding: u32 };
+
+/// Reuse the canonical validated WAV/AIFF headers without reading sample data.
+pub fn headerInfo(reader: audio_file.Reader) !HeaderInfo {
+    var remaining: usize = 65_552;
+    var bounded = reader;
+    bounded.read_limit = &remaining;
+    const parsed = try parseAudio(.{ .file = bounded });
+    const milliseconds = (@as(u128, parsed.frames) * 1000) / parsed.format.sample_rate;
+    return .{ .duration_ms = @intCast(@min(milliseconds, std.math.maxInt(i32))), .channels = parsed.format.channels, .sample_rate = parsed.format.sample_rate, .bit_depth = parsed.format.valid_bits, .encoding = if (parsed.format.encoding == .pcm) 1 else 3 };
+}
+
 pub fn durationMsFromFile(reader: audio_file.Reader) !i32 {
-    const input: Input = .{ .file = reader };
-    const parsed = try parseAudio(input);
+    const parsed = try parseAudio(.{ .file = reader });
     const milliseconds = (@as(u128, parsed.frames) * 1000) / parsed.format.sample_rate;
     return @intCast(@min(milliseconds, std.math.maxInt(i32)));
 }

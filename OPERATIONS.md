@@ -12,6 +12,13 @@ head/tail samples above 16 MiB are also marked sampled;
 the content hash. All modes build a complete snapshot before the short SQLite publication transaction, so cancellation,
 filesystem errors, or process interruption cannot expose a partial folder.
 
+All scan modes discover WAV metadata with sparse chunk traversal and a shared
+64 KiB prefix. Normal/deep discovery allows 2 MiB of recognized payload;
+fast discovery allows 256 KiB. Limit/truncation state is explicit, descriptive
+text has its own FTS field, and technical WAV/AIFF headers persist for browsing.
+Schema 16 preserves old analysis/search text and refreshes missing metadata on
+the next scan. See [metadata parsing, source checks and measurements](documentation/AUDIO_METADATA.md).
+
 The sampling limits above describe the public content hash. A new path with
 the size of a proven old source can additionally require a complete-byte
 SHA-256 read for conservative move verification. Background analysis and native

@@ -14,6 +14,7 @@
 #define WS_CAP_CLAP              (UINT64_C(1) << 3)
 #define WS_CAP_EXACT_DUPLICATES  (UINT64_C(1) << 4)
 #define WS_CAP_FINGERPRINT_REPACK (UINT64_C(1) << 5)
+#define WS_CAP_FILE_METADATA     (UINT64_C(1) << 7)
 #define WS_CAP_FILE_LOOKUP       (UINT64_C(1) << 6)
 // Allocation-free, thread-safe, valid before init and after deinit. Capabilities
 // describe compiled APIs, not model installation, provider loading or DB state.
@@ -262,6 +263,32 @@ int ws_semantic_status(WSSemanticStatus *out);
 // Writes up to max_results WSResult structs into out.
 // Returns count written, or -1 on error.
 int  ws_list_folder(int folder_id, WSResult *out, int max_results);
+
+#define WS_FILE_METADATA_CHANNELS (1u << 0)
+#define WS_FILE_METADATA_SAMPLE_RATE (1u << 1)
+#define WS_FILE_METADATA_BIT_DEPTH (1u << 2)
+#define WS_FILE_METADATA_ENCODING (1u << 3)
+#define WS_FILE_METADATA_LIMITED (1u << 0)
+typedef struct {
+    uint32_t struct_size;
+    uint32_t version;
+    int file_id;
+    uint32_t known_fields; // Unset fields are unknown; their output value is zero.
+    uint32_t flags;
+    uint32_t channels;
+    uint32_t sample_rate;
+    uint32_t bit_depth;
+    uint32_t encoding; // 1 = integer PCM, 3 = IEEE float.
+    uint32_t reserved;
+    int64_t content_hash;
+    int64_t file_size;
+    int64_t mtime_ns;
+} WSFileMetadata;
+// Catalog-only lookup: 1 found, 0 unavailable, -1 invalid/error. Set struct_size.
+// Output is unchanged on 0/-1. Check identity against the current source before
+// displaying cached data; this function performs no source I/O. LIMITED marks
+// budget-limited/malformed descriptive metadata, independently of known fields.
+int ws_file_metadata_v1(int file_id, WSFileMetadata *out);
 
 // Copy a committed result by stable ID or exact catalog path. Returns 1 when
 // found, 0 when absent, -1 on error; out is unchanged when absent or on error.

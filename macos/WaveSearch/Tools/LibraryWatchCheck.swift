@@ -31,6 +31,16 @@ nonisolated private final class BlockingScan: @unchecked Sendable {
     func release() { gate.signal() }
 }
 
+nonisolated private final class MetadataInspections: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    var calls: Int { lock.lock(); defer { lock.unlock() }; return count }
+    func inspect(_ path: String) -> AudioFileMetadata {
+        lock.lock(); count += 1; lock.unlock()
+        return AudioFileMetadata.inspect(path: path)
+    }
+}
+
 @main
 struct LibraryWatchCheck {
     @MainActor static func main() async throws {
@@ -146,7 +156,31 @@ struct LibraryWatchCheck {
         precondition(player.currentFile?.path == new.path && player.selection == 0.2...0.8 && player.progress == 0.3,
                      "The selected sound must keep its playhead/range when reopening its moved URL")
         precondition(preferences.stringArray(forKey: "ws_favourites_v1") == [new.path])
+        let inspections = MetadataInspections()
+        let metadata = AudioMetadataStore(inspect: { inspections.inspect($0) })
+        let movedFile = store.selectedFile!
+        metadata.load(movedFile)
+        await until { metadata.metadata(for: movedFile) != nil }
+        precondition(metadata.metadata(for: movedFile)?.sampleRate == 8000 && inspections.calls == 0,
+                     "Indexed technical metadata must avoid an AVAudioFile inspection")
+        // Change source headers while the catalog still describes 8 kHz. Its
+        // cached metadata must be rejected before a new snapshot is published.
+        bytes[24] = 128; bytes[25] = 62
+        bytes[28] = 0; bytes[29] = 125
+        try bytes.write(to: new)
+        metadata.load(movedFile)
+        await until { metadata.metadata(for: movedFile)?.sampleRate == 16000 }
+        precondition(inspections.calls == 1, "Changed source stats require native fallback until re-indexing")
+        store.indexFolder(store.folders[0])
+        await store.waitForIndexing()
+        await store.waitForSearch()
+        let changedFile = store.selectedFile!
+        metadata.load(changedFile)
+        await until { metadata.metadata(for: changedFile) != nil }
+        precondition(metadata.metadata(for: changedFile)?.sampleRate == 16000 && inspections.calls == 1,
+                     "A refreshed catalog must resume serving technical metadata")
         await store.shutdown()
+        print("PASS: indexed metadata avoids native inspection and rejects changed sources until refresh")
         print("PASS: real core rename preserves native favourites, selected ID, range and playhead")
     }
 

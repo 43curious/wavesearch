@@ -179,7 +179,10 @@ management. See [accessibility workflows and verification limits](documentation/
 Multiple duration filters intersect regardless of order. Equality allows
 ±250 milliseconds, and duration filters exclude files with unknown duration.
 
-WAV metadata search includes `bext`, `iXML`, and `LIST/INFO` when present.
+WAV metadata search includes `bext`, `iXML`, XMP and `LIST/INFO` before or after
+audio data. UTF-8 descriptions remain searchable without XML tag noise.
+Indexed WAV/AIFF technical metadata also avoids repeated native inspection while
+browsing. See [metadata limits and cache behavior](documentation/AUDIO_METADATA.md).
 Small English/Spanish vocabulary groups also connect terms such as
 `whoosh`/`swoosh`/`swish`, `golpe`/`impact`, `lluvia`/`rain` and `puerta`/`door`.
 Exact filenames keep priority. See [vocabulary and evaluation limits](documentation/LEXICAL_SEARCH.md).

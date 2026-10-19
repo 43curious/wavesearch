@@ -121,22 +121,22 @@ Compact scans still do O(N×dimension) work and may need a second pass; selectiv
 
 ## E. Bound real filesystem scan memory and I/O
 
-**Current implementation:** `search.indexFolderWithOptions` stages discovery and old identities in disposable SQLite tables. Changed files share one open descriptor and a bounded cached prefix across metadata, duration and hashing. Manifest copying and atomic publication use a separate WAL connection, allowing metadata searches to read the committed catalog. Default metadata extraction still examines up to 2 MiB; fast extraction skips PCM chunks.
+**Current implementation:** `search.indexFolderWithOptions` stages discovery and old identities in disposable SQLite tables. Changed files share one open descriptor and a bounded cached prefix across metadata, duration and hashing. Manifest copying and atomic publication use a separate WAL connection, allowing metadata searches to read the committed catalog. All WAV metadata discovery now skips PCM chunks, with separate payload/header limits; [schema-16 measurements and technical caching](AUDIO_METADATA.md) distinguish reader bytes from real-library acceptance.
 
 - [x] Stage large scans in disk-backed tables/a staging database while preserving atomic old-or-new publication and cancellation rollback.
 - [x] Retain unchanged identities in the copied old manifest and stage full records only for new/changed files; reuse old observation flags for deletion reconciliation instead of a second seen-path table. See [space, timing, and cancellation checks](SEARCH_OPTIMIZATION_RESULTS.md#compact-scan-staging-and-filtered-retrieval-2026-10-11).
 - [x] Reuse open descriptors and cached header bytes across metadata/duration/identity extraction, retaining the existing duration parser and path identity checks.
-- [ ] Extend sparse metadata extraction where appropriate.
+- [x] Extend bounded sparse discovery to every WAV scan mode, with Unicode character data, descriptive weighting and persisted technical headers. Compressed descriptive metadata remains separate work.
 - [ ] Introduce only measured, storage-sensitive concurrency: SSD, HDD, removable, and network storage have different optimal access patterns.
 
 Keep fast/deep indexing and unchanged-file reuse. Fast sampling reduces per-file bytes but total I/O still scales with file count.
 
 ## F. Bound row metadata inspection
 
-**Evidence:** `AudioMetadataStore` retains every inspected path indefinitely and starts detached work per unseen file. Visible rows observe the entire dictionary, so each insertion can invalidate multiple rows.
+**Historical evidence:** the original `AudioMetadataStore` retained every inspected path indefinitely and started detached work per unseen file. The current host has a 256-entry cache and a 32-worker admission ceiling; schema 16 also serves validated catalog headers before native fallback. Visible rows still observe the whole dictionary.
 
-- [ ] Persist sample rate, channel count, bit depth, and related technical metadata during indexing and return it with catalog results.
-- [ ] Use a bounded, source-signature-keyed host fallback cache for formats needing AVFoundation.
+- [x] Persist sample rate, channel count, bit depth and encoding during indexing, with an additive catalog lookup and explicit unknown fields.
+- [x] Use a bounded, source-signature-keyed host fallback cache for formats needing AVFoundation.
 - [ ] Bound metadata inspection concurrency and stop obsolete work after rows disappear.
 - [ ] Narrow observation to relevant values rather than publishing a global dictionary on every insertion.
 

@@ -7,6 +7,13 @@ bytes/payload/compaction costs, and synthetic-versus-real acceptance limits.
 Benchmarks are explicit developer operations. Normal builds and tests never
 generate large corpora or download fixtures.
 
+## Audio metadata (schema 16)
+
+The [schema-16 metadata follow-up](documentation/AUDIO_METADATA.md#validation-and-measurements)
+records a paired 32-WAV scan with byte counters, catalog/RSS costs and warm-storage
+limits. Reproduce with `zig build optimization-bench -Doptimize=safe -- metadata-scan /tmp/ws-metadata.sqlite 32`
+from `core/`; the generated corpus and catalog are disposable.
+
 ## Refinement queue discovery (schema 13)
 
 `make check-core` measures 16-file queue discovery over 1,600 synthetic files

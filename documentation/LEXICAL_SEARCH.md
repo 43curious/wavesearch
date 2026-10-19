@@ -36,10 +36,10 @@ On the production model-free search path:
 | Bilingual vocabulary, 4× filename BM25 weight | 1.000000 | 1.000000 | 0 |
 
 The filename-weight experiment changes only its disposable catalog's FTS rank
-configuration. It provides no improvement on this small set. Production keeps
-the current weights: descriptions and path text are still flattened together,
-so separate curated-description/path weights require the structured metadata
-work in issue #2. This experiment cannot establish that weights or stemming
+configuration. It provides no improvement on this small set. The experiment
+predated schema 16, which now gives [structured descriptive text](AUDIO_METADATA.md)
+its own BM25 weight while retaining exact-filename priority. The filename-weight
+experiment retains that description weight. These controls cannot establish that weights or stemming
 would improve a representative library. Camel-case compounds retain the
 existing split behavior; arbitrary concatenated words are not segmented.
 

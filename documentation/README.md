@@ -5,6 +5,8 @@ current WaveSearch application.
 
 ## Performance and portability
 
+- [Indexed audio metadata](AUDIO_METADATA.md) — sparse WAV text extraction,
+  Unicode/descriptive ranking, technical caching, migration and measured I/O.
 - [Library watching and file moves](LIBRARY_RECONCILIATION.md) — full-byte move
   proofs, FSEvents reconciliation, reference preservation and acceptance limits.
 - [Lexical sound vocabulary](LEXICAL_SEARCH.md) — bounded bilingual expansion,

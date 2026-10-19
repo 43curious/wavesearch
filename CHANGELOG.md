@@ -12,6 +12,9 @@ changelog/agent documentation added afterward.
 
 ### Added
 
+- Schema-16 technical audio metadata and an additive lookup API let macOS browse
+  indexed WAV/AIFF headers without reopening AVAudioFile. Unknown or changed
+  sources retain bounded native fallback; migration refreshes legacy rows on scan.
 - Opt-in semantic model installation in Settings with terms, per-file progress,
   cancel/retry, pinned integrity checks and atomic activation. Repair retains
   the previous bundle; provider retry and lexical fallback remain available.
@@ -100,6 +103,9 @@ changelog/agent documentation added afterward.
 
 ### Fixed
 
+- Normal WAV scans now find metadata after large PCM chunks with bounded sparse
+  reads. Descriptions preserve UTF-8/entities while excluding XML markup and
+  binary BWF fields; descriptive text receives a separate lexical ranking weight.
 - Unambiguous file moves within a library preserve IDs, valid analysis,
   favourites, selection and preview marks using complete-byte SHA-256 proof.
   Schema 15 preserves existing analysis without guessing missing proofs;

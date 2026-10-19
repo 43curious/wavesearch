@@ -38,8 +38,8 @@ pub fn main(init: std.process.Init) !void {
             var h: ?*db.c.sqlite3 = null;
             if (db.c.sqlite3_open(zpath, &h) != db.c.SQLITE_OK) return error.OpenFailed;
             defer _ = db.c.sqlite3_close(h);
-            // Disposable experiment only: columns are search_text and name.
-            if (db.c.sqlite3_exec(h, "INSERT INTO files_fts(files_fts,rank) VALUES('rank','bm25(1.0,4.0)')", null, null, null) != db.c.SQLITE_OK) return error.StepFailed;
+            // Disposable experiment only: description retains its production weight.
+            if (db.c.sqlite3_exec(h, "INSERT INTO files_fts(files_fts,rank) VALUES('rank','bm25(1.0,4.0,2.0)')", null, null, null) != db.c.SQLITE_OK) return error.StepFailed;
         }
         _ = try lexicalQualityBench();
         return;
@@ -50,6 +50,7 @@ pub fn main(init: std.process.Init) !void {
     if (std.mem.eql(u8, mode, "fingerprint-storage")) return fingerprintStorageBench(io, path, count);
     if (std.mem.eql(u8, mode, "trigram-detail")) return trigramDetailBench(path, count);
     if (std.mem.eql(u8, mode, "fingerprint-file")) return fingerprintFileBench(io, path, count);
+    if (std.mem.eql(u8, mode, "metadata-scan")) return metadataScanBench(io, path, count);
     if (std.mem.eql(u8, mode, "scan")) return scanBench(io, path, count);
     if (std.mem.eql(u8, mode, "stage")) return stageBench(io, path, count);
     if (std.mem.eql(u8, mode, "index-contention")) return indexContentionBench(io, count);
@@ -571,4 +572,60 @@ fn elapsed(io: std.Io, start: std.Io.Timestamp) u64 {
 fn report(label: []const u8, times: []u64) void {
     std.mem.sort(u64, times, {}, std.sort.asc(u64));
     std.debug.print("{s}_ms p50={d:.3} p95={d:.3}\n", .{ label, perf.milliseconds(perf.percentile(times, 50)), perf.milliseconds(perf.percentile(times, 95)) });
+}
+
+// Generated warm-storage WAVs: metadata after 20 MiB PCM, no models/inference.
+fn metadataScanBench(io: std.Io, path: []const u8, count: usize) !void {
+    if (count > 256) return error.MetadataBenchmarkCountLimit;
+    const directory = try std.fmt.allocPrint(allocator, "{s}.audio", .{path});
+    defer allocator.free(directory);
+    try std.Io.Dir.cwd().createDir(io, directory, .default_dir);
+    defer std.Io.Dir.cwd().deleteTree(io, directory) catch {};
+    const pcm_size = 20 * 1024 * 1024;
+    const xml = "<BWFXML><NOTE>puerta suave café 東京</NOTE></BWFXML>";
+    const size = 44 + pcm_size + 8 + xml.len + (xml.len & 1);
+    const bytes = try allocator.alloc(u8, size);
+    defer allocator.free(bytes);
+    @memset(bytes, 0);
+    @memcpy(bytes[0..4], "RIFF");
+    std.mem.writeInt(u32, bytes[4..8], @intCast(size - 8), .little);
+    @memcpy(bytes[8..24], "WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00");
+    std.mem.writeInt(u32, bytes[24..28], 48000, .little);
+    std.mem.writeInt(u32, bytes[28..32], 96000, .little);
+    std.mem.writeInt(u16, bytes[32..34], 2, .little);
+    std.mem.writeInt(u16, bytes[34..36], 16, .little);
+    @memcpy(bytes[36..40], "data");
+    std.mem.writeInt(u32, bytes[40..44], pcm_size, .little);
+    @memcpy(bytes[44 + pcm_size ..][0..4], "iXML");
+    std.mem.writeInt(u32, bytes[48 + pcm_size ..][0..4], xml.len, .little);
+    @memcpy(bytes[52 + pcm_size ..][0..xml.len], xml);
+    for (0..count) |row| {
+        const name = try std.fmt.allocPrint(allocator, "{s}/opaque-{d}.wav", .{ directory, row });
+        defer allocator.free(name);
+        try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = name, .data = bytes });
+    }
+    const absolute = try std.Io.Dir.cwd().realPathFileAlloc(io, directory, allocator);
+    defer allocator.free(absolute);
+    var read_bytes: u64 = 0;
+    @import("audio_file.zig").bytes_read = &read_bytes;
+    defer @import("audio_file.zig").bytes_read = null;
+    for ([_][]const u8{ "initial", "changed", "unchanged" }, 0..) |label, pass| {
+        if (pass == 1) for (0..count) |row| {
+            const name = try std.fmt.allocPrint(allocator, "{s}/opaque-{d}.wav", .{ directory, row });
+            defer allocator.free(name);
+            var file = try std.Io.Dir.cwd().openFile(io, name, .{ .mode = .read_write });
+            defer file.close(io);
+            const stat = try file.stat(io);
+            try file.setTimestamps(io, .{ .modify_timestamp = .{ .new = .{ .nanoseconds = stat.mtime.nanoseconds + std.time.ns_per_s } } });
+        };
+        read_bytes = 0;
+        const start = std.Io.Clock.awake.now(io);
+        try search.indexFolder(allocator, 1, absolute);
+        std.debug.print("metadata_{s} count={d} ms={d:.3} reader_bytes={d}\n", .{ label, count, perf.milliseconds(elapsed(io, start)), read_bytes });
+    }
+    const h = try benchHandle(path);
+    defer _ = db.c.sqlite3_close_v2(h);
+    const pages = try benchScalar(h, "PRAGMA page_count");
+    const page_size = try benchScalar(h, "PRAGMA page_size");
+    std.debug.print("metadata_catalog_bytes={d} peak_rss_bytes={d}\n", .{ pages * page_size, perf.peakRssBytes() });
 }

@@ -18,7 +18,7 @@ pub fn appendMetadataText(allocator: std.mem.Allocator, out: *std.ArrayList(u8),
 }
 
 pub fn appendMetadataTextIo(allocator: std.mem.Allocator, out: *std.ArrayList(u8), io: std.Io, path: []const u8) !void {
-    return appendMetadataTextIoLimit(allocator, out, io, path, 2 * 1024 * 1024);
+    return appendMetadataTextIoSparse(allocator, out, io, path, @import("wav_metadata.zig").NORMAL_BUDGET);
 }
 
 pub fn appendMetadataTextIoLimit(allocator: std.mem.Allocator, out: *std.ArrayList(u8), io: std.Io, path: []const u8, max_read: usize) !void {
@@ -32,6 +32,8 @@ pub fn appendMetadataTextIoLimit(allocator: std.mem.Allocator, out: *std.ArrayLi
     return appendMetadataTextFromFileLimit(allocator, out, .{ .handle = &file, .io = io, .size = stat.size }, max_read);
 }
 
+/// Legacy prefix-reader reference for comparisons and byte-parser fuzzing.
+/// Production discovery uses the bounded sparse parser in wav_metadata.zig.
 pub fn appendMetadataTextFromFileLimit(allocator: std.mem.Allocator, out: *std.ArrayList(u8), reader: audio_file.Reader, max_read: usize) !void {
     const read_size: usize = @intCast(@min(reader.size, max_read));
     if (read_size < 44) return;
@@ -52,42 +54,9 @@ pub fn appendMetadataTextIoSparse(allocator: std.mem.Allocator, out: *std.ArrayL
 }
 
 pub fn appendMetadataTextFromFileSparse(allocator: std.mem.Allocator, out: *std.ArrayList(u8), reader: audio_file.Reader, byte_budget: usize) !void {
-    if (reader.size < 12 or byte_budget == 0) return;
-    var riff: [12]u8 = undefined;
-    if (try reader.readAll(&riff, 0) != riff.len) return error.TruncatedMetadata;
-    if (!std.mem.eql(u8, riff[0..4], "RIFF") or !std.mem.eql(u8, riff[8..12], "WAVE")) return;
-
-    var remaining = byte_budget;
-    var position: u64 = 12;
-    var chunks: usize = 0;
-    while (position <= reader.size and reader.size - position >= 8 and chunks < 65_536) : (chunks += 1) {
-        var header: [8]u8 = undefined;
-        if (try reader.readAll(&header, position) != header.len) return error.TruncatedMetadata;
-        const chunk_size: u64 = std.mem.readInt(u32, header[4..8], .little);
-        const payload = position + 8;
-        const padded_size = chunk_size + (chunk_size & 1);
-        const next = std.math.add(u64, payload, padded_size) catch return error.MalformedMetadata;
-        if (next > reader.size) return error.TruncatedMetadata;
-        const recognized = std.mem.eql(u8, header[0..4], "bext") or
-            std.mem.eql(u8, header[0..4], "iXML") or
-            std.mem.eql(u8, header[0..4], "_PMX") or
-            std.mem.eql(u8, header[0..4], "LIST");
-        if (recognized and remaining > 0 and chunk_size > 0) {
-            const wanted: usize = @intCast(@min(chunk_size, remaining));
-            const chunk = try allocator.alloc(u8, wanted);
-            defer allocator.free(chunk);
-            if (try reader.readAll(chunk, payload) != wanted) return error.TruncatedMetadata;
-            if (std.mem.eql(u8, header[0..4], "bext")) {
-                try appendCleanText(allocator, out, chunk[0..@min(chunk.len, 602)]);
-            } else if (std.mem.eql(u8, header[0..4], "LIST")) {
-                try appendListInfoText(allocator, out, chunk);
-            } else {
-                try appendCleanText(allocator, out, chunk);
-            }
-            remaining -= wanted;
-        }
-        position = next;
-    }
+    var description: std.ArrayList(u8) = .empty;
+    defer description.deinit(allocator);
+    _ = try @import("wav_metadata.zig").read(allocator, out, &description, reader, byte_budget, null);
 }
 
 fn appendWavMetadataFromBytes(allocator: std.mem.Allocator, out: *std.ArrayList(u8), data: []const u8) !void {

@@ -13,6 +13,9 @@ Schema 15 subsequently adds optional complete-byte SHA-256 proofs for
 [conservative file moves and library reconciliation](LIBRARY_RECONCILIATION.md).
 The public hash kinds and duplicate-verification contract below remain unchanged.
 
+Schema 16 adds [sparse descriptive metadata and cached technical headers](AUDIO_METADATA.md)
+without changing those hash modes or analysis algorithms.
+
 ## Bounded extraction
 
 `clap_audio.FingerprintReader` streams canonical 16 kHz mono blocks into

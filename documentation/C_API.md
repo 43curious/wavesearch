@@ -36,6 +36,8 @@ runtime state. The other bits cover external semantic embeddings, query-local
 cancellation, streaming waveform v1, exact duplicate verification and fingerprint
 storage repacking, as named in the header. `WS_CAP_FILE_LOOKUP` adds committed
 row lookup by stable ID or exact path; it does not imply filesystem existence.
+`WS_CAP_FILE_METADATA` adds versioned technical metadata lookup without opening
+source files.
 
 Additive functions and capability bits retain the ABI version. Existing function
 signatures, struct layouts, capability-bit assignments and ownership semantics
@@ -91,6 +93,15 @@ and thread exit invalidates the pointer. Diagnostic text is not a stable error
 code protocol.
 
 ## API families and concurrency
+
+`ws_file_metadata_v1` accepts an output with `struct_size >= sizeof(WSFileMetadata)`.
+It returns 1 found, 0 unavailable, -1 invalid/error, leaving output unchanged on
+0/-1 and preserving any larger caller tail. Known-fields bits distinguish unknown
+channel count/rate/valid-bit-depth/encoding from values; unknown outputs are zero.
+The limit flag describes bounded/malformed descriptive discovery independently
+of known technical fields. Compare returned hash/size/mtime to the current source
+before using cached values. It is a synchronous catalog call requiring normal
+host admission/draining, with no source I/O. See [metadata lifecycle](AUDIO_METADATA.md).
 
 All potentially blocking filesystem, database, decoding, DSP and inference calls
 belong on workers. Internal locks protect shared state but do not provide bounded

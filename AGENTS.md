@@ -40,6 +40,7 @@ Read these references when touching the corresponding behavior:
 | CI or build/check entry points | [Continuous integration](documentation/CI.md) |
 | Playback, waveforms, selected-range imports | [Audio preview](documentation/WAVEFORM_AND_AUDIO_PREVIEW.md); [algorithm](documentation/WAVEFORM_ALGORITHM.md); [cache](documentation/WAVEFORM_CACHE_V10.md) |
 | Search ranking, storage, or performance | [Search optimizations](documentation/SEARCH_OPTIMIZATION_RESULTS.md); [lexical vocabulary](documentation/LEXICAL_SEARCH.md); [benchmarks](BENCHMARKS.md) |
+| Audio metadata parsing or browsing headers | [Sparse metadata and cache identity](documentation/AUDIO_METADATA.md) |
 | Filesystem scans, watching, or file moves | [Reconciliation and move proofs](documentation/LIBRARY_RECONCILIATION.md); [Operations](OPERATIONS.md) |
 | Refinement queues, retries, or queue migration | [Durable refinement](documentation/REFINEMENT_QUEUES.md) |
 | CLAP loading, installation, preprocessing, or semantic coverage | [Model contract](core/models/README.md); [relevance acceptance](core/models/RELEVANCE.md); [coverage experiment](documentation/SEMANTIC_COVERAGE_EXPERIMENT.md) |
@@ -72,6 +73,9 @@ against the implementation before relying on them.
   native watches before library teardown and keep missing-volume scans safe.
 - Native host workers can have small stacks. Avoid large stack scratch buffers
   when sorting core records that contain full paths.
+- Keep indexed metadata unknown/limited states explicit. Validate catalog header
+  metadata against physical source identity before skipping host inspection;
+  XML extraction must never load external resources or expand DTD entities.
 - Keep optional model/runtime downloads explicit and opt-in. Normal builds and
   tests must work without installing models. The native installer owns and drains
   its network/staging task at shutdown; verify before atomic activation and

@@ -2,6 +2,9 @@
 
 ## Scope and implementation
 
+Schema 16 subsequently replaces normal WAV prefix discovery with
+[sparse Unicode metadata and persisted technical headers](AUDIO_METADATA.md).
+The measurements below describe their recorded historical implementations.
 The existing Zig/SQLite/FTS/SIMD/CLAP architecture is retained. No ANN dependency, inference download, or build-artifact cleanup was introduced. Canonical Float32 embeddings and fingerprint algorithm v3 remain unchanged.
 
 | Recommendation | Implemented |

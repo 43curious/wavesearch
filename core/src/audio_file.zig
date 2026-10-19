@@ -14,8 +14,15 @@ pub const Reader = struct {
     io: std.Io,
     size: u64,
     prefix: []const u8 = &.{},
+    cancel: ?*const std.atomic.Value(bool) = null,
+    read_limit: ?*usize = null,
 
     pub fn readAll(self: Reader, dest: []u8, offset: u64) !usize {
+        if (self.cancel) |token| if (token.load(.acquire)) return error.Cancelled;
+        if (self.read_limit) |remaining| {
+            if (remaining.* == 0) return error.MetadataReadLimit;
+            remaining.* -= 1;
+        }
         const cached: usize = if (offset < self.prefix.len)
             @intCast(@min(dest.len, self.prefix.len - offset))
         else

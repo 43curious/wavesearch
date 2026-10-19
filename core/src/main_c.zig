@@ -17,6 +17,7 @@ const query_cancel = @import("query.zig");
 const refinement_schedule = @import("refinement_schedule.zig");
 
 pub const WSResult = types.WSResult;
+pub const WSFileMetadata = types.WSFileMetadata;
 pub const WSFileIdentity = types.WSFileIdentity;
 pub const WSDuplicateVerification = types.WSDuplicateVerification;
 pub const WSFingerprintStorageResult = types.WSFingerprintStorageResult;
@@ -48,7 +49,7 @@ pub export fn ws_capabilities() u64 {
     const c = @import("c");
     return c.WS_CAP_QUERY_CANCELLATION | c.WS_CAP_WAVEFORM_V1 |
         c.WS_CAP_EXTERNAL_SEMANTIC | c.WS_CAP_CLAP |
-        c.WS_CAP_EXACT_DUPLICATES | c.WS_CAP_FINGERPRINT_REPACK | c.WS_CAP_FILE_LOOKUP;
+        c.WS_CAP_EXACT_DUPLICATES | c.WS_CAP_FINGERPRINT_REPACK | c.WS_CAP_FILE_LOOKUP | c.WS_CAP_FILE_METADATA;
 }
 
 fn lockMutations() void {
@@ -298,6 +299,23 @@ pub export fn ws_file_lookup_path_v1(path: ?[*:0]const u8, out: ?*WSResult) c_in
         return -1;
     }) orelse return 0;
     search.copyResult(&row, out.?);
+    return 1;
+}
+
+pub export fn ws_file_metadata_v1(file_id: c_int, out: ?*WSFileMetadata) c_int {
+    const result = out orelse {
+        setLastErrorMessage("NullMetadataOutput");
+        return -1;
+    };
+    if (file_id <= 0 or result.struct_size < @sizeOf(WSFileMetadata)) {
+        setLastErrorMessage("InvalidMetadataArguments");
+        return -1;
+    }
+    const metadata = (db.fileMetadata(file_id) catch |err| {
+        setLastError(err);
+        return -1;
+    }) orelse return 0;
+    result.* = metadata;
     return 1;
 }
 

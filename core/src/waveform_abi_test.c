@@ -7,6 +7,8 @@
 extern int ws_legacy_abi_test(void);
 
 _Static_assert(sizeof(WSResult) == 1304, "original result layout");
+_Static_assert(sizeof(WSFileMetadata) == 64, "metadata layout");
+_Static_assert(offsetof(WSFileMetadata, content_hash) == 40, "metadata identity");
 _Static_assert(offsetof(WSResult, content_hash) == 1296, "original hash layout");
 
 _Static_assert(WS_WAVEFORM_ANALYZER_ABI_VERSION == 1u, "analyzer ABI");
@@ -25,7 +27,7 @@ int main(void) {
     if (ws_abi_version() != WS_ABI_VERSION) return 30;
     const uint64_t required_caps = WS_CAP_QUERY_CANCELLATION | WS_CAP_WAVEFORM_V1 |
         WS_CAP_EXTERNAL_SEMANTIC | WS_CAP_CLAP | WS_CAP_EXACT_DUPLICATES |
-        WS_CAP_FINGERPRINT_REPACK;
+        WS_CAP_FINGERPRINT_REPACK | WS_CAP_FILE_METADATA;
     if ((ws_capabilities() & required_caps) != required_caps) return 31;
     int legacy_status = ws_legacy_abi_test();
     if (legacy_status != 0) return legacy_status;

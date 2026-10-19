@@ -1,7 +1,8 @@
 const std = @import("std");
 const db = @import("db.zig");
 const types = @import("types.zig");
-const audio = @import("audio.zig");
+const wav_metadata = @import("wav_metadata.zig");
+const clap_audio = @import("clap_audio.zig");
 const audio_file = @import("audio_file.zig");
 const semantic = @import("semantic.zig");
 const vector = @import("vector.zig");
@@ -50,6 +51,8 @@ pub fn indexFolderWithOptions(allocator: std.mem.Allocator, folder_id: i32, path
     defer full_path.deinit(allocator);
     var text: std.ArrayList(u8) = .empty;
     defer text.deinit(allocator);
+    var description: std.ArrayList(u8) = .empty;
+    defer description.deinit(allocator);
     var prefix: std.ArrayList(u8) = .empty;
     defer prefix.deinit(allocator);
 
@@ -77,18 +80,32 @@ pub fn indexFolderWithOptions(allocator: std.mem.Allocator, folder_id: i32, path
         text.clearRetainingCapacity();
         try appendNormalizedPathText(allocator, &text, entry.path);
         const wav = std.ascii.eqlIgnoreCase(std.fs.path.extension(entry.path), ".wav");
-        const prefix_limit: u64 = if (wav and !options.fast) 2 * 1024 * 1024 else FAST_HASH_BLOCK_SIZE;
+        const prefix_limit: u64 = FAST_HASH_BLOCK_SIZE;
         try prefix.resize(allocator, @intCast(@min(stat.size, prefix_limit)));
         if (try file.readPositionalAll(io, prefix.items, 0) != prefix.items.len) return error.FileChangedDuringScan;
         if (audio_file.bytes_read) |counter| counter.* += prefix.items.len;
-        const reader = audio_file.Reader{ .handle = &file, .io = io, .size = stat.size, .prefix = prefix.items };
+        const reader = audio_file.Reader{ .handle = &file, .io = io, .size = stat.size, .prefix = prefix.items, .cancel = options.cancel };
+        description.clearRetainingCapacity();
+        var metadata = wav_metadata.Technical{};
         if (wav) {
-            if (options.fast)
-                audio.appendMetadataTextFromFileSparse(allocator, &text, reader, 256 * 1024) catch {}
-            else
-                audio.appendMetadataTextFromFileLimit(allocator, &text, reader, 2 * 1024 * 1024) catch {};
+            metadata.limited = wav_metadata.read(allocator, &text, &description, reader, if (options.fast) wav_metadata.FAST_BUDGET else wav_metadata.NORMAL_BUDGET, options.cancel) catch |err| switch (err) {
+                error.TruncatedMetadata, error.MalformedMetadata => true,
+                else => return err,
+            };
         }
-        const duration_ms = audio.durationMsFromFile(reader, full_path.items) catch 0;
+        var duration_ms: i32 = 0;
+        if (clap_audio.isBuiltInAudioPath(full_path.items)) {
+            if (clap_audio.headerInfo(reader)) |info| {
+                duration_ms = info.duration_ms;
+                metadata.channels = info.channels;
+                metadata.sample_rate = info.sample_rate;
+                metadata.bit_depth = info.bit_depth;
+                metadata.encoding = info.encoding;
+            } else |err| {
+                if (err == error.Cancelled) return err;
+                if (err == error.MetadataReadLimit) metadata.limited = true;
+            }
+        }
         var identity = try file_identity.compute(reader, if (options.deep) .deep else if (options.fast) .fast else .normal, file_size, mtime_ns, options.cancel);
         if (identity.sha256 == null and try stage.hasMoveCandidate(entry.path, file_size)) {
             const complete = try file_identity.compute(reader, .deep, file_size, mtime_ns, options.cancel);
@@ -106,6 +123,8 @@ pub fn indexFolderWithOptions(allocator: std.mem.Allocator, folder_id: i32, path
             .relative_path = entry.path,
             .name = entry.basename,
             .search_text = text.items,
+            .description = description.items,
+            .metadata = metadata,
             .duration_ms = duration_ms,
             .content_hash = identity.value,
             .identity_kind = identity.kind,

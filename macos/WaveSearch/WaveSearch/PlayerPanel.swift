@@ -463,6 +463,22 @@ struct AudioFileMetadata: Sendable {
         channels.map(String.init) ?? "—"
     }
 
+    /// A catalog hit avoids opening AVAudioFile for each visible result. Source
+    /// stats are captured by the worker before/after this lookup, as for fallback.
+    nonisolated static func indexed(_ file: SoundFile, signature: WaveformSourceSignature) -> AudioFileMetadata? {
+        var stored = WSFileMetadata()
+        stored.struct_size = UInt32(MemoryLayout<WSFileMetadata>.size)
+        let required = UInt32(WS_FILE_METADATA_CHANNELS | WS_FILE_METADATA_SAMPLE_RATE
+            | WS_FILE_METADATA_BIT_DEPTH | WS_FILE_METADATA_ENCODING)
+        guard ws_file_metadata_v1(Int32(file.id), &stored) == 1,
+              stored.content_hash == file.contentHash,
+              stored.file_size == signature.fileSize,
+              stored.mtime_ns == signature.modificationNanoseconds,
+              stored.known_fields & required == required else { return nil }
+        return .init(bitDepth: Int(stored.bit_depth), bitRateKbps: nil,
+                     sampleRate: Double(stored.sample_rate), channels: Int(stored.channels))
+    }
+
     nonisolated static func inspect(path: String) -> AudioFileMetadata {
         guard let audioFile = try? AVAudioFile(forReading: URL(fileURLWithPath: path)) else {
             return AudioFileMetadata(bitDepth: nil, bitRateKbps: nil, sampleRate: nil, channels: nil)
@@ -496,8 +512,11 @@ final class AudioMetadataStore: ObservableObject {
     private var signatures: [String: WaveformSourceSignature] = [:]
     private var recent: [String] = []
     private let capacity = 256
+    private let inspectSource: @Sendable (String) -> AudioFileMetadata
 
-    private init() {}
+    init(inspect: @escaping @Sendable (String) -> AudioFileMetadata = { AudioFileMetadata.inspect(path: $0) }) {
+        inspectSource = inspect
+    }
 
     func metadata(for file: SoundFile) -> AudioFileMetadata? {
         signatures[file.path]?.contentHash == file.contentHash ? values[file.path] : nil
@@ -512,6 +531,7 @@ final class AudioMetadataStore: ObservableObject {
         guard inFlight < 32 else { return }
         let cached = values[path]
         let cachedSignature = signatures[path]
+        let inspect = inspectSource
         let token = UUID()
         pending[path] = (file, generation, token)
         inFlight += 1
@@ -520,7 +540,8 @@ final class AudioMetadataStore: ObservableObject {
                 () -> (WaveformSourceSignature, AudioFileMetadata)? in
                 guard let signature = try? WaveformSourceSignature.capture(file, analyzerVersion: 0) else { return nil }
                 let metadata = cachedSignature == signature ? cached : nil
-                let inspected = metadata ?? AudioFileMetadata.inspect(path: path)
+                let inspected = metadata ?? AudioFileMetadata.indexed(file, signature: signature)
+                    ?? inspect(path)
                 guard signature == (try? WaveformSourceSignature.capture(file, analyzerVersion: 0)) else { return nil }
                 return (signature, inspected)
             }
