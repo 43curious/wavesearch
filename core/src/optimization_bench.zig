@@ -31,6 +31,19 @@ pub fn main(init: std.process.Init) !void {
     }
     try db.open(allocator, path);
     defer db.close();
+    if (std.mem.eql(u8, mode, "lexical-quality") or std.mem.eql(u8, mode, "lexical-name-weight")) {
+        if (std.mem.eql(u8, mode, "lexical-name-weight")) {
+            const zpath = try allocator.dupeSentinel(u8, path, 0);
+            defer allocator.free(zpath);
+            var h: ?*db.c.sqlite3 = null;
+            if (db.c.sqlite3_open(zpath, &h) != db.c.SQLITE_OK) return error.OpenFailed;
+            defer _ = db.c.sqlite3_close(h);
+            // Disposable experiment only: columns are search_text and name.
+            if (db.c.sqlite3_exec(h, "INSERT INTO files_fts(files_fts,rank) VALUES('rank','bm25(1.0,4.0)')", null, null, null) != db.c.SQLITE_OK) return error.StepFailed;
+        }
+        _ = try lexicalQualityBench();
+        return;
+    }
     if (std.mem.eql(u8, mode, "fingerprint")) return fingerprintBench(io, count);
     if (std.mem.eql(u8, mode, "duplicates")) return duplicateBench(io, path, count);
     if (std.mem.eql(u8, mode, "fingerprint-codec")) return fingerprintCodecBench(io, count);
@@ -508,6 +521,47 @@ pub fn qualityBench(io: std.Io) !f64 {
     report("quality_search", times);
     std.debug.print("quality_cases={d} mean_ndcg@10={d:.6} empty_query_results={d}\n", .{ fixture.queries.len, mean, empty_results });
     return mean;
+}
+
+pub const LexicalQuality = struct { ndcg: f64, recall: f64, false_positives: usize };
+
+/// Fixed constructed judgments, independent of the vocabulary table. This is
+/// a lexical control set, not held-out human judgments on a real audio library.
+pub fn lexicalQualityBench() !LexicalQuality {
+    const Judgment = struct { name: []const u8, grade: u8 };
+    const Query = struct { text: []const u8, judgments: []const Judgment };
+    const File = struct { name: []const u8, text: []const u8 };
+    const Fixture = struct { files: []const File, queries: []const Query };
+    const parsed = try std.json.parseFromSlice(Fixture, allocator, @embedFile("fixtures/lexical-quality.json"), .{});
+    defer parsed.deinit();
+    const fixture = parsed.value;
+    const rows = try allocator.alloc(db.ScannedFile, fixture.files.len);
+    defer allocator.free(rows);
+    for (fixture.files, rows, 0..) |file, *row, i| row.* = .{ .path = file.name, .relative_path = file.name, .name = file.name, .search_text = file.text, .duration_ms = 1000, .content_hash = @intCast(i + 1), .file_size = 1, .mtime_ns = 1 };
+    try db.applyFolderIndex(1, rows);
+    var score: f64 = 0;
+    var positives: usize = 0;
+    var hits: usize = 0;
+    var false_positives: usize = 0;
+    for (fixture.queries) |query| {
+        var results: [10]main_c.WSResult = undefined;
+        const count = try search.search(allocator, query.text, 1, &results, results.len);
+        var actual: [10]u8 = @splat(0);
+        const ideal = try allocator.alloc(u8, query.judgments.len);
+        defer allocator.free(ideal);
+        for (query.judgments, ideal) |judgment, *grade| grade.* = judgment.grade;
+        positives += query.judgments.len;
+        for (results[0..count], 0..) |result, i| {
+            for (query.judgments) |judgment| {
+                if (std.mem.eql(u8, std.mem.sliceTo(&result.name, 0), judgment.name)) actual[i] = judgment.grade;
+            }
+            if (actual[i] > 0) hits += 1 else false_positives += 1;
+        }
+        score += relevance.ndcg10(actual[0..count], ideal);
+    }
+    const quality = LexicalQuality{ .ndcg = score / @as(f64, @floatFromInt(fixture.queries.len)), .recall = @as(f64, @floatFromInt(hits)) / @as(f64, @floatFromInt(positives)), .false_positives = false_positives };
+    std.debug.print("lexical_quality queries={d} ndcg@10={d:.6} recall@10={d:.6} false_positives={d}\n", .{ fixture.queries.len, quality.ndcg, quality.recall, quality.false_positives });
+    return quality;
 }
 
 fn elapsed(io: std.Io, start: std.Io.Timestamp) u64 {

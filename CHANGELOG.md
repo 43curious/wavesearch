@@ -12,6 +12,10 @@ changelog/agent documentation added afterward.
 
 ### Added
 
+- Bounded symmetric English/Spanish sound vocabulary, including whoosh variants,
+  sfx/fx and explicit sound terms/plurals, with model-free lexical judgments and
+  a disposable filename-weight experiment. Exact filenames retain priority;
+  broad bed/tone/build/drop associations no longer expand to unrelated sounds.
 - Audio-example drops onto the search bar and macOS decoding of compressed
   examples, with a 60-second/64 MiB PCM limit, cooperative cancellation, and
   visible analysis, match-count, and failure feedback.

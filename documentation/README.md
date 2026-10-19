@@ -5,6 +5,9 @@ current WaveSearch application.
 
 ## Performance and portability
 
+- [Lexical sound vocabulary](LEXICAL_SEARCH.md) — bounded bilingual expansion,
+  exact-name protection, controlled relevance results and field-weight evaluation.
+
 - [C API compatibility and lifecycle](C_API.md) — ABI/capability negotiation,
   buffer ownership, API-family concurrency and actual-work draining for hosts.
 

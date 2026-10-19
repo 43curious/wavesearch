@@ -39,7 +39,7 @@ Read these references when touching the corresponding behavior:
 | Public C API, ownership, or host lifecycle | [C API contract](documentation/C_API.md) |
 | CI or build/check entry points | [Continuous integration](documentation/CI.md) |
 | Playback, waveforms, selected-range imports | [Audio preview](documentation/WAVEFORM_AND_AUDIO_PREVIEW.md); [algorithm](documentation/WAVEFORM_ALGORITHM.md); [cache](documentation/WAVEFORM_CACHE_V10.md) |
-| Search ranking, storage, or performance | [Search optimizations](documentation/SEARCH_OPTIMIZATION_RESULTS.md); [benchmarks](BENCHMARKS.md) |
+| Search ranking, storage, or performance | [Search optimizations](documentation/SEARCH_OPTIMIZATION_RESULTS.md); [lexical vocabulary](documentation/LEXICAL_SEARCH.md); [benchmarks](BENCHMARKS.md) |
 | Filesystem scans or snapshot publication | [Compact staging](documentation/SEARCH_OPTIMIZATION_RESULTS.md#compact-scan-staging-and-filtered-retrieval-2026-10-11); [Operations](OPERATIONS.md) |
 | Refinement queues, retries, or queue migration | [Durable refinement](documentation/REFINEMENT_QUEUES.md) |
 | CLAP loading, installation, preprocessing, or semantic coverage | [Model contract](core/models/README.md); [relevance acceptance](core/models/RELEVANCE.md); [coverage experiment](documentation/SEMANTIC_COVERAGE_EXPERIMENT.md) |

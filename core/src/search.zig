@@ -143,15 +143,25 @@ fn buildFtsQuery(input: []const u8, expand_synonyms: bool) QueryBuf {
 
 fn appendQueryToken(q: *QueryBuf, token: []const u8, expand_synonyms: bool) void {
     if (token.len == 0) return;
-    const syns: SynonymList = if (expand_synonyms) synonymsFor(token) else &.{};
+    const syns = if (expand_synonyms) @import("sound_vocabulary.zig").equivalents(token) else &.{};
     var needed: usize = token.len + 3; // quoted token plus '*'
     if (syns.len > 0) {
         needed += 2; // parentheses
-        for (syns) |syn| needed += 4 + syn.len + 3; // " OR " and quoted prefix
+        for (syns) |syn| {
+            if (!std.mem.eql(u8, token, syn)) needed += 4 + syn.len + 3;
+        }
     }
     if (q.len > 0) needed += 5; // " AND "
     // Never leave a syntactically incomplete FTS expression at the fixed cap.
-    if (needed > q.buf.len - q.len) return;
+    if (needed > q.buf.len - q.len) {
+        // Keep the literal term when its group cannot fit the expansion cap.
+        const literal_needed = token.len + 3 + @as(usize, if (q.len > 0) 5 else 0);
+        if (literal_needed <= q.buf.len - q.len) {
+            if (q.len > 0) appendSlice(q, " AND ");
+            appendQuotedPrefix(q, token);
+        }
+        return;
+    }
 
     if (q.len > 0) appendSlice(q, " AND ");
     if (syns.len == 0) {
@@ -161,6 +171,7 @@ fn appendQueryToken(q: *QueryBuf, token: []const u8, expand_synonyms: bool) void
     appendByte(q, '(');
     appendQuotedPrefix(q, token);
     for (syns) |syn| {
+        if (std.mem.eql(u8, token, syn)) continue;
         appendSlice(q, " OR ");
         appendQuotedPrefix(q, syn);
     }
@@ -184,19 +195,6 @@ fn appendByte(q: *QueryBuf, b: u8) void {
 }
 fn appendSlice(q: *QueryBuf, s: []const u8) void {
     for (s) |b| appendByte(q, b);
-}
-
-const SynonymList = []const []const u8;
-fn synonymsFor(token: []const u8) SynonymList {
-    if (std.mem.eql(u8, token, "hit")) return &.{ "impact", "slam", "thud", "punch" };
-    if (std.mem.eql(u8, token, "impact")) return &.{ "hit", "slam", "thud", "punch" };
-    if (std.mem.eql(u8, token, "whoosh") or std.mem.eql(u8, token, "woosh")) return &.{ "swish", "swoosh", "passby" };
-    if (std.mem.eql(u8, token, "riser")) return &.{ "rise", "swell", "build" };
-    if (std.mem.eql(u8, token, "swell")) return &.{ "riser", "rise", "build" };
-    if (std.mem.eql(u8, token, "downer")) return &.{ "drop", "fall", "descend" };
-    if (std.mem.eql(u8, token, "ambience") or std.mem.eql(u8, token, "amb")) return &.{ "ambient", "atmos", "atmosphere" };
-    if (std.mem.eql(u8, token, "drone")) return &.{ "tone", "bed", "ambience" };
-    return &.{};
 }
 
 pub const ParsedQuery = struct {

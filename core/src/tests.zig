@@ -28,6 +28,7 @@ test "module tests are included" {
     std.testing.refAllDecls(@import("semantic_segments.zig"));
     std.testing.refAllDecls(@import("coverage_relevance.zig"));
     std.testing.refAllDecls(@import("audio_fuzz.zig"));
+    std.testing.refAllDecls(@import("sound_vocabulary.zig"));
 }
 const abi_c = @import("c");
 const env_c = @import("c");
@@ -229,8 +230,8 @@ test "FTS query building quotes tokens and duration parsing is bounded" {
     const simple = search.buildQuery("BigBoom-file.wav");
     try std.testing.expectEqualStrings("\"big\"* AND \"boom\"* AND \"file\"* AND \"wav\"*", simple.slice());
 
-    const escaped = search.buildQuery("hit \" OR *");
-    try std.testing.expectEqualStrings("(\"hit\"* OR \"impact\"* OR \"slam\"* OR \"thud\"* OR \"punch\"*) AND \"or\"*", escaped.slice());
+    const escaped = search.buildQuery("stone \" OR *");
+    try std.testing.expectEqualStrings("\"stone\"* AND \"or\"*", escaped.slice());
     try std.testing.expect(std.mem.indexOf(u8, escaped.slice(), "\" OR *") == null);
     const long = search.buildQuery(repeatedString("abcdefghij ", 200));
     try std.testing.expect(long.len <= search.MAX_QUERY_LEN);
@@ -2694,6 +2695,16 @@ test "graded controlled hybrid fixture and nDCG guard ranking quality" {
     defer fixture.deinit();
     try openFixture(&fixture);
     try std.testing.expect(try @import("optimization_bench.zig").qualityBench(io) >= 0.95);
+}
+
+test "bilingual lexical judgments protect ranking, recall and negative queries" {
+    var fixture = try Fixture.init();
+    defer fixture.deinit();
+    try db.open(allocator, fixture.db_path);
+    const quality = try @import("optimization_bench.zig").lexicalQualityBench();
+    try std.testing.expect(quality.ndcg >= 0.99);
+    try std.testing.expectEqual(@as(f64, 1), quality.recall);
+    try std.testing.expectEqual(@as(usize, 0), quality.false_positives);
 }
 
 test "WSResult C ABI layout remains stable and negative counts are rejected" {

@@ -155,6 +155,9 @@ Multiple duration filters intersect regardless of order. Equality allows
 ±250 milliseconds, and duration filters exclude files with unknown duration.
 
 WAV metadata search includes `bext`, `iXML`, and `LIST/INFO` when present.
+Small English/Spanish vocabulary groups also connect terms such as
+`whoosh`/`swoosh`/`swish`, `golpe`/`impact`, `lluvia`/`rain` and `puerta`/`door`.
+Exact filenames keep priority. See [vocabulary and evaluation limits](documentation/LEXICAL_SEARCH.md).
 
 ## Optional semantic search
 
