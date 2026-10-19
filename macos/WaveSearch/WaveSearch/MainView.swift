@@ -44,7 +44,7 @@ struct MainView: View {
             focusSearch()
         }
         .onChange(of: query) { _, newValue in
-            if !store.isExampleSearch { store.search(newValue) }
+            if newValue != store.query { store.search(newValue) }
         }
         .onChange(of: store.query) { _, newValue in
             if newValue != query {
@@ -182,6 +182,7 @@ private struct SearchHeader: View {
     @Binding var query: String
     let searchFocused: FocusState<Bool>.Binding
     @State private var showsIndexingPopover = false
+    @State private var isAudioDropTargeted = false
 
     private var placeholder: String {
         if store.isExampleSearch { return "Similar to \(store.exampleSourceName)" }
@@ -208,9 +209,10 @@ private struct SearchHeader: View {
                     InlineSpinner(size: 12, lineWidth: 1.5)
                 }
 
-                if !query.isEmpty {
+                if !query.isEmpty || store.isExampleSearch {
                     Button {
                         query = ""
+                        store.search("")
                         searchFocused.wrappedValue = true
                     } label: {
                         Image(systemName: "xmark.circle.fill")
@@ -218,6 +220,8 @@ private struct SearchHeader: View {
                             .foregroundStyle(.secondary)
                     }
                     .buttonStyle(.plain)
+                    .help("Clear search and cancel pending matches")
+                    .accessibilityLabel("Clear Search")
                 }
             }
             .padding(.horizontal, 12)
@@ -236,8 +240,9 @@ private struct SearchHeader: View {
                     .font(.system(size: 13, weight: .medium))
             }
             .buttonStyle(.borderless)
-            .help("Find similar sounds from an audio file")
+            .help("Choose an audio file, or drop one onto this search bar, to find similar sounds")
             .accessibilityLabel("Find Similar Sounds")
+            .disabled(!store.canUseLibrary)
 
             Spacer()
 
@@ -285,6 +290,36 @@ private struct SearchHeader: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .background(AppTheme.chrome)
+        .overlay {
+            if isAudioDropTargeted {
+                RoundedRectangle(cornerRadius: 9)
+                    .strokeBorder(Color.accentColor, lineWidth: 2)
+                    .allowsHitTesting(false)
+            }
+        }
+        .dropDestination(for: URL.self) { urls, _ in
+            store.acceptSearchExamples(urls)
+        } isTargeted: { isAudioDropTargeted = $0 }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if let error = store.lastBackendError {
+                Text(error)
+                    .foregroundStyle(.red)
+                    .font(.system(size: 11))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 8)
+                    .background(AppTheme.chrome)
+            } else if store.isExampleSearch {
+                Text(store.isSearching ? "Analyzing \(store.exampleSourceName) and finding matches…" : "Similar to \(store.exampleSourceName) · \(store.results.count) matches")
+                    .foregroundStyle(.secondary)
+                    .font(.system(size: 11))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 8)
+                    .background(AppTheme.chrome)
+            }
+        }
     }
 }
 

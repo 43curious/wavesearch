@@ -3,6 +3,7 @@ import Combine
 import AVFoundation
 import AppKit
 import Observation
+import WaveSearchKit
 
 private nonisolated final class Signal: @unchecked Sendable {
     private let lock = NSLock()
@@ -78,6 +79,7 @@ struct AppStoreLifecycleCheck {
         await searchesAreBoundedStagedAndDrained()
         await browsingAppendsPagesAndRetries()
         await playbackPreparationIsBoundedAndDrained()
+        try await externalAudioExamples()
         try await liveLibrarySmokeTest()
         try await refinementProgressesBeforeWaveformBacklogDrains()
         try await waveformDragExportsRealSelectionURL()
@@ -560,6 +562,90 @@ struct AppStoreLifecycleCheck {
         await store.waitForSearch()
         precondition(store.results.map(\.id) == files.map(\.id) && !store.canBrowseMore, "Pages were missing or duplicated")
         await store.shutdown()
+    }
+
+    private static func externalAudioExamples() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("wavesearch-examples-\(UUID().uuidString)")
+        let sounds = root.appendingPathComponent("library")
+        try FileManager.default.createDirectory(at: sounds, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let wav = sounds.appendingPathComponent("effect.wav")
+        let compressed = root.appendingPathComponent("external.caf")
+        let invalid = root.appendingPathComponent("broken.mp3")
+        let format = AVAudioFormat(standardFormatWithSampleRate: 48000, channels: 2)!
+        // A varied signal gives the real fingerprint matcher useful landmarks.
+        try await Task.detached {
+            let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 144000)!
+            buffer.frameLength = buffer.frameCapacity
+            for frame in 0..<Int(buffer.frameLength) {
+                let t = Double(frame) / 48000
+                let phase = 2 * Double.pi * (180 * t + 900 * t * t)
+                let value = Float(0.3 * sin(phase) + 0.2 * sin(phase * 1.71))
+                buffer.floatChannelData![0][frame] = value
+                buffer.floatChannelData![1][frame] = -value * 0.5
+            }
+            do {
+                let file = try AVAudioFile(forWriting: wav, settings: [AVFormatIDKey: kAudioFormatLinearPCM,
+                    AVSampleRateKey: 48000, AVNumberOfChannelsKey: 2, AVLinearPCMBitDepthKey: 16])
+                try file.write(from: buffer)
+            }
+            do {
+                let file = try AVAudioFile(forWriting: compressed, settings: [AVFormatIDKey: kAudioFormatAppleLossless,
+                    AVSampleRateKey: 48000, AVNumberOfChannelsKey: 2, AVEncoderBitDepthHintKey: 16])
+                try file.write(from: buffer)
+            }
+            let pcm = try ExampleAudio.decode(compressed, checkCancellation: {})
+            precondition(pcm.frames == 144000 && pcm.channels == 2 && pcm.sampleRate == 48000)
+            precondition(pcm.samples.count == 288000 && abs(pcm.samples[2000] + pcm.samples[2001] * 2) < 0.0001,
+                         "Host decoding lost stereo interleaving")
+            var checks = 0
+            do {
+                _ = try ExampleAudio.decode(compressed) {
+                    checks += 1
+                    if checks == 3 { throw CancellationError() }
+                }
+                preconditionFailure("Decode ignored chunk cancellation")
+            } catch is CancellationError {}
+            try Data("not an MP3".utf8).write(to: invalid)
+        }.value
+        await AudioAnalysisRepository.shared.resume()
+        BlockingWorkRegistry.hostFiles.resume()
+        let store = AppStore(storageDirectory: root.appendingPathComponent("catalog"), preferences: preferences, startsRefinement: false)
+        store.bootstrap()
+        await store.waitUntilStarted()
+        store.addFolder(at: sounds)
+        await store.waitForLibraryChange()
+        await store.waitForIndexing()
+        precondition(store.folders.count == 1 && store.folders[0].fileCount == 1)
+        let indexed = await Task.detached { ws_acoustic_index_pending(-1, 0) }.value
+        precondition(indexed >= 0, "Failed to prepare real acoustic matches")
+        // Chooser and dropped files use exactly the same URL request path.
+        store.searchByExample(url: wav)
+        await store.waitForSearch()
+        let expected = store.results.map(\.id)
+        precondition(expected.count == 1, store.lastBackendError ?? "WAV example did not match itself")
+        precondition(store.acceptSearchExamples([compressed]))
+        await store.waitForSearch()
+        precondition(store.lastBackendError == nil && store.results.map(\.id) == expected,
+                     store.lastBackendError ?? "Compressed example lost acoustic parity without CLAP")
+        precondition(store.folders[0].fileCount == 1, "External example was imported into the catalog")
+        precondition(!store.acceptSearchExamples([wav, compressed]))
+        precondition(store.lastBackendError != nil)
+        precondition(!store.acceptSearchExamples([URL(string: "https://example.com/audio.wav")!]))
+        store.acceptSearchExamples([invalid])
+        await store.waitForSearch()
+        precondition(store.lastBackendError?.contains("broken.mp3") == true && !store.isSearching)
+        store.acceptSearchExamples([invalid])
+        store.acceptSearchExamples([compressed])
+        await store.waitForSearch()
+        precondition(store.lastBackendError == nil && store.results.map(\.id) == expected,
+                     "A superseded example published an obsolete failure")
+        store.acceptSearchExamples([compressed])
+        store.search("effect")
+        await store.waitForSearch()
+        precondition(!store.isExampleSearch && store.lastBackendError == nil && store.results.map(\.id) == expected)
+        await store.shutdown()
+        print("PASS: external WAV/ALAC examples, model-free acoustic parity, stereo decode, cancellation, replacement, invalid drops")
     }
 
     private static func liveLibrarySmokeTest() async throws {

@@ -1,4 +1,5 @@
 import Foundation
+import AVFoundation
 import WaveSearchKit
 
 nonisolated struct SearchOutcome: Sendable {
@@ -16,12 +17,14 @@ nonisolated final class SearchRequest: @unchecked Sendable {
         case text(String)
         case browse
         case browseMore(after: SoundFile)
-        case example(String)
+        case example(URL)
     }
     let id = UUID()
     let kind: Kind
     let folderID: Int32
     private let handle: OpaquePointer
+    private let cancellationLock = NSLock()
+    private var cancelled = false
 
     init?(kind: Kind, folderID: Int32) {
         guard let handle = ws_query_create() else { return nil }
@@ -31,7 +34,19 @@ nonisolated final class SearchRequest: @unchecked Sendable {
     }
 
     deinit { ws_query_destroy(handle) }
-    func cancel() { ws_query_cancel(handle) }
+    func cancel() {
+        cancellationLock.lock()
+        cancelled = true
+        cancellationLock.unlock()
+        ws_query_cancel(handle)
+    }
+
+    func checkCancellation() throws {
+        cancellationLock.lock()
+        let stopped = cancelled
+        cancellationLock.unlock()
+        if stopped || Task.isCancelled { throw CancellationError() }
+    }
 
     typealias Backend = @Sendable (SearchRequest, Bool) -> SearchOutcome
     typealias RefinementWait = @Sendable (ContinuousClock.Instant) async throws -> Void
@@ -51,12 +66,37 @@ nonisolated final class SearchRequest: @unchecked Sendable {
     }
 
     static func execute(_ request: SearchRequest, lexicalOnly: Bool) -> SearchOutcome {
-        if case .example(let path) = request.kind {
+        do { try request.checkCancellation() }
+        catch { return SearchOutcome(cancelled: true) }
+        if case .example(let url) = request.kind {
+            // Retain the original chooser/drop URL and its permission through
+            // decoding AND the native call. Worker draining precedes core close.
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
             var raw = [WSExampleResult](repeating: WSExampleResult(), count: 200)
             for index in raw.indices { raw[index].struct_size = UInt32(MemoryLayout<WSExampleResult>.size) }
-            let count = path.withCString { path in
-                raw.withUnsafeMutableBufferPointer {
-                    ws_search_by_example_v2(request.handle, path, request.folderID, $0.baseAddress, Int32($0.count))
+            let count: Int32
+            if ["wav", "aif", "aiff", "aifc"].contains(url.pathExtension.lowercased()) {
+                count = url.path.withCString { path in
+                    raw.withUnsafeMutableBufferPointer {
+                        ws_search_by_example_v2(request.handle, path, request.folderID, $0.baseAddress, Int32($0.count))
+                    }
+                }
+            } else {
+                do {
+                    let pcm = try ExampleAudio.decode(url, checkCancellation: request.checkCancellation)
+                    try request.checkCancellation()
+                    count = pcm.samples.withUnsafeBufferPointer { samples in
+                        raw.withUnsafeMutableBufferPointer {
+                            ws_search_by_example_pcm_v2(request.handle, samples.baseAddress, UInt64(pcm.frames),
+                                                       pcm.channels, pcm.sampleRate, request.folderID,
+                                                       $0.baseAddress, Int32($0.count))
+                        }
+                    }
+                } catch is CancellationError {
+                    return SearchOutcome(cancelled: true)
+                } catch {
+                    return SearchOutcome(error: "Cannot use \(url.lastPathComponent): \(error.localizedDescription)")
                 }
             }
             guard count >= 0 else { return failure(count) }

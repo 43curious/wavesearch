@@ -12,6 +12,9 @@ changelog/agent documentation added afterward.
 
 ### Added
 
+- Audio-example drops onto the search bar and macOS decoding of compressed
+  examples, with a 60-second/64 MiB PCM limit, cooperative cancellation, and
+  visible analysis, match-count, and failure feedback.
 - Deterministic, model-free WAV/AIFF mutation checks in the core test suite,
   with bounded inputs and allocation budgets, saved replay inputs, and duration
   filter properties. Longer campaigns are available through `zig build audio-fuzz`.

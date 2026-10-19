@@ -100,7 +100,11 @@ library and checks; Linux and Windows desktop apps are future work.
 
 Right-click a result to find similar sounds, manage favourites, or reveal the
 source in Finder. The waveform search icon beside the search field lets you
-choose an audio file as a search example.
+choose an audio file as a search example; you can also drop one onto the search
+bar. WAV/AIFF examples use the core decoder. Other formats use macOS audio
+decoding when available and must fit within 60 seconds and 64 MiB of decoded
+Float32 PCM. Examples are temporary search inputs and are not imported into
+the catalog. Type a query or use the clear button to leave example search.
 
 Right-click a library to re-index, remove, or reconnect a moved folder. If a
 drive disconnects, the library shows **Missing drive** and its indexed files

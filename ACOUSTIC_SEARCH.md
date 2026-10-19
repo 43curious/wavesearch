@@ -36,6 +36,21 @@ source strength and complete-byte duplicate verification. See
   `ws_search_by_example_pcm` ABI supports finite host-decoded PCM from optional
   MP3/FLAC/AAC decoders without making codecs core dependencies.
 
+The macOS app accepts one external audio file through the chooser or a drop
+onto the search bar. WAV/AIFF/AIFC files use the core file API; other formats
+use AVAudioFile when a decoder is available, then the request-aware PCM API.
+Host decoding runs on the replaceable search worker, retains security-scoped
+access until decoding and search finish, and checks cancellation between chunks.
+Compressed examples are limited to 60 seconds and 64 MiB of interleaved Float32
+PCM; invalid samples, truncated output, and observed size/mtime changes fail the
+request. Search inputs create no catalog entries or exported files. Typing or
+clearing search replaces the example request and suppresses obsolete results.
+
+The app lifecycle check synthesizes WAV and ALAC/CAF equivalents and verifies
+model-free matching parity, stereo interleaving, chunk cancellation, invalid
+inputs, and request replacement. Decoder availability for other formats and
+interactive Finder drops require separate native verification.
+
 ## Deterministic fixture acceptance
 
 Tests synthesize a non-stationary source effect plus:

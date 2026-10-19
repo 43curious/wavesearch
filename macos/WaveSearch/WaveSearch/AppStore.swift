@@ -941,24 +941,36 @@ final class AppStore: ObservableObject {
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
         panel.allowsMultipleSelection = false
-        panel.allowedContentTypes = [.wav, .aiff]
-        panel.message = "Choose a WAV or AIFF clip to find acoustic matches"
+        panel.allowedContentTypes = [.audio]
+        panel.message = "Choose an audio clip to find acoustic matches. Compressed examples must be 60 seconds or less."
         panel.prompt = "Find Similar"
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        searchByExample(path: url.path, displayName: url.deletingPathExtension().lastPathComponent)
+        searchByExample(url: url)
     }
 
     func searchByExample(_ file: SoundFile) {
-        searchByExample(path: file.path, displayName: file.displayName)
+        searchByExample(url: file.url)
     }
 
-    private func searchByExample(path: String, displayName: String) {
+    /// Both file-panel and drop submissions enter the same replaceable worker.
+    @discardableResult
+    func acceptSearchExamples(_ urls: [URL]) -> Bool {
+        guard canUseLibrary else { return false }
+        guard urls.count == 1, let url = urls.first, url.isFileURL else {
+            lastBackendError = "Drop one audio file to find similar sounds."
+            return false
+        }
+        searchByExample(url: url)
+        return true
+    }
+
+    func searchByExample(url: URL) {
         guard canUseLibrary else { return }
         lastSearchRequest = ""
         isExampleSearch = true
-        exampleSourceName = displayName
+        exampleSourceName = url.deletingPathExtension().lastPathComponent
         query = ""
-        submitSearch(.example(path))
+        submitSearch(.example(url))
     }
 
     func selectResult(at index: Int, autoplay: Bool = false) {
