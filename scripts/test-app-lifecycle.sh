@@ -19,6 +19,6 @@ for file in macos/WaveSearch/WaveSearch/*.swift; do
 done
 swiftc -parse-as-library -swift-version 5 -default-isolation MainActor \
     -I "$CORE_HEADERS" "$CORE_LIBRARY" -framework IOKit \
-    "${SOURCES[@]}" macos/WaveSearch/Tools/AppStoreLifecycleCheck.swift \
+    "${SOURCES[@]}" macos/WaveSearch/Tools/PreviewPlaybackFixture.swift macos/WaveSearch/Tools/AppStoreLifecycleCheck.swift \
     -o "$BUILD/check"
-"$BUILD/check"
+"$BUILD/check" "$@"

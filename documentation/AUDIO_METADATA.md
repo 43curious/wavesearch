@@ -126,8 +126,13 @@ and resumes catalog use after re-indexing. Validation passed 122 core tests (two
 optional skips), the mutation/C ABI checks, Linux compilation, watcher/metadata,
 installer and refinement-policy scripts, and strict Swift app compilation with
 warnings treated as errors. Full `make check` stops at this host's Xcode runtime
-abort. The lifecycle script still fails its previously reproduced native autoplay
-assertion; desktop interaction and real-library browsing latency remain unverified.
+abort. Subsequent diagnosis traced the recorded autoplay assertion to absent
+native audio output. The full lifecycle script now passes with controlled playback
+and explicit native-service skips; see
+[host capability validation](CI.md#local-reproduction).
+Desktop interaction and real-library browsing latency remain unverified; the
+[real-library acceptance task](REAL_LIBRARY_ACCEPTANCE.md) is deferred until Jon
+provides a corpus.
 
 ## Compressed descriptions and UCS categories (schema 17)
 

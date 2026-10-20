@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import AVFoundation
+import CoreAudio
 import AppKit
 import Observation
 import WaveSearchKit
@@ -57,11 +58,16 @@ struct AppStoreLifecycleCheck {
     private static let folder = LibraryFolder(id: 1, name: "Fixture", path: "/fixture", fileCount: 3, isMissing: false)
 
     @MainActor static func main() async throws {
+        setbuf(stdout, nil) // Preserve completed checks if a later assertion aborts.
         defer { preferences.removePersistentDomain(forName: suite) }
         // Timeout is only a deadlock backstop, not a latency assertion.
         DispatchQueue.global().asyncAfter(deadline: .now() + 30) {
             FileHandle.standardError.write(Data("FAIL: lifecycle check timed out\n".utf8))
             exit(2)
+        }
+        if CommandLine.arguments.contains("--preview-only") {
+            try await previewPlaybackChecks()
+            return
         }
         try savedPreferencesRemainCompatible()
         try await appearancePreferencesPersistAndRefresh()
@@ -80,7 +86,7 @@ struct AppStoreLifecycleCheck {
         await browsingAppendsPagesAndRetries()
         await playbackPreparationIsBoundedAndDrained()
         try await editorClipboardPublication()
-        try await selectionAuditioning()
+        try await previewPlaybackChecks()
         try await externalAudioExamples()
         try await liveLibrarySmokeTest()
         try await refinementProgressesBeforeWaveformBacklogDrains()
@@ -372,7 +378,27 @@ struct AppStoreLifecycleCheck {
         precondition(drained && events.values == ["A", "C"])
     }
 
-    private static func selectionAuditioning() async throws {
+    private static func previewPlaybackChecks() async throws {
+        try await selectionAuditioning(native: false)
+        var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+                                                 mScope: kAudioObjectPropertyScopeGlobal,
+                                                 mElement: kAudioObjectPropertyElementMain)
+        var device = AudioDeviceID(kAudioObjectUnknown)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        let status = AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &device)
+        guard status == noErr, device != kAudioObjectUnknown else {
+            let message = "Native audio output unavailable (CoreAudio status=\(status), default device=\(device))"
+            if CommandLine.arguments.contains("--native-audio") {
+                FileHandle.standardError.write(Data("FAIL: \(message)\n".utf8))
+                exit(2)
+            }
+            print("SKIP: \(message); use --native-audio on a Mac with an output device")
+            return
+        }
+        try await selectionAuditioning(native: true)
+    }
+
+    private static func selectionAuditioning(native: Bool) async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("wavesearch-audition-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -384,25 +410,29 @@ struct AppStoreLifecycleCheck {
             let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 48000)!
             buffer.frameLength = 48000
             buffer.floatChannelData![0].initialize(repeating: 0, count: 48000)
-            for name in ["A", "B", "C", "D"] {
+            for name in ["A", "B", "C", "D", "E"] {
                 let file = try AVAudioFile(forWriting: root.appendingPathComponent("\(name).wav"), settings: format.settings)
                 try file.write(from: buffer)
             }
         }.value
         let first = Gate(), latest = Gate(), paused = Gate(), events = Events()
+        let clock = PreviewTestClock()
         let player = PlayerController(preferences: prefs, prepare: { url in
             let name = url.deletingPathExtension().lastPathComponent
             events.add(name)
-            // Return a real player even after cancellation to exercise stale delivery.
+            // Return a prepared transport after cancellation to exercise stale delivery.
             if events.count(name) == 1 {
                 if name == "A" { first.block() }
                 if name == "C" { latest.block() }
                 if name == "D" { paused.block() }
             }
-            guard let native = try? AVAudioPlayer(contentsOf: url) else { return nil }
-            native.enableRate = true
-            native.prepareToPlay()
-            return PreparedPreviewPlayer(native)
+            if !native {
+                return PreparedPreviewPlayer(PreviewTestPlayback(name: name, clock: clock, acceptsPlayback: name != "E"))
+            }
+            guard let audio = try? AVAudioPlayer(contentsOf: url) else { return nil }
+            audio.enableRate = true
+            audio.prepareToPlay()
+            return PreparedPreviewPlayer(audio)
         })
         func file(_ name: String, id: Int = 1) -> SoundFile {
             SoundFile(id: id, folderId: 1, path: root.appendingPathComponent("\(name).wav").path,
@@ -414,6 +444,14 @@ struct AppStoreLifecycleCheck {
                 try? await Task.sleep(for: .milliseconds(2))
             }
             precondition(!player.isPreparing, "Playback preparation did not complete")
+        }
+        func advance(_ seconds: Double) async throws {
+            if native {
+                try await Task.sleep(for: .seconds(seconds))
+            } else {
+                clock.advance(seconds)
+                player.refreshPlaybackPosition()
+            }
         }
         precondition(!player.autoplayOnSelect)
         player.setVolume(0)
@@ -434,19 +472,30 @@ struct AppStoreLifecycleCheck {
         await ready()
         precondition(player.currentFile?.name == "C.wav" && player.isPlaying && player.progress >= 0.25,
                      "Only the newest prepared source should autoplay from its in point")
+        if !native {
+            precondition(clock.playedNames == ["C"] && clock.firstStart == 0.25,
+                         "Only the newest transport should receive play at its in point")
+        }
         player.setPreviewRate(.double)
-        try await Task.sleep(for: .milliseconds(240))
+        if native {
+            try await advance(0.24)
+        } else {
+            try await advance(0.06)
+            precondition(player.isPlaying && abs(player.progress - 0.37) < 0.001,
+                         "Double-rate playback did not advance the transport at 2x")
+            try await advance(0.18)
+        }
         precondition(!player.isPlaying && abs(player.progress - 0.45) < 0.001,
                      "Non-looping preview did not stop at the out point")
         player.setLoops(true)
         player.playFromSelectionStart()
-        try await Task.sleep(for: .milliseconds(300))
+        try await advance(0.30)
         precondition(player.isPlaying && player.progress >= 0.25 && player.progress < 0.55,
                      "Range loop failed: playing=\(player.isPlaying) progress=\(player.progress)")
         player.setSelection(nil)
         player.playFromSelectionStart()
-        try await Task.sleep(for: .milliseconds(650))
-        precondition(player.isPlaying && player.progress < 1, "Native whole-file looping stopped at EOF")
+        try await advance(0.65)
+        precondition(player.isPlaying && player.progress < 1, "Whole-file looping stopped at EOF")
         player.setLoops(false)
         player.stopPlayback()
         player.load(file("D"), autoplay: true)
@@ -456,12 +505,19 @@ struct AppStoreLifecycleCheck {
         paused.release()
         await ready()
         precondition(!player.isPlaying, "Pause during preparation did not revoke queued playback")
+        if !native {
+            player.load(file("E"), autoplay: true)
+            await ready()
+            precondition(!player.isPlaying, "A rejected transport start must not report playback")
+            player.playFromSelectionStart()
+            precondition(!player.isPlaying, "Retrying failed output must preserve stopped state")
+        }
         player.setAutoplayOnSelect(true)
         precondition(PlayerController(preferences: prefs).autoplayOnSelect, "Autoplay preference did not persist")
         // Warm generated WAVs; this measures the native play() handoff, not
         // physical audio output or cold/removable-storage first-audio latency.
         var samples: [Double] = []
-        for index in 0..<5 {
+        for index in 0..<(native ? 5 : 1) {
             let started = ContinuousClock.now
             player.load(file("A", id: index + 10))
             await ready()
@@ -470,10 +526,12 @@ struct AppStoreLifecycleCheck {
             samples.append(Double(elapsed.seconds) * 1000 + Double(elapsed.attoseconds) / 1e15)
         }
         samples.sort()
-        print("audition warm_generated_wav selection_to_play_handoff_ms p50=\(samples[2]) p95=\(samples[4])")
+        if native {
+            print("audition warm_generated_wav selection_to_play_handoff_ms p50=\(samples[2]) p95=\(samples[4])")
+        }
         await player.stopAndDrain()
         precondition(!player.isPlaying && player.currentFile == nil && player.selection == nil)
-        print("PASS: newest-source autoplay, deferred Return, in/out marks, range/whole-file loops, rate, pause and drain")
+        print("PASS: \(native ? "native" : "controlled-clock") newest-source autoplay, deferred Return, in/out marks, range/whole-file loops, rate, pause and drain")
     }
 
     private static func lexicalResultsPrecedeRefinementDebounce() async {
@@ -603,6 +661,32 @@ struct AppStoreLifecycleCheck {
 
     private static func waveformDragExportsRealSelectionURL() async throws {
         BlockingWorkRegistry.hostFiles.resume()
+        let pasteboard = NSPasteboard(name: .init("wavesearch-drag-\(UUID().uuidString)"))
+        defer { pasteboard.releaseGlobally() }
+        // Probe a plain system type before attributing a missing service to the
+        // application's writer. Payload/export checks still run without pboard.
+        let hasPasteboard = pasteboard.setString("wavesearch-probe", forType: .string)
+        if !hasPasteboard {
+            if CommandLine.arguments.contains("--native-pasteboard") {
+                FileHandle.standardError.write(Data("FAIL: Native pasteboard service unavailable\n".utf8))
+                exit(2)
+            }
+            print("SKIP: Native pasteboard service unavailable; use --native-pasteboard to require round trips")
+        }
+        func payloadURL(_ writer: any NSPasteboardWriting) -> URL {
+            precondition(writer.writableTypes(for: pasteboard).contains(.fileURL), "Drag must advertise a file URL")
+            guard let value = writer.pasteboardPropertyList(forType: .fileURL) as? String,
+                  let url = URL(string: value), url.isFileURL else {
+                preconditionFailure("Drag must serialize a valid file URL")
+            }
+            if hasPasteboard {
+                pasteboard.clearContents()
+                precondition(pasteboard.writeObjects([writer]))
+                let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]
+                precondition(urls == [url], "Native pasteboard must preserve the file-URL payload")
+            }
+            return url
+        }
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("wavesearch-drag-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -626,11 +710,7 @@ struct AppStoreLifecycleCheck {
         let originalPayload = try await dragPayloadForClip(
             file: file, startFraction: 0.25, endFraction: 0.75, behavior: .keepInPlace
         )
-        let pasteboard = NSPasteboard(name: .init("wavesearch-drag-\(UUID().uuidString)"))
-        defer { pasteboard.releaseGlobally() }
-        precondition(pasteboard.writeObjects([originalPayload.writer]))
-        let originals = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]
-        precondition(originals == [source], "Keep-in-place waveform drags must reference the original file")
+        precondition(payloadURL(originalPayload.writer) == source, "Keep-in-place waveform drags must reference the original file")
 
         func providerURL(_ behavior: AudioImportBehavior) async throws -> URL {
             let provider = itemProviderForAudioImport(file, behavior: behavior)
@@ -667,11 +747,7 @@ struct AppStoreLifecycleCheck {
         let payload = try await dragPayloadForClip(
             file: file, startFraction: 0.25, endFraction: 0.75, behavior: .copyToExports
         )
-        pasteboard.clearContents()
-        precondition(pasteboard.writeObjects([payload.writer]))
-        let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]
-        precondition(urls?.count == 1, "Waveform drag must supply an existing file URL, not only a Finder file promise")
-        let outputURL = urls![0]
+        let outputURL = payloadURL(payload.writer)
         defer { try? FileManager.default.removeItem(at: outputURL) }
         precondition(outputURL != source && FileManager.default.fileExists(atPath: outputURL.path))
         let clip = try AVAudioFile(forReading: outputURL)
@@ -682,6 +758,7 @@ struct AppStoreLifecycleCheck {
         try clip.read(into: read)
         precondition(abs(read.floatChannelData![0][0] - 0.25) < 0.000001 && abs(read.floatChannelData![1][0] + 0.25) < 0.000001)
         precondition(!outputURL.path.hasPrefix(FileManager.default.temporaryDirectory.path), "A project may reference the exported clip after temporary files are cleaned")
+        if hasPasteboard { print("PASS: native pasteboard file-URL round trips") }
         print("PASS: original import URLs, persistent whole-file copies, trimmed PCM24 selections, import preference")
     }
 
@@ -718,12 +795,34 @@ struct AppStoreLifecycleCheck {
     }
 
     private static func externalAudioExamples() async throws {
+        // Fake-backend checks save synthetic folders; this real catalog owns
+        // separate preferences so test order cannot import those folder IDs.
+        let suite = "wavesearch-examples-\(UUID().uuidString)"
+        let preferences = UserDefaults(suiteName: suite)!
+        defer { preferences.removePersistentDomain(forName: suite) }
+        // A service-restricted host can expose no installed codecs. Do not hide
+        // encoder/decoder errors when CoreAudio does advertise ALAC support.
+        var codec = kAudioFormatAppleLossless
+        let availability = [kAudioFormatProperty_Encoders, kAudioFormatProperty_Decoders].map { property in
+            var size: UInt32 = 0
+            let status = AudioFormatGetPropertyInfo(property, UInt32(MemoryLayout.size(ofValue: codec)), &codec, &size)
+            return (status: status, count: size / UInt32(MemoryLayout<AudioClassDescription>.size))
+        }
+        let hasALAC = availability.allSatisfy { $0.status == noErr && $0.count > 0 }
+        if !hasALAC {
+            let message = "ALAC codecs unavailable (encoder=\(availability[0]), decoder=\(availability[1]))"
+            if CommandLine.arguments.contains("--native-codecs") {
+                FileHandle.standardError.write(Data("FAIL: \(message)\n".utf8))
+                exit(2)
+            }
+            print("SKIP: \(message); external-example checks use PCM WAV; use --native-codecs to require ALAC")
+        }
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("wavesearch-examples-\(UUID().uuidString)")
         let sounds = root.appendingPathComponent("library")
         try FileManager.default.createDirectory(at: sounds, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let wav = sounds.appendingPathComponent("effect.wav")
-        let compressed = root.appendingPathComponent("external.caf")
+        let external = root.appendingPathComponent(hasALAC ? "external.caf" : "external.wav")
         let invalid = root.appendingPathComponent("broken.mp3")
         let format = AVAudioFormat(standardFormatWithSampleRate: 48000, channels: 2)!
         // A varied signal gives the real fingerprint matcher useful landmarks.
@@ -743,17 +842,21 @@ struct AppStoreLifecycleCheck {
                 try file.write(from: buffer)
             }
             do {
-                let file = try AVAudioFile(forWriting: compressed, settings: [AVFormatIDKey: kAudioFormatAppleLossless,
-                    AVSampleRateKey: 48000, AVNumberOfChannelsKey: 2, AVEncoderBitDepthHintKey: 16])
+                let settings: [String: Any] = hasALAC
+                    ? [AVFormatIDKey: kAudioFormatAppleLossless, AVSampleRateKey: 48000,
+                       AVNumberOfChannelsKey: 2, AVEncoderBitDepthHintKey: 16]
+                    : [AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey: 48000,
+                       AVNumberOfChannelsKey: 2, AVLinearPCMBitDepthKey: 16]
+                let file = try AVAudioFile(forWriting: external, settings: settings)
                 try file.write(from: buffer)
             }
-            let pcm = try ExampleAudio.decode(compressed, checkCancellation: {})
+            let pcm = try ExampleAudio.decode(external, checkCancellation: {})
             precondition(pcm.frames == 144000 && pcm.channels == 2 && pcm.sampleRate == 48000)
             precondition(pcm.samples.count == 288000 && abs(pcm.samples[2000] + pcm.samples[2001] * 2) < 0.0001,
                          "Host decoding lost stereo interleaving")
             var checks = 0
             do {
-                _ = try ExampleAudio.decode(compressed) {
+                _ = try ExampleAudio.decode(external) {
                     checks += 1
                     if checks == 3 { throw CancellationError() }
                 }
@@ -769,7 +872,8 @@ struct AppStoreLifecycleCheck {
         store.addFolder(at: sounds)
         await store.waitForLibraryChange()
         await store.waitForIndexing()
-        precondition(store.folders.count == 1 && store.folders[0].fileCount == 1)
+        precondition(store.folders.count == 1 && store.folders[0].fileCount == 1,
+                     store.lastBackendError ?? "External-example fixture indexing failed")
         let indexed = await Task.detached { ws_acoustic_index_pending(-1, 0) }.value
         precondition(indexed >= 0, "Failed to prepare real acoustic matches")
         // Chooser and dropped files use exactly the same URL request path.
@@ -777,28 +881,28 @@ struct AppStoreLifecycleCheck {
         await store.waitForSearch()
         let expected = store.results.map(\.id)
         precondition(expected.count == 1, store.lastBackendError ?? "WAV example did not match itself")
-        precondition(store.acceptSearchExamples([compressed]))
+        precondition(store.acceptSearchExamples([external]))
         await store.waitForSearch()
         precondition(store.lastBackendError == nil && store.results.map(\.id) == expected,
-                     store.lastBackendError ?? "Compressed example lost acoustic parity without CLAP")
+                     store.lastBackendError ?? "External example lost acoustic parity without CLAP")
         precondition(store.folders[0].fileCount == 1, "External example was imported into the catalog")
-        precondition(!store.acceptSearchExamples([wav, compressed]))
+        precondition(!store.acceptSearchExamples([wav, external]))
         precondition(store.lastBackendError != nil)
         precondition(!store.acceptSearchExamples([URL(string: "https://example.com/audio.wav")!]))
         store.acceptSearchExamples([invalid])
         await store.waitForSearch()
         precondition(store.lastBackendError?.contains("broken.mp3") == true && !store.isSearching)
         store.acceptSearchExamples([invalid])
-        store.acceptSearchExamples([compressed])
+        store.acceptSearchExamples([external])
         await store.waitForSearch()
         precondition(store.lastBackendError == nil && store.results.map(\.id) == expected,
                      "A superseded example published an obsolete failure")
-        store.acceptSearchExamples([compressed])
+        store.acceptSearchExamples([external])
         store.search("effect")
         await store.waitForSearch()
         precondition(!store.isExampleSearch && store.lastBackendError == nil && store.results.map(\.id) == expected)
         await store.shutdown()
-        print("PASS: external WAV/ALAC examples, model-free acoustic parity, stereo decode, cancellation, replacement, invalid drops")
+        print("PASS: external \(hasALAC ? "WAV/ALAC" : "WAV") examples, model-free acoustic parity, stereo decode, cancellation, replacement, invalid drops")
     }
 
     private static func liveLibrarySmokeTest() async throws {

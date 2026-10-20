@@ -1,4 +1,4 @@
-.PHONY: core macos build check check-core check-macos check-macos-headless check-linux check-format check-scripts check-toolchain clean distclean
+.PHONY: core macos build check check-core check-macos check-macos-headless check-macos-runtime _check-macos-runtime check-linux check-format check-scripts check-toolchain clean distclean
 
 PROJECT := macos/WaveSearch/wavesearch.xcodeproj
 SCHEME := WaveSearch
@@ -58,11 +58,21 @@ check-core: check-format check-scripts
 # Hosted CI can run these compiled checks without a logged-in desktop. The app
 # build refreshes the XCFramework used by the scripts before they link it.
 check-macos-headless: macos
+	$(MAKE) _check-macos-runtime
+	@echo "PASS: macOS build and headless checks"
+
+# Runnable when Xcode project initialization is unavailable. This verifies all
+# Swift sources and native checks, but does not validate an Xcode app bundle.
+check-macos-runtime: core
+	$(MAKE) _check-macos-runtime
+
+_check-macos-runtime:
+	bash scripts/test-swift-build.sh
 	bash scripts/test-refinement-policy.sh
 	bash scripts/test-clap-installer.sh
 	bash scripts/test-library-watching.sh
 	bash scripts/test-app-lifecycle.sh
-	@echo "PASS: macOS build and headless checks"
+	@echo "PASS: Swift compilation and macOS runtime checks"
 
 check-macos: check-macos-headless
 	bash scripts/test-window-chrome.sh

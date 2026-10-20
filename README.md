@@ -278,10 +278,17 @@ for cleanup findings and intentionally retained files.
 make check                # Full core checks, app build and Swift checks on macOS
 make check-core           # Portable formatting, script checks, tests, library build
 make check-macos-headless # macOS build and lifecycle/policy checks without GUI tests
+make check-macos-runtime  # Swift compilation and runtime checks without an Xcode app build
 make check-linux          # Cross-compile the Linux x86_64 library and core checks
 ```
 
-The macOS window and Settings checks require a logged-in desktop session.
+The macOS window and Settings checks require a logged-in desktop session and
+an active display; they fail promptly when those prerequisites are unavailable.
+Playback logic uses a controlled clock. Native output, ALAC and pasteboard checks
+run when available and otherwise print explicit skips. To require all three, run
+`bash scripts/test-app-lifecycle.sh --native-audio --native-codecs --native-pasteboard`.
+`check-macos-runtime` can diagnose a host whose Xcode project initialization
+fails, but does not replace app-bundle or desktop validation.
 GitHub Actions runs native Linux core checks and macOS core/app/headless checks
 on pushes and pull requests. See the [CI workflow and limits](documentation/CI.md).
 Optional model downloads and benchmarks are separate from normal checks.

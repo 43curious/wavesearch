@@ -390,12 +390,27 @@ The selected-range output is always PCM WAV for predictable interchange.
 
 ## 13. Validation
 
-The app lifecycle check uses disposable silent WAVs and real AVAudioPlayers to
-exercise blocked/rapid replacement, Return during preparation, cancellation by
-pause, selected-range stopping/looping, native full-file looping, 2× preview,
-autoplay preference persistence and shutdown draining. The native window check
+The app lifecycle check always exercises the real preview controller through a
+controlled transport clock: blocked/rapid replacement, Return during preparation,
+cancellation by pause, selected-range stopping/looping, full-file looping, 2×
+preview, rejected playback starts, autoplay preference persistence and shutdown
+draining. It repeats the playback scenario with disposable silent WAVs and real
+AVAudioPlayers when CoreAudio exposes a default output device; otherwise it prints
+an explicit skip. `bash scripts/test-app-lifecycle.sh --preview-only --native-audio`
+requires native playback and fails if output is unavailable. A controlled-clock
+pass does not establish native output, audible latency or device behavior.
+The native window check
 injects Up/Down, i/o, Return and Space events and verifies that search text entry
 does not trigger preview commands.
+
+External-example checks use native ALAC encoding/decoding when CoreAudio lists
+both codecs. Without them they retain WAV stereo decoding, cancellation, matching,
+replacement and invalid-drop coverage, with an explicit ALAC skip. Use
+`bash scripts/test-app-lifecycle.sh --native-audio --native-codecs --native-pasteboard`
+on a working Mac for required native output, compressed-example and pasteboard
+acceptance. Drag checks always inspect the real writer's file-URL payload and
+verify exported bytes/frame counts; native pasteboard round trips are explicitly
+skipped when an independent system string write fails.
 
 A run of five warm generated one-second WAV selections measured
 31.5 ms p50 and 42.5 ms p95 from selection to the native `play()` handoff, including

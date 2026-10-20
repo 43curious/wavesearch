@@ -69,6 +69,7 @@ overwrites it. These bounded checks do not establish exhaustive parser safety.
 make check-core                 # Execute portable checks on this host
 make check-linux                # Compile Linux library + check executables only
 make check-macos-headless       # macOS app + policy/installer/watcher/lifecycle, rebuilt XCFramework
+make check-macos-runtime        # Swift source compilation/linkage + runtime checks, no Xcode app build
 make check                      # Full local check, including desktop interaction
 ```
 
@@ -78,6 +79,41 @@ path and `WS_CORE_HEADERS` to the absolute `core/include` path when running the
 headless target. The default scripts instead link the freshly built universal
 XCFramework. A hosted run can only validate committed work once it has been
 pushed; local checks and workflow linting do not prove a hosted job succeeded.
+
+`check-macos-runtime` rebuilds the core, compiles and links every product Swift
+source with complete concurrency checking and warnings as errors, and runs the
+same headless scripts. It is useful when `xcodebuild` cannot initialize a project.
+It does not process asset catalogs, validate signing or build an application
+bundle. `make check` and the CI headless target retain the Xcode app build.
+
+Lifecycle checks always exercise the real preview controller through a controlled
+transport clock, including replacement, cancellation, range/rate/loop bounds and
+rejected playback starts. CoreAudio output runs additionally when a default output
+device exists. External-example checks use ALAC when CoreAudio advertises an
+encoder and decoder; otherwise they use PCM WAV and explicitly report the missing
+ALAC coverage. Advertised codecs that fail at runtime still fail the check.
+Drag checks always inspect the real file-URL writer payload and rendered/copy
+bytes. Pasteboard round trips run additionally when an independent plain-string
+write succeeds; otherwise they print a skip. Use
+`bash scripts/test-app-lifecycle.sh --native-audio --native-codecs --native-pasteboard`
+to require all three native capabilities, or `--preview-only --native-audio` to
+isolate playback.
+An unavailable required capability exits 2; a default headless pass with skips
+does not establish native playback, compressed-audio or pasteboard acceptance.
+
+Window and Settings scripts preflight the console login and active display before
+launching their applications, and exit 2 with `BLOCKED` when unavailable. Each
+application also has a 30-second process timeout, including startup before its
+SwiftUI callbacks. These checks must run sequentially in a working desktop session.
+
+On the restricted host used on 2026-10-20, `xcodebuild -version` and `-showsdks`
+succeeded, but `xcodebuild -list` aborted even in an empty temporary directory
+and with a fresh `CFFIXED_USER_HOME`. Its diagnostics reported FSEvents startup
+failure and `confstr(DARWIN_USER_CACHE_DIR)` returning an input/output error.
+Debugger launch was denied, so the exact internal Xcode crash cause remains
+unconfirmed. The same session exposed no default audio output, no ALAC codecs,
+no console/display access, and rejected independent plain-string pasteboard
+writes. The controlled runtime checks do not repair these host services.
 
 The watcher and model-installer scripts also accept these native library/header overrides.
 The installer check uses tiny local archives and injected downloads, including

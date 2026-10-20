@@ -113,6 +113,16 @@ changelog/agent documentation added afterward.
 
 ### Fixed
 
+- Headless autoplay checks no longer assume an audio output device: the real
+  controller always exercises a controlled transport clock, while native output
+  and ALAC/pasteboard coverage report explicit skips or fail when required.
+  External-example fixtures use isolated preferences instead of inheriting fake
+  catalog folders.
+- Desktop checks detect unavailable login/display services before launching and
+  bound application startup to 30 seconds. `make check-macos-runtime` compiles and
+  links all Swift sources and runs headless checks when Xcode project startup is
+  unavailable; full checks still require the Xcode app build. Documented deferred
+  real-library acceptance pending a corpus.
 - Normal WAV scans now find metadata after large PCM chunks with bounded sparse
   reads. Descriptions preserve UTF-8/entities while excluding XML markup and
   binary BWF fields; descriptive text receives a separate lexical ranking weight.

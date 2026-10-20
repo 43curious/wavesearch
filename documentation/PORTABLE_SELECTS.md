@@ -113,8 +113,9 @@ audio mutation checks, compiled C ABI checks, Linux cross-compilation, strict
 Swift app compilation, native annotation/watcher checks, installer fixtures and
 refinement policy checks. The existing native catalog backup/recovery fixture
 also passed when invoked through a temporary focused entry point. Full
-`make check` still aborts in this host's Xcode initialization (FSEvents/confstr);
-the full lifecycle script retains its previously reproduced native autoplay
-assertion failure at `AppStoreLifecycleCheck.swift:435`. Desktop interaction,
-native Linux execution and cross-application JSON interoperability remain
-unverified.
+`make check` still aborts in this host's Xcode initialization (FSEvents/confstr).
+Subsequent diagnosis traced the recorded native autoplay assertion to absent
+audio output. The full lifecycle script now passes with controlled playback and
+explicit native-service skips; see
+[host capability validation](CI.md#local-reproduction). Desktop interaction,
+native Linux execution and cross-application JSON interoperability remain unverified.

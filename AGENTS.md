@@ -9,7 +9,7 @@
   a follow-up instruction to implement it.
 - Preserve unrelated work, including staged files. Inspect `git status` and the
   relevant diff before making changes. Destructive actions require explicit
-  authorization; commit and push when instructed.
+  authorization. Finish issues with a local commit and let Jon push it.
 - Keep comments concise and useful, and update them when behavior changes.
 - Use focused tests that exercise real behavior. Avoid repetitive smoke tests
   and tests whose only purpose is to assert that deleted UI/code is absent.
@@ -107,6 +107,11 @@ Use existing checks appropriate to the change; fix failures before finishing.
   run GUI checks sequentially so they do not compete for focus.
 - Headless macOS checks: `make check-core check-macos-headless`. Hosted CI skips
   window/Settings interaction; local `make check` still includes both.
+  If Xcode project initialization fails, `make check-macos-runtime` rebuilds the
+  core and compiles/links all Swift sources before running headless checks;
+  it does not validate the app bundle. Lifecycle checks always cover controlled
+  playback; lifecycle flags `--native-audio --native-codecs --native-pasteboard`
+  require output, ALAC and pasteboard services (see the CI reference).
 - Before committing code, run `make check` for the repository's full check
   entry point. If the host cannot run part of it, report exactly what remains
   unverified. For documentation-only changes, check facts, local links, and

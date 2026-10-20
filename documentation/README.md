@@ -7,6 +7,8 @@ current WaveSearch application.
 
 - [Indexed audio metadata](AUDIO_METADATA.md) — sparse WAV text extraction,
   Unicode/descriptive ranking, technical caching, migration and measured I/O.
+- [Deferred real-library acceptance](REAL_LIBRARY_ACCEPTANCE.md) — final corpus
+  validation scope and prepared GitHub issue, pending Jon's real sound library.
 - [Library watching and file moves](LIBRARY_RECONCILIATION.md) — full-byte move
   proofs, FSEvents reconciliation, reference preservation and acceptance limits.
 - [Lexical sound vocabulary](LEXICAL_SEARCH.md) — bounded bilingual expansion,

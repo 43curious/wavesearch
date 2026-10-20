@@ -4,18 +4,36 @@ import WaveSearchKit
 import AppKit
 import Combine
 
+/// The preview owns one transport after preparation hands it to the main actor.
+/// Native output and a controlled test clock share the same playback commands.
+nonisolated protocol PreviewPlayback: AnyObject {
+    var duration: TimeInterval { get }
+    var currentTime: TimeInterval { get set }
+    var isPlaying: Bool { get }
+    var enableRate: Bool { get set }
+    var rate: Float { get set }
+    var numberOfLoops: Int { get set }
+    var volume: Float { get set }
+    func play() -> Bool
+    func pause()
+    func stop()
+    func setVolume(_ volume: Float, fadeDuration duration: TimeInterval)
+}
+
+extension AVAudioPlayer: nonisolated PreviewPlayback {}
+
 /// One-way handoff: preparation owns the player off-main until this wrapper is
 /// returned; only the main actor may then take it, once. No background references
-/// survive preparation, and the non-Sendable AVAudioPlayer never escapes otherwise.
+/// survive preparation, and the non-Sendable transport never escapes otherwise.
 nonisolated final class PreparedPreviewPlayer: @unchecked Sendable {
-    private var player: AVAudioPlayer?
+    private var player: (any PreviewPlayback)?
 
-    init(_ player: AVAudioPlayer) {
+    init(_ player: any PreviewPlayback) {
         self.player = player
     }
 
     @MainActor
-    func takePlayer() -> AVAudioPlayer? {
+    func takePlayer() -> (any PreviewPlayback)? {
         defer { player = nil }
         return player
     }
@@ -40,7 +58,7 @@ final class PlayerController: ObservableObject {
     @Published private(set) var previewRate: PreviewRate = .normal
     @Published private(set) var autoplayOnSelect: Bool
 
-    private var player: AVAudioPlayer?
+    private var player: (any PreviewPlayback)?
     private var timer: Timer?
     private var shuttleTimer: Timer?
     private let preparationWorker: LatestRequestWorker<URL, PreparedPreviewPlayer?>
@@ -336,14 +354,18 @@ final class PlayerController: ObservableObject {
         stopTimer()
         timer = Timer.scheduledTimer(withTimeInterval: 0.04, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self, let player = self.player, self.duration > 0 else { return }
-
-                self.updatePlayback(player)
+                self?.refreshPlaybackPosition()
             }
         }
     }
 
-    private func updatePlayback(_ player: AVAudioPlayer) {
+    /// Update the playhead and enforce range bounds after a transport clock tick.
+    func refreshPlaybackPosition() {
+        guard let player, duration > 0 else { return }
+        updatePlayback(player)
+    }
+
+    private func updatePlayback(_ player: any PreviewPlayback) {
         let range = playbackRange
         let position = player.currentTime / duration
         // Native time can briefly precede a requested seek. Keep the visible
