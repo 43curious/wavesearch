@@ -17,6 +17,8 @@ const query_cancel = @import("query.zig");
 const refinement_schedule = @import("refinement_schedule.zig");
 
 pub const WSResult = types.WSResult;
+pub const WSSelectsImportReport = types.WSSelectsImportReport;
+const selects = @import("selects.zig");
 pub const WSCategory = types.WSCategory;
 pub const WSFileMetadata = types.WSFileMetadata;
 pub const WSFileIdentity = types.WSFileIdentity;
@@ -50,7 +52,7 @@ pub export fn ws_capabilities() u64 {
     const c = @import("c");
     return c.WS_CAP_QUERY_CANCELLATION | c.WS_CAP_WAVEFORM_V1 |
         c.WS_CAP_EXTERNAL_SEMANTIC | c.WS_CAP_CLAP |
-        c.WS_CAP_EXACT_DUPLICATES | c.WS_CAP_FINGERPRINT_REPACK | c.WS_CAP_FILE_LOOKUP | c.WS_CAP_FILE_METADATA | c.WS_CAP_UCS_CATEGORIES;
+        c.WS_CAP_EXACT_DUPLICATES | c.WS_CAP_FINGERPRINT_REPACK | c.WS_CAP_FILE_LOOKUP | c.WS_CAP_FILE_METADATA | c.WS_CAP_UCS_CATEGORIES | c.WS_CAP_PORTABLE_SELECTS;
 }
 
 fn lockMutations() void {
@@ -301,6 +303,99 @@ pub export fn ws_file_lookup_path_v1(path: ?[*:0]const u8, out: ?*WSResult) c_in
     }) orelse return 0;
     search.copyResult(&row, out.?);
     return 1;
+}
+
+pub export fn ws_selects_export_v1() ?[*:0]u8 {
+    const bytes = db.selectsExport(allocator) catch |err| {
+        setLastError(err);
+        return null;
+    };
+    return bytes.ptr;
+}
+pub export fn ws_selects_json_free_v1(json: ?[*:0]u8) void {
+    if (json) |ptr| allocator.free(std.mem.span(ptr));
+}
+fn selectsInput(json: ?[*]const u8, length: u64) ![]const u8 {
+    if (json == null or length == 0 or length > selects.MAX_JSON) return error.InvalidSelectsJSON;
+    return json.?[0..@intCast(length)];
+}
+pub export fn ws_selects_import_v1(json: ?[*]const u8, length: u64, out: ?*WSSelectsImportReport) c_int {
+    if (out == null or out.?.struct_size < @sizeOf(WSSelectsImportReport)) {
+        setLastErrorMessage("InvalidSelectsReport");
+        return -1;
+    }
+    const bytes = selectsInput(json, length) catch |err| {
+        setLastError(err);
+        return -1;
+    };
+    const report = db.selectsImport(allocator, bytes) catch |err| {
+        setLastError(err);
+        return -1;
+    };
+    out.?.* = .{ .struct_size = @sizeOf(WSSelectsImportReport), .version = 1, .imported = report.imported, .merged = report.merged, .unresolved = report.unresolved, .conflicts = report.conflicts };
+    return 0;
+}
+pub export fn ws_selects_seed_favourites_v1(json: ?[*]const u8, length: u64) c_int {
+    const bytes = selectsInput(json, length) catch |err| {
+        setLastError(err);
+        return -1;
+    };
+    db.selectsSeed(allocator, bytes) catch |err| {
+        setLastError(err);
+        return -1;
+    };
+    return 0;
+}
+pub export fn ws_selects_edit_v1(file_id: c_int, kind: u32, name: ?[*:0]const u8, start_ms: i64, end_ms: i64, enabled: c_int) c_int {
+    const k = std.enums.fromInt(selects.Kind, kind) orelse {
+        setLastErrorMessage("InvalidSelectsKind");
+        return -1;
+    };
+    if (file_id <= 0 or (enabled != 0 and enabled != 1) or (k != .favourite and name == null)) {
+        setLastErrorMessage("InvalidSelectsEdit");
+        return -1;
+    }
+    db.selectsEdit(file_id, k, if (name) |ptr| std.mem.span(ptr) else "", start_ms, end_ms, enabled == 1) catch |err| {
+        setLastError(err);
+        return -1;
+    };
+    return 0;
+}
+pub export fn ws_selects_relink_v1(id: ?[*:0]const u8, file_id: c_int) c_int {
+    if (id == null or file_id <= 0) {
+        setLastErrorMessage("InvalidSelectsLink");
+        return -1;
+    }
+    db.selectsRelink(allocator, std.mem.span(id.?), file_id) catch |err| {
+        setLastError(err);
+        return -1;
+    };
+    return 0;
+}
+pub export fn ws_selects_list_v1(request: ?*query_cancel.Request, kind: u32, name: ?[*:0]const u8, folder: c_int, after_id: c_int, out: ?[*]WSResult, max: c_int) c_int {
+    const previous = query_cancel.current;
+    query_cancel.current = request orelse {
+        setLastErrorMessage("NullQueryRequest");
+        return -1;
+    };
+    defer query_cancel.current = previous;
+    if (query_cancel.isCancelled()) return queryResult(0);
+    const k = std.enums.fromInt(selects.Kind, kind) orelse {
+        setLastErrorMessage("InvalidSelectsKind");
+        return -1;
+    };
+    if (folder < -1 or after_id < 0 or max < 0 or max > 1000 or (max > 0 and out == null) or (k != .favourite and name == null)) {
+        setLastErrorMessage("InvalidSelectsQuery");
+        return -1;
+    }
+    if (max == 0) return 0;
+    const rows = db.selectsList(allocator, k, if (name) |ptr| std.mem.span(ptr) else "", if (folder == -1) null else folder, after_id, @intCast(max)) catch |err| {
+        setLastError(err);
+        return queryResult(-1);
+    };
+    defer allocator.free(rows);
+    for (rows, 0..) |*row, i| search.copyResult(row, &out.?[i]);
+    return queryResult(@intCast(rows.len));
 }
 
 pub export fn ws_category_list_v1(folder_id: c_int, out: ?[*]WSCategory, max_categories: c_int) c_int {

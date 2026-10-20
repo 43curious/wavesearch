@@ -47,6 +47,7 @@ Read these references when touching the corresponding behavior:
 | Fingerprints, duplicate families, or example search | [Acoustic search](ACOUSTIC_SEARCH.md) |
 | Fingerprint storage, decoding, or source hash strength | [Storage and identity](documentation/INDEXING_STORAGE_IDENTITIES.md) |
 | Database lifecycle, backups, recovery, or library moves | [Operations](OPERATIONS.md) |
+| Tags, collections, favourites, or selects JSON | [Portable selects](documentation/PORTABLE_SELECTS.md) |
 | Platform boundaries, concurrency, or resource scheduling | [Performance and portability plan](documentation/PERFORMANCE_AND_PORTABILITY_PLAN.md); [fair scheduling](documentation/REFINEMENT_QUEUES.md#fair-background-scheduling) |
 | Global search activation or macOS discovery integration | [macOS integration](documentation/MACOS_INTEGRATION.md) |
 

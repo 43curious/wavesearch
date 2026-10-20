@@ -20,13 +20,14 @@ fn queryProgress(_: ?*anyopaque) callconv(.c) c_int {
 pub const c = @import("c");
 extern fn ws_sqlite_transient() c.sqlite3_destructor_type;
 
-pub const SCHEMA_VERSION: i32 = 17;
+pub const SCHEMA_VERSION: i32 = 18;
 pub const Testing = if (builtin.is_test) struct {
     pub threadlocal var before_fingerprint_repack_publish: ?*const fn () void = null;
 } else struct {};
 const file_identity = @import("file_identity.zig");
 const storage_schema = @import("storage_schema.zig");
 const move_schema = @import("move_schema.zig");
+const selects = @import("selects.zig");
 const category_schema = @import("category_schema.zig");
 const ucs = @import("ucs.zig");
 const metadata_schema = @import("metadata_schema.zig");
@@ -377,11 +378,21 @@ fn migrateLocked() !void {
     const version = try userVersionLocked();
     if (version > SCHEMA_VERSION) return error.FutureSchemaVersion;
     if (version == SCHEMA_VERSION) return validateRestoreSchema(try handleLocked(), version, true);
+    if (version == 17) {
+        try execLocked("BEGIN IMMEDIATE;");
+        errdefer execLocked("ROLLBACK;") catch {};
+        try execLocked(selects.schema);
+        try execLocked("PRAGMA user_version=18;");
+        try validateRestoreSchema(try handleLocked(), SCHEMA_VERSION, true);
+        try execLocked("COMMIT;");
+        return;
+    }
     if (version == 16) {
         try execLocked("BEGIN IMMEDIATE;");
         errdefer execLocked("ROLLBACK;") catch {};
         try createCategorySchemaLocked();
-        try execLocked("PRAGMA user_version=17;");
+        try execLocked(selects.schema);
+        try execLocked("PRAGMA user_version=18;");
         try validateRestoreSchema(try handleLocked(), SCHEMA_VERSION, true);
         try execLocked("COMMIT;");
         return;
@@ -391,7 +402,8 @@ fn migrateLocked() !void {
         errdefer execLocked("ROLLBACK;") catch {};
         try execLocked(move_schema.create);
         try createMetadataSchemaLocked();
-        try execLocked("PRAGMA user_version=17;");
+        try execLocked(selects.schema);
+        try execLocked("PRAGMA user_version=18;");
         try validateRestoreSchema(try handleLocked(), SCHEMA_VERSION, true);
         try execLocked("COMMIT;");
         return;
@@ -400,7 +412,7 @@ fn migrateLocked() !void {
         try execLocked("BEGIN IMMEDIATE;");
         errdefer execLocked("ROLLBACK;") catch {};
         try createStorageSchemaLocked();
-        try execLocked("PRAGMA user_version=17;");
+        try execLocked("PRAGMA user_version=18;");
         try validateRestoreSchema(try handleLocked(), SCHEMA_VERSION, true);
         try execLocked("COMMIT;");
         return;
@@ -410,7 +422,7 @@ fn migrateLocked() !void {
         errdefer execLocked("ROLLBACK;") catch {};
         try execLocked(refinement_schema.create);
         try createStorageSchemaLocked();
-        try execLocked("PRAGMA user_version=17;");
+        try execLocked("PRAGMA user_version=18;");
         try validateRestoreSchema(try handleLocked(), SCHEMA_VERSION, true);
         try execLocked("COMMIT;");
         return;
@@ -441,7 +453,7 @@ fn migrateLocked() !void {
         try execLocked(optimization_schema.create);
         try execLocked(refinement_schema.create);
         try createStorageSchemaLocked();
-        try execLocked("PRAGMA user_version=17;");
+        try execLocked("PRAGMA user_version=18;");
         try validateRestoreSchema(try handleLocked(), SCHEMA_VERSION, true);
         try execLocked("COMMIT;");
         return;
@@ -491,7 +503,7 @@ fn migrateLocked() !void {
     try execLocked(optimization_schema.create);
     try execLocked(refinement_schema.create);
     try createStorageSchemaLocked();
-    try execLocked("PRAGMA user_version=17;");
+    try execLocked("PRAGMA user_version=18;");
     try execLocked("COMMIT;");
 }
 
@@ -513,6 +525,7 @@ fn createStorageSchemaLocked() !void {
     try execLocked(storage_schema.create);
     try execLocked(move_schema.create);
     try createMetadataSchemaLocked();
+    try execLocked(selects.schema);
 }
 
 fn createMetadataSchemaLocked() !void {
@@ -1691,7 +1704,47 @@ pub fn captureMoveIdentity(file_id: i32, expected_hash: i64, cancel: @import("ca
     try saveMoveDigestOn(try handleLocked(), file_id, sha.finalResult());
 }
 
-/// Copy catalog metadata only: source files are never opened by this lookup.
+/// Lend the locked catalog connection to the portable annotation module.
+pub fn selectsExport(allocator: std.mem.Allocator) ![:0]u8 {
+    lock();
+    defer mutex.unlock();
+    return (selects.Catalog{ .handle = try handleLocked() }).exportJSON(allocator);
+}
+pub fn selectsImport(allocator: std.mem.Allocator, bytes: []const u8) !selects.Report {
+    lock();
+    defer mutex.unlock();
+    return (selects.Catalog{ .handle = try handleLocked() }).importJSON(allocator, bytes);
+}
+pub fn selectsSeed(allocator: std.mem.Allocator, bytes: []const u8) !void {
+    lock();
+    defer mutex.unlock();
+    try (selects.Catalog{ .handle = try handleLocked() }).seedFavourites(allocator, bytes);
+}
+pub fn selectsEdit(file_id: i32, kind: selects.Kind, name: []const u8, start: i64, end: i64, enabled: bool) !void {
+    lock();
+    defer mutex.unlock();
+    try (selects.Catalog{ .handle = try handleLocked() }).edit(file_id, kind, name, start, end, enabled);
+}
+pub fn selectsRelink(allocator: std.mem.Allocator, id: []const u8, file_id: i32) !void {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    lock();
+    defer mutex.unlock();
+    try (selects.Catalog{ .handle = try handleLocked() }).relink(arena.allocator(), id, file_id);
+}
+pub fn selectsList(allocator: std.mem.Allocator, kind: selects.Kind, name: []const u8, folder: ?i32, after_id: i32, limit: usize) ![]Candidate {
+    lock();
+    defer mutex.unlock();
+    const stmt = try prepareLocked("SELECT f.id,f.folder_id,f.path,f.name,f.duration_ms,f.content_hash,f.search_text,0.0 FROM files f JOIN user_sources s ON s.file_id=f.id WHERE f.id>?1 AND (?2 IS NULL OR f.folder_id=?2) AND ((?3=0 AND s.favourite=1) OR (?3=1 AND EXISTS(SELECT 1 FROM user_tags t WHERE t.source_id=s.id AND t.name=?4)) OR (?3=2 AND EXISTS(SELECT 1 FROM user_collections t WHERE t.source_id=s.id AND t.name=?4))) ORDER BY f.id LIMIT ?5");
+    defer _ = c.sqlite3_finalize(stmt);
+    try bindInt(stmt, 1, after_id);
+    try bindOptionalInt(stmt, 2, folder);
+    try bindInt64(stmt, 3, @backingInt(kind));
+    try bindText(stmt, 4, name);
+    try bindInt64(stmt, 5, @intCast(limit));
+    return collectCandidates(allocator, stmt, limit);
+}
+
 pub fn categoryValue(index: u32, count: u32) !@import("types.zig").WSCategory {
     if (index >= ucs.entries.len) return error.InvalidStoredCategory;
     const entry = ucs.entries[index];
@@ -3949,7 +4002,7 @@ fn validateRestoreSchema(handle: *c.sqlite3, version: i32, canonical: bool) !voi
         10 => "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('files','files_fts','files_trigram','embedding_models','file_embeddings','semantic_state','embedding_failures','fingerprint_algorithms','file_fingerprints','fingerprint_postings','fingerprint_failures','acoustic_edges','acoustic_groups','acoustic_group_state','waveform_analyses','waveform_tiers','waveform_cache_state','waveform_failures')",
         11 => "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('files','files_fts','files_trigram','embedding_models','file_embeddings','semantic_state','embedding_failures','fingerprint_algorithms','file_fingerprints','fingerprint_postings','fingerprint_failures','acoustic_edges','acoustic_groups','acoustic_group_state','waveform_analyses','waveform_tiers','waveform_cache_state','waveform_failures','semantic_sq8')",
         12 => "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('files','files_fts','files_trigram','embedding_models','file_embeddings','semantic_state','embedding_failures','fingerprint_algorithms','file_fingerprints','fingerprint_postings','fingerprint_failures','acoustic_edges','acoustic_groups','acoustic_group_state','waveform_analyses','waveform_tiers','waveform_cache_state','waveform_failures','semantic_sq8','file_search_keys','files_vocab','catalog_stats','fingerprint_df')",
-        13, 14, 15, 16, 17 => "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('files','files_fts','files_trigram','embedding_models','file_embeddings','semantic_state','embedding_failures','fingerprint_algorithms','file_fingerprints','fingerprint_postings','fingerprint_failures','acoustic_edges','acoustic_groups','acoustic_group_state','waveform_analyses','waveform_tiers','waveform_cache_state','waveform_failures','semantic_sq8','file_search_keys','files_vocab','catalog_stats','fingerprint_df','pending_embeddings','pending_fingerprints')",
+        13, 14, 15, 16, 17, 18 => "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('files','files_fts','files_trigram','embedding_models','file_embeddings','semantic_state','embedding_failures','fingerprint_algorithms','file_fingerprints','fingerprint_postings','fingerprint_failures','acoustic_edges','acoustic_groups','acoustic_group_state','waveform_analyses','waveform_tiers','waveform_cache_state','waveform_failures','semantic_sq8','file_search_keys','files_vocab','catalog_stats','fingerprint_df','pending_embeddings','pending_fingerprints')",
         else => return error.UnsupportedSchemaVersion,
     };
     const expected_tables: c_int = switch (version) {
@@ -3963,7 +4016,7 @@ fn validateRestoreSchema(handle: *c.sqlite3, version: i32, canonical: bool) !voi
         10 => 18,
         11 => 19,
         12 => 23,
-        13, 14, 15, 16, 17 => 25,
+        13, 14, 15, 16, 17, 18 => 25,
         else => unreachable,
     };
     var tables: ?*c.sqlite3_stmt = null;
@@ -3981,6 +4034,17 @@ fn validateRestoreSchema(handle: *c.sqlite3, version: i32, canonical: bool) !voi
     var contract: ?*c.sqlite3_stmt = null;
     if (c.sqlite3_prepare_v2(handle, file_contract, -1, &contract, null) != c.SQLITE_OK) return error.InvalidBackupSchema;
     _ = c.sqlite3_finalize(contract);
+    if (version >= 18) {
+        const user_sources = try prepareOn(handle, "SELECT id,file_id,path,file_size,mtime_ns,content_hash,identity_kind,hash_algorithm,sha256,favourite FROM user_sources LIMIT 0");
+        defer _ = c.sqlite3_finalize(user_sources);
+        const tags = try prepareOn(handle, "SELECT source_id,name FROM user_tags LIMIT 0");
+        defer _ = c.sqlite3_finalize(tags);
+        const members = try prepareOn(handle, "SELECT source_id,name,start_ms,end_ms FROM user_collections LIMIT 0");
+        defer _ = c.sqlite3_finalize(members);
+        const state = try prepareOn(handle, "SELECT legacy_seeded FROM user_selects_state WHERE singleton=1");
+        defer _ = c.sqlite3_finalize(state);
+        if (c.sqlite3_step(state) != c.SQLITE_ROW) return error.InvalidBackupSchema;
+    }
     if (version >= 17) {
         const category = try prepareOn(handle, "SELECT ucs_id FROM files LIMIT 0");
         defer _ = c.sqlite3_finalize(category);
@@ -4413,7 +4477,7 @@ test "SQ8 indexed retrieval reranks exactly, filters early, maintains identity, 
     _ = try setSemanticModel("test/sq8-v1", 16);
     try execLocked("DELETE FROM files WHERE id=1;");
     // Existing v10 catalogs are backfilled atomically without re-running CLAP.
-    try execLocked(category_schema.dropForTests ++ metadata_schema.dropForTests ++ move_schema.dropForTests ++ storage_schema.dropForTests ++ refinement_schema.dropForTests ++ optimization_schema.dropForTests ++ DROP_QUANTIZED_INDEX_SQL ++ "PRAGMA user_version=10;");
+    try execLocked(selects.dropForTests ++ category_schema.dropForTests ++ metadata_schema.dropForTests ++ move_schema.dropForTests ++ storage_schema.dropForTests ++ refinement_schema.dropForTests ++ optimization_schema.dropForTests ++ DROP_QUANTIZED_INDEX_SQL ++ "PRAGMA user_version=10;");
     close();
     try open(allocator, path);
     try std.testing.expectEqual(SCHEMA_VERSION, try schemaVersion());

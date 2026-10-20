@@ -25,6 +25,9 @@ current WaveSearch application.
   work, publication, retries, migration, recovery, and discovery measurements.
 - [Performance and portability plan](PERFORMANCE_AND_PORTABILITY_PLAN.md) — prioritized issue inventory, responsiveness and resource recommendations, portable `libwavesearch` architecture, implementation status, and validation checklist.
 
+- [Portable selects](PORTABLE_SELECTS.md) — catalog tags, collections, saved
+  ranges, favourites migration, JSON merge and missing-reference identity rules.
+
 ## Audio preview and waveform
 
 - [Keyboard and accessibility workflows](ACCESSIBILITY.md) — focus scopes,

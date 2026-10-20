@@ -72,7 +72,10 @@ negative values are API failures.
 In the macOS app, open **Settings → Storage & Recovery** to create a backup,
 restore one, or run a full integrity check. Backup folders contain
 `catalog.sqlite` (created through SQLite's online backup API) and `manifest.json`
-(library IDs, locations, bookmarks, and favourites). The app pauses admission and
+(library IDs, locations, bookmarks, and the legacy favourites mirror). Schema-18
+catalogs also retain tags, collections, saved ranges and missing source references
+in SQLite. For independent JSON import/export and identity rules, see
+[portable selects](documentation/PORTABLE_SELECTS.md). The app pauses admission and
 drains playback, search, analysis, and refinement before recovery work; disk and
 core operations run off the UI thread. Restore validates the manifest and the
 core's schema contract, and saves the current catalog under
@@ -147,7 +150,9 @@ counts may read whole files: keep them off-main. See
 
 Schema 15 adds optional complete-byte move proofs. Migration retains analysis
 and leaves historical proofs unknown until a complete read establishes them.
-Older binaries reject schema 15. The native host persists volume UUIDs when
+The current catalog uses schema 18; older binaries reject unsupported future
+schemas. See [metadata](documentation/AUDIO_METADATA.md) and
+[portable selects](documentation/PORTABLE_SELECTS.md) for later migrations. The native host persists volume UUIDs when
 available and refuses to scan a mountpoint on a different volume; explicit
 Reconnect adopts the selected volume. The core rejects root replacement during
 enumeration before publishing removals.

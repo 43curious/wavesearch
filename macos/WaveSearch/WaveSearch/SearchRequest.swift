@@ -16,6 +16,7 @@ nonisolated final class SearchRequest: @unchecked Sendable {
     enum Kind: Sendable {
         case text(String)
         case browse
+        case selects(kind: UInt32, name: String, afterID: Int32)
         case browseMore(after: SoundFile)
         case example(URL)
     }
@@ -103,7 +104,7 @@ nonisolated final class SearchRequest: @unchecked Sendable {
             return SearchOutcome(files: raw.prefix(Int(count)).map { file($0.result, group: $0.acoustic_group_id) })
         }
         let browsing: Bool
-        switch request.kind { case .browse, .browseMore: browsing = true; default: browsing = false }
+        switch request.kind { case .browse, .browseMore, .selects: browsing = true; default: browsing = false }
         let pageSize = 200
         let capacity = browsing ? pageSize + 1 : 500
         var raw = [WSResult](repeating: WSResult(), count: capacity)
@@ -113,6 +114,10 @@ nonisolated final class SearchRequest: @unchecked Sendable {
                 return text.withCString {
                     ws_search_v2(request.handle, $0, request.folderID, buffer.baseAddress, Int32(buffer.count),
                                  lexicalOnly ? UInt32(WS_SEARCH_LEXICAL_ONLY) : UInt32(WS_SEARCH_HYBRID))
+                }
+            case .selects(let kind, let name, let afterID):
+                return name.withCString {
+                    ws_selects_list_v1(request.handle, kind, $0, request.folderID, afterID, buffer.baseAddress, Int32(buffer.count))
                 }
             case .browse:
                 return ws_list_folder_page_v2(request.handle, request.folderID, nil, 0, buffer.baseAddress, Int32(buffer.count))

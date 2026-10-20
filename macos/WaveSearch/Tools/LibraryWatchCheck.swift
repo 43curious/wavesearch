@@ -149,6 +149,18 @@ struct LibraryWatchCheck {
         precondition(store.results.count == 1 && store.query == "cat:AIRBlow")
         let file = store.results.first!
         store.toggleFavourite(file)
+        await store.waitForSelects()
+        store.editSelects(file: file, kind: UInt32(WS_SELECTS_TAG), name: "雨 café")
+        await store.waitForSelects()
+        let membership = SelectsMembership(name: "Proyecto 東京", start_ms: 100, end_ms: 500)
+        store.editSelects(file: file, kind: UInt32(WS_SELECTS_COLLECTION), name: membership.name, range: membership)
+        await store.waitForSelects()
+        let portable = try await Task.detached { try PortableSelects.exportData() }.value
+        let summary = try await Task.detached { try PortableSelects.importData(portable) }.value
+        precondition(summary.contains("merged 1") && summary.contains("unresolved 0"))
+        store.browseSelects(kind: UInt32(WS_SELECTS_TAG), name: "雨 café")
+        await store.waitForSearch()
+        precondition(store.results.map(\.id) == [file.id], "Tag browsing must use catalog queries")
         let player = PlayerController.shared
         player.seek(to: 0.3)
         player.setSelection(0.2...0.8)
@@ -161,6 +173,11 @@ struct LibraryWatchCheck {
         precondition(player.currentFile?.path == new.path && player.selection == 0.2...0.8 && player.progress == 0.3,
                      "The selected sound must keep its playhead/range when reopening its moved URL")
         precondition(preferences.stringArray(forKey: "ws_favourites_v1") == [new.path])
+        await store.refreshSelects()
+        precondition(store.selectsDocument.sources.count == 1)
+        let saved = store.selectsDocument.sources[0]
+        precondition(saved.path == new.path && saved.favourite && saved.tags == ["雨 café"] && saved.collections == [membership],
+                     "Verified moves must retain catalog annotations and saved ranges")
         let inspections = MetadataInspections()
         let metadata = AudioMetadataStore(inspect: { inspections.inspect($0) })
         let movedFile = store.selectedFile!
@@ -185,6 +202,7 @@ struct LibraryWatchCheck {
         precondition(metadata.metadata(for: changedFile)?.sampleRate == 16000 && inspections.calls == 1,
                      "A refreshed catalog must resume serving technical metadata")
         await store.shutdown()
+        print("PASS: portable favourites, Unicode tags and saved ranges round trip and follow verified IDs")
         print("PASS: indexed metadata avoids native inspection and rejects changed sources until refresh")
         print("PASS: real core rename preserves native favourites, selected ID, range and playhead")
     }

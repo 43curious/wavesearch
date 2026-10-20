@@ -18,12 +18,13 @@ struct MainView: View {
 
             // Show overview only when "All Libraries" is selected and no search query.
             // When a specific library is selected (even with empty query), show its sounds.
-            if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && store.selectedFolderId == nil && !store.isExampleSearch {
+            if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && store.selectedFolderId == nil && !store.isExampleSearch && store.selectsFilter == nil {
                 LibraryOverviewView()
             } else {
                 SearchWorkspaceView(resultsFocused: $resultsFocused)
             }
         }
+        .sheet(isPresented: $store.showsSelects) { SelectsView().environmentObject(store) }
         .background(AppTheme.panel)
         .animation(.spring(response: 0.26, dampingFraction: 0.92), value: store.selectedFile?.id)
         .animation(.easeOut(duration: 0.16), value: store.results.count)
@@ -179,6 +180,7 @@ private struct SearchHeader: View {
     @State private var isAudioDropTargeted = false
 
     private var placeholder: String {
+        if let filter = store.selectsFilter { return filter.title + " · type to search normally" }
         if store.isExampleSearch { return "Similar to \(store.exampleSourceName)" }
         if let id = store.selectedFolderId,
            let folder = store.folders.first(where: { $0.id == id }) {
@@ -205,7 +207,7 @@ private struct SearchHeader: View {
                     InlineSpinner(size: 12, lineWidth: 1.5)
                 }
 
-                if !query.isEmpty || store.isExampleSearch {
+                if !query.isEmpty || store.isExampleSearch || store.selectsFilter != nil {
                     Button {
                         query = ""
                         store.search("")
@@ -600,6 +602,7 @@ struct ResultsList: View {
                             Button(store.isFavourite(file) ? "Remove from Favourites" : "Add to Favourites") {
                                 store.toggleFavourite(file)
                             }
+                            Button("Tags and Collections…") { store.selectFile(file); store.showsSelects = true }
                             Button("Reveal in Finder") { NSWorkspace.shared.selectFile(file.path, inFileViewerRootedAtPath: "") }
                         }
                 }

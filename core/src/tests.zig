@@ -30,6 +30,151 @@ test "module tests are included" {
     std.testing.refAllDecls(@import("audio_fuzz.zig"));
     std.testing.refAllDecls(@import("sound_vocabulary.zig"));
 }
+
+test "portable selects round trip moves missing references ranges and conflict merges" {
+    const selects = @import("selects.zig");
+    var first = try Fixture.init();
+    defer first.deinit();
+    try writeWav(first.tmp.dir, "one.wav", 8000, 1);
+    try writeWav(first.tmp.dir, "two.wav", 8000, 2);
+    try openFixture(&first);
+    try search.indexFolderWithOptions(allocator, 1, first.root, .{ .deep = true });
+    const one = (try db.inspectFile("one.wav")).?;
+    const two = (try db.inspectFile("two.wav")).?;
+    try db.selectsEdit(@intCast(one.id), .favourite, "", -1, -1, true);
+    try db.selectsEdit(@intCast(one.id), .tag, "lluvia 東京", -1, -1, true);
+    try db.selectsEdit(@intCast(one.id), .collection, "Proyecto café", 100, 500, true);
+    try db.selectsEdit(@intCast(two.id), .tag, "missing reference", -1, -1, true);
+    const before = try db.selectsExport(allocator);
+    defer allocator.free(before);
+    const merge = try db.selectsImport(allocator, before);
+    try std.testing.expectEqual(@as(u32, 2), merge.merged);
+    try std.testing.expectEqual(@as(u32, 0), merge.imported);
+    try std.testing.expectError(error.InvalidSelectsRange, db.selectsEdit(@intCast(one.id), .collection, "Bad", 100, 90, true));
+    try std.testing.expectError(error.InvalidSelectsName, db.selectsEdit(@intCast(one.id), .tag, "", -1, -1, true));
+    try first.tmp.dir.rename("one.wav", first.tmp.dir, "moved.wav", io);
+    try first.tmp.dir.deleteFile(io, "two.wav");
+    try search.indexFolderWithOptions(allocator, 1, first.root, .{ .deep = true });
+    try std.testing.expectEqual(one.id, (try db.inspectFile("moved.wav")).?.id);
+    const portable = try db.selectsExport(allocator);
+    defer allocator.free(portable);
+    var parsed = try std.json.parseFromSlice(selects.Document, allocator, portable, .{});
+    defer parsed.deinit();
+    try std.testing.expectEqual(@as(usize, 2), parsed.value.sources.len);
+    var missing_id: []const u8 = undefined;
+    for (parsed.value.sources) |source| {
+        if (source.file_id == null) {
+            missing_id = source.id.?;
+            try std.testing.expect(std.mem.endsWith(u8, source.path, "two.wav"));
+            try std.testing.expect(source.sha256 != null);
+        } else {
+            try std.testing.expect(std.mem.endsWith(u8, source.path, "moved.wav"));
+            try std.testing.expect(source.favourite);
+            try std.testing.expectEqualStrings("lluvia 東京", source.tags[0]);
+            try std.testing.expectEqual(@as(?i64, 100), source.collections[0].start_ms);
+        }
+    }
+    db.close();
+    var second = try Fixture.init();
+    defer second.deinit();
+    try writeWav(second.tmp.dir, "relocated.wav", 8000, 1);
+    try openFixture(&second);
+    try search.indexFolderWithOptions(allocator, 9, second.root, .{ .deep = true });
+    const imported = try db.selectsImport(allocator, portable);
+    try std.testing.expectEqual(@as(u32, 2), imported.imported);
+    try std.testing.expectEqual(@as(u32, 1), imported.unresolved);
+    const rows = try db.selectsList(allocator, .tag, "lluvia 東京", null, 0, 20);
+    defer allocator.free(rows);
+    try std.testing.expectEqual(@as(usize, 1), rows.len);
+    try std.testing.expectEqual(@as(i32, 9), rows[0].folder_id);
+    const empty = try db.selectsList(allocator, .tag, "lluvia 東京", 8, 0, 20);
+    defer allocator.free(empty);
+    try std.testing.expectEqual(@as(usize, 0), empty.len);
+    // Explicit relink unions annotations onto an already annotated source.
+    try db.selectsRelink(allocator, missing_id, rows[0].file_id);
+    const after = try db.selectsExport(allocator);
+    defer allocator.free(after);
+    var final = try std.json.parseFromSlice(selects.Document, allocator, after, .{});
+    defer final.deinit();
+    try std.testing.expectEqual(@as(usize, 1), final.value.sources.len);
+    try std.testing.expectEqual(@as(usize, 2), final.value.sources[0].tags.len);
+    // A colliding portable ID with different unresolved media preserves both.
+    var conflicting = final.value.sources[0];
+    conflicting.path = "/unavailable/別.wav";
+    conflicting.file_id = rows[0].file_id; // Never trusted on import.
+    conflicting.sha256 = null;
+    conflicting.content_hash = 123;
+    conflicting.tags = &.{"conflict kept"};
+    const conflict_json = try std.json.Stringify.valueAlloc(allocator, selects.Document{ .version = 1, .sources = &.{conflicting} }, .{});
+    defer allocator.free(conflict_json);
+    const conflict = try db.selectsImport(allocator, conflict_json);
+    try std.testing.expectEqual(@as(u32, 1), conflict.conflicts);
+    try std.testing.expectEqual(@as(u32, 1), conflict.imported);
+    try std.testing.expectEqual(@as(u32, 1), conflict.unresolved);
+    const repeated = try db.selectsImport(allocator, conflict_json);
+    try std.testing.expectEqual(@as(u32, 0), repeated.imported);
+    try std.testing.expectEqual(@as(u32, 1), repeated.merged);
+    const snapshot = try db.selectsExport(allocator);
+    defer allocator.free(snapshot);
+    try std.testing.expectError(error.UnsupportedSelectsVersion, db.selectsImport(allocator, "{\"version\":2,\"sources\":[]}"));
+    try std.testing.expectError(error.InvalidNumber, db.selectsImport(allocator, "{\"version\":1.0,\"sources\":[]}"));
+    try std.testing.expectError(error.InvalidSelectsRange, db.selectsImport(allocator, "{\"version\":1,\"sources\":[{\"path\":\"/x\",\"collections\":[{\"name\":\"bad\",\"end_ms\":-1}]}]}"));
+    try std.testing.expectError(error.InvalidSelectsName, db.selectsImport(allocator, "{\"version\":1,\"sources\":[{\"path\":\"/x\",\"tags\":[\"\"]}]}"));
+    const unchanged = try db.selectsExport(allocator);
+    defer allocator.free(unchanged);
+    try std.testing.expectEqualStrings(snapshot, unchanged);
+    const backup = try second.path("selects-backup.sqlite");
+    defer allocator.free(backup);
+    try db.backupTo(backup);
+    try db.selectsEdit(rows[0].file_id, .favourite, "", -1, -1, false);
+    try db.restoreFrom(backup);
+    const restored = try db.selectsExport(allocator);
+    defer allocator.free(restored);
+    try std.testing.expectEqualStrings(snapshot, restored);
+    try std.testing.expectEqual(@as(u32, 0), (try db.integrityCheck(true)).errors_found);
+}
+
+test "schema 17 selects migration seeds legacy favourites once and checks the C contract" {
+    var fixture = try Fixture.init();
+    defer fixture.deinit();
+    try writeWav(fixture.tmp.dir, "source.wav", 8000, 3);
+    try openFixture(&fixture);
+    try search.indexFolder(allocator, 1, fixture.root);
+    const original = (try db.inspectFile("source.wav")).?;
+    db.close();
+    try rawExec(fixture.db_path, @import("selects.zig").dropForTests ++ "PRAGMA user_version=17;");
+    try openFixture(&fixture);
+    try std.testing.expectEqual(original.id, (try db.inspectFile("source.wav")).?.id);
+    const path = try fixture.path("source.wav");
+    defer allocator.free(path);
+    const seed = try std.json.Stringify.valueAlloc(allocator, &[_][]const u8{ path, "/missing/café 東京.wav" }, .{});
+    defer allocator.free(seed);
+    try std.testing.expectEqual(@as(c_int, 0), main_c.ws_selects_seed_favourites_v1(seed.ptr, seed.len));
+    try std.testing.expectEqual(@as(c_int, 0), main_c.ws_selects_seed_favourites_v1("[]", 2));
+    const json = main_c.ws_selects_export_v1() orelse return error.ExportFailed;
+    defer main_c.ws_selects_json_free_v1(json);
+    var parsed = try std.json.parseFromSlice(@import("selects.zig").Document, allocator, std.mem.span(json), .{});
+    defer parsed.deinit();
+    try std.testing.expectEqual(@as(usize, 2), parsed.value.sources.len);
+    for (parsed.value.sources) |source| try std.testing.expect(source.favourite);
+    var large = extern struct { report: main_c.WSSelectsImportReport, tail: u64 }{ .report = std.mem.zeroes(main_c.WSSelectsImportReport), .tail = 0x12345678 };
+    large.report.struct_size = @sizeOf(@TypeOf(large));
+    try std.testing.expectEqual(@as(c_int, -1), main_c.ws_selects_import_v1("{}", 2, &large.report));
+    try std.testing.expectEqual(@as(u32, 0), large.report.version);
+    try std.testing.expectEqual(@as(c_int, 0), main_c.ws_selects_import_v1(json, std.mem.len(json), &large.report));
+    try std.testing.expectEqual(@as(u32, 2), large.report.merged);
+    try std.testing.expectEqual(@as(u64, 0x12345678), large.tail);
+    try std.testing.expectEqual(@sizeOf(abi_c.WSSelectsImportReport), @sizeOf(main_c.WSSelectsImportReport));
+    const request = main_c.ws_query_create() orelse return error.OutOfMemory;
+    defer main_c.ws_query_destroy(request);
+    var rows: [2]main_c.WSResult = undefined;
+    try std.testing.expectEqual(@as(c_int, 1), main_c.ws_selects_list_v1(request, 0, null, -1, 0, &rows, 2));
+    try std.testing.expectEqual(@as(c_int, 0), main_c.ws_selects_list_v1(request, 0, null, -1, rows[0].file_id, &rows, 2));
+    main_c.ws_query_cancel(request);
+    try std.testing.expectEqual(@as(c_int, -2), main_c.ws_selects_list_v1(request, 0, null, -1, 0, &rows, 2));
+    db.close();
+    try std.testing.expect(std.mem.indexOf(u8, std.mem.span(json), "café") != null);
+}
 const abi_c = @import("c");
 const env_c = @import("c");
 
@@ -291,7 +436,7 @@ test "v5 migration adds current embedding failures fingerprints groups and wavef
     defer fixture.deinit();
     try openFixture(&fixture);
     db.close();
-    try rawExec(fixture.db_path, @import("category_schema.zig").dropForTests ++ @import("metadata_schema.zig").dropForTests ++ @import("storage_schema.zig").dropForTests ++ @import("refinement_schema.zig").dropForTests ++ @import("schema_optimizations.zig").dropForTests);
+    try rawExec(fixture.db_path, @import("selects.zig").dropForTests ++ @import("category_schema.zig").dropForTests ++ @import("metadata_schema.zig").dropForTests ++ @import("storage_schema.zig").dropForTests ++ @import("refinement_schema.zig").dropForTests ++ @import("schema_optimizations.zig").dropForTests);
     try rawExec(fixture.db_path, "DROP TRIGGER waveform_analysis_source_changed;DROP TRIGGER waveform_files_ai;DROP TRIGGER waveform_tier_rescan_au;DROP TRIGGER waveform_claim_source_changed;DROP TRIGGER waveform_claim_file_ad;DROP TABLE waveform_failures;DROP TABLE waveform_cache_state;DROP TABLE waveform_tiers;DROP TABLE waveform_analyses;DROP TRIGGER acoustic_edges_ai;DROP TRIGGER acoustic_edges_ad;DROP TABLE acoustic_group_state;DROP TABLE acoustic_groups;DROP TABLE acoustic_edges;DROP TABLE fingerprint_postings;DROP TABLE fingerprint_failures;DROP TABLE file_fingerprints;DROP TABLE fingerprint_algorithms;DROP TABLE embedding_failures;" ++ db.DROP_QUANTIZED_INDEX_SQL ++ "PRAGMA user_version=5;");
     try openFixture(&fixture);
     try std.testing.expectEqual(db.SCHEMA_VERSION, try db.schemaVersion());
@@ -319,7 +464,7 @@ test "v6 migration preserves semantic rows and adds current derived schemas" {
     const file_id: i32 = @intCast((try db.inspectFile("preserved.wav")).?.id);
     try db.upsertSemanticEmbedding(allocator, file_id, 55, &.{ 1, 0 });
     db.close();
-    try rawExec(fixture.db_path, @import("category_schema.zig").dropForTests ++ @import("metadata_schema.zig").dropForTests ++ @import("storage_schema.zig").dropForTests ++ @import("refinement_schema.zig").dropForTests ++ @import("schema_optimizations.zig").dropForTests);
+    try rawExec(fixture.db_path, @import("selects.zig").dropForTests ++ @import("category_schema.zig").dropForTests ++ @import("metadata_schema.zig").dropForTests ++ @import("storage_schema.zig").dropForTests ++ @import("refinement_schema.zig").dropForTests ++ @import("schema_optimizations.zig").dropForTests);
     try rawExec(fixture.db_path, "DROP TRIGGER waveform_analysis_source_changed;DROP TRIGGER waveform_files_ai;DROP TRIGGER waveform_tier_rescan_au;DROP TRIGGER waveform_claim_source_changed;DROP TRIGGER waveform_claim_file_ad;DROP TABLE waveform_failures;DROP TABLE waveform_cache_state;DROP TABLE waveform_tiers;DROP TABLE waveform_analyses;DROP TRIGGER acoustic_edges_ai;DROP TRIGGER acoustic_edges_ad;DROP TABLE acoustic_group_state;DROP TABLE acoustic_groups;DROP TABLE acoustic_edges;DROP TABLE fingerprint_postings;DROP TABLE fingerprint_failures;DROP TABLE file_fingerprints;DROP TABLE fingerprint_algorithms;PRAGMA user_version=6;");
     try openFixture(&fixture);
     try std.testing.expectEqual(db.SCHEMA_VERSION, try db.schemaVersion());
@@ -342,7 +487,7 @@ test "v7 migration preserves fingerprints and adds current derived schemas" {
     defer allocator.free(selected);
     try db.upsertFingerprint(algorithm_id, file_id, 71, blob, selected);
     db.close();
-    try rawExec(fixture.db_path, @import("category_schema.zig").dropForTests ++ @import("metadata_schema.zig").dropForTests ++ @import("storage_schema.zig").dropForTests ++ @import("refinement_schema.zig").dropForTests ++ @import("schema_optimizations.zig").dropForTests);
+    try rawExec(fixture.db_path, @import("selects.zig").dropForTests ++ @import("category_schema.zig").dropForTests ++ @import("metadata_schema.zig").dropForTests ++ @import("storage_schema.zig").dropForTests ++ @import("refinement_schema.zig").dropForTests ++ @import("schema_optimizations.zig").dropForTests);
     try rawExec(fixture.db_path, "DROP TRIGGER waveform_analysis_source_changed;DROP TRIGGER waveform_files_ai;DROP TRIGGER waveform_tier_rescan_au;DROP TRIGGER waveform_claim_source_changed;DROP TRIGGER waveform_claim_file_ad;DROP TABLE waveform_failures;DROP TABLE waveform_cache_state;DROP TABLE waveform_tiers;DROP TABLE waveform_analyses;DROP TRIGGER acoustic_edges_ai;DROP TRIGGER acoustic_edges_ad;DROP TABLE acoustic_group_state;DROP TABLE acoustic_groups;DROP TABLE acoustic_edges;PRAGMA user_version=7;");
     try openFixture(&fixture);
     try std.testing.expectEqual(db.SCHEMA_VERSION, try db.schemaVersion());
@@ -361,7 +506,7 @@ test "v8 migration preserves legacy waveform and adds current derived schemas" {
     try db.applyFolderIndex(8, &files);
     try db.saveWaveform(files[0].path, &.{ 0.25, 0.5 });
     db.close();
-    try rawExec(fixture.db_path, @import("category_schema.zig").dropForTests ++ @import("metadata_schema.zig").dropForTests ++ @import("storage_schema.zig").dropForTests ++ @import("refinement_schema.zig").dropForTests ++ @import("schema_optimizations.zig").dropForTests);
+    try rawExec(fixture.db_path, @import("selects.zig").dropForTests ++ @import("category_schema.zig").dropForTests ++ @import("metadata_schema.zig").dropForTests ++ @import("storage_schema.zig").dropForTests ++ @import("refinement_schema.zig").dropForTests ++ @import("schema_optimizations.zig").dropForTests);
     try rawExec(fixture.db_path, "DROP TRIGGER waveform_analysis_source_changed;DROP TRIGGER waveform_files_ai;DROP TRIGGER waveform_tier_rescan_au;DROP TRIGGER waveform_claim_source_changed;DROP TRIGGER waveform_claim_file_ad;DROP TABLE waveform_failures;DROP TABLE waveform_cache_state;DROP TABLE waveform_tiers;DROP TABLE waveform_analyses;PRAGMA user_version=8;");
     try openFixture(&fixture);
     try std.testing.expectEqual(db.SCHEMA_VERSION, try db.schemaVersion());
@@ -380,7 +525,7 @@ test "v9 migration invalidates legacy analysis and adds current derived schemas"
     try db.applyFolderIndex(9, &files);
     try db.saveWaveformCacheBlob(files[0].path, "WWF2-old");
     db.close();
-    try rawExec(fixture.db_path, @import("category_schema.zig").dropForTests ++ @import("metadata_schema.zig").dropForTests ++ @import("storage_schema.zig").dropForTests ++ @import("refinement_schema.zig").dropForTests ++ @import("schema_optimizations.zig").dropForTests);
+    try rawExec(fixture.db_path, @import("selects.zig").dropForTests ++ @import("category_schema.zig").dropForTests ++ @import("metadata_schema.zig").dropForTests ++ @import("storage_schema.zig").dropForTests ++ @import("refinement_schema.zig").dropForTests ++ @import("schema_optimizations.zig").dropForTests);
     try rawExec(fixture.db_path, "DROP TRIGGER waveform_analysis_source_changed;DROP TRIGGER waveform_files_ai;DROP TRIGGER waveform_tier_rescan_au;DROP TRIGGER waveform_claim_source_changed;DROP TRIGGER waveform_claim_file_ad;DROP TABLE waveform_failures;DROP TABLE waveform_cache_state;DROP TABLE waveform_tiers;CREATE TRIGGER waveform_analysis_source_changed AFTER UPDATE OF file_size,mtime_ns,content_hash ON files BEGIN DELETE FROM waveform_analyses WHERE file_id=new.id; END;PRAGMA user_version=9;");
     try openFixture(&fixture);
     try std.testing.expectEqual(db.SCHEMA_VERSION, try db.schemaVersion());
@@ -397,7 +542,7 @@ test "early development v10 failure rows and claim columns upgrade safely" {
     const files = [_]db.ScannedFile{.{ .path = "/dev10.wav", .relative_path = "dev10.wav", .name = "dev10.wav", .search_text = "dev10 wav", .duration_ms = 1, .content_hash = 10, .file_size = 100, .mtime_ns = 200 }};
     try db.applyFolderIndex(10, &files);
     db.close();
-    try rawExec(fixture.db_path, @import("category_schema.zig").dropForTests ++ @import("metadata_schema.zig").dropForTests ++ @import("storage_schema.zig").dropForTests ++ @import("refinement_schema.zig").dropForTests ++ @import("schema_optimizations.zig").dropForTests ++ db.DROP_QUANTIZED_INDEX_SQL ++ "PRAGMA user_version=10;");
+    try rawExec(fixture.db_path, @import("selects.zig").dropForTests ++ @import("category_schema.zig").dropForTests ++ @import("metadata_schema.zig").dropForTests ++ @import("storage_schema.zig").dropForTests ++ @import("refinement_schema.zig").dropForTests ++ @import("schema_optimizations.zig").dropForTests ++ db.DROP_QUANTIZED_INDEX_SQL ++ "PRAGMA user_version=10;");
     try rawExec(fixture.db_path, "DROP TRIGGER waveform_claim_source_changed;DROP TRIGGER waveform_claim_file_ad;" ++
         "DROP TRIGGER waveform_analysis_source_changed;" ++
         "CREATE TRIGGER waveform_analysis_source_changed AFTER UPDATE OF file_size,mtime_ns,content_hash ON files BEGIN DELETE FROM waveform_analyses WHERE file_id=new.id;DELETE FROM waveform_tiers WHERE file_id=new.id;DELETE FROM waveform_failures WHERE file_id=new.id;UPDATE waveform_cache_state SET universal_scan_complete=0 WHERE singleton=1;END;" ++
@@ -1528,7 +1673,7 @@ test "schema 12 migration and restore rebuild pending work from canonical identi
     try db.recordEmbeddingFailureForModel(model, 2, 2, "decode", "terminal fixture");
     try db.recordFingerprintFailure(algorithm, 1, 1, "decode", "terminal fixture");
     db.close();
-    try rawExec(fixture.db_path, @import("category_schema.zig").dropForTests ++ @import("metadata_schema.zig").dropForTests ++ @import("refinement_schema.zig").dropForTests ++ "PRAGMA user_version=12;");
+    try rawExec(fixture.db_path, @import("selects.zig").dropForTests ++ @import("category_schema.zig").dropForTests ++ @import("metadata_schema.zig").dropForTests ++ @import("refinement_schema.zig").dropForTests ++ "PRAGMA user_version=12;");
     try openFixture(&fixture);
     try std.testing.expectEqual(db.SCHEMA_VERSION, try db.schemaVersion());
     const semantic_pending = try db.pendingSemanticFilesForModel(allocator, model, null, 16);
@@ -2949,7 +3094,7 @@ test "legacy fingerprint repacking resumes across migration cancellation reopen 
     try db.replaceAcousticEdges(algorithm_id, ids[0], &.{.{ .other_file_id = ids[1], .score_ppm = 900000, .aligned = 32 }});
     try db.rebuildAcousticGroups(allocator, algorithm_id);
     db.close();
-    try rawExec(fixture.db_path, @import("category_schema.zig").dropForTests ++ @import("metadata_schema.zig").dropForTests ++ @import("storage_schema.zig").dropForTests ++ "PRAGMA user_version=13;");
+    try rawExec(fixture.db_path, @import("selects.zig").dropForTests ++ @import("category_schema.zig").dropForTests ++ @import("metadata_schema.zig").dropForTests ++ @import("storage_schema.zig").dropForTests ++ "PRAGMA user_version=13;");
     try openFixture(&fixture);
     try std.testing.expectEqual(db.SCHEMA_VERSION, try db.schemaVersion());
     try std.testing.expectEqual(@as(i64, 2), try rawScalar(fixture.db_path, "SELECT COUNT(*) FROM file_fingerprints WHERE storage_version=0"));
@@ -3203,7 +3348,7 @@ test "schema 14 migration preserves analysis but does not invent move proofs" {
     _ = try db.setSemanticModel("migration-proof", 2);
     try db.upsertSemanticEmbedding(allocator, @intCast(old.id), old.content_hash, &.{ 1, 0 });
     db.close();
-    try rawExec(fixture.db_path, @import("category_schema.zig").dropForTests ++ @import("metadata_schema.zig").dropForTests ++ @import("move_schema.zig").dropForTests ++ "PRAGMA user_version=14;");
+    try rawExec(fixture.db_path, @import("selects.zig").dropForTests ++ @import("category_schema.zig").dropForTests ++ @import("metadata_schema.zig").dropForTests ++ @import("move_schema.zig").dropForTests ++ "PRAGMA user_version=14;");
     try openFixture(&fixture);
     try std.testing.expectEqual(db.SCHEMA_VERSION, try db.schemaVersion());
     try std.testing.expectEqual(@as(i64, 1), (try db.semanticStatus()).embedded_count);
@@ -3368,7 +3513,7 @@ test "compressed metadata skips large artwork and indexes Unicode duplicate and 
     try std.testing.expectEqual(@sizeOf(main_c.WSCategory), @sizeOf(abi_c.WSCategory));
     try std.testing.expectEqual(@as(u32, 0), (try db.integrityCheck(true)).errors_found);
     db.close();
-    try rawExec(fixture.db_path, @import("category_schema.zig").dropForTests ++ "ALTER TABLE file_audio_metadata DROP COLUMN extraction_version; PRAGMA user_version=16;");
+    try rawExec(fixture.db_path, @import("selects.zig").dropForTests ++ @import("category_schema.zig").dropForTests ++ "ALTER TABLE file_audio_metadata DROP COLUMN extraction_version; PRAGMA user_version=16;");
     try openFixture(&fixture);
     try std.testing.expectEqual(known.id, (try db.inspectFile("AIRBlow_opaque.mp3")).?.id);
     try search.indexFolderWithOptions(allocator, 1, root, .{ .fast = true });
@@ -3533,7 +3678,7 @@ test "metadata limits unknown formats migration and source changes remain explic
     _ = try db.setSemanticModel("metadata-migrate", 2);
     try db.upsertSemanticEmbedding(allocator, @intCast(old.id), old.content_hash, &.{ 1, 0 });
     db.close();
-    try rawExec(fixture.db_path, @import("category_schema.zig").dropForTests ++ @import("metadata_schema.zig").dropForTests ++ "PRAGMA user_version=15;");
+    try rawExec(fixture.db_path, @import("selects.zig").dropForTests ++ @import("category_schema.zig").dropForTests ++ @import("metadata_schema.zig").dropForTests ++ "PRAGMA user_version=15;");
     try openFixture(&fixture);
     try std.testing.expect((try db.fileMetadata(@intCast(old.id))) == null);
     try std.testing.expectEqual(@as(i64, 1), (try db.semanticStatus()).embedded_count);

@@ -12,6 +12,11 @@ changelog/agent documentation added afterward.
 
 ### Added
 
+- Catalog-backed tags, named collections with optional saved ranges, favourites
+  browsing, and versioned JSON import/export. Imports union annotations and
+  preserve missing references and ID conflicts; users can explicitly relink
+  unresolved entries. Schema 18 retains legacy favourites/backup compatibility
+  and follows verified file IDs without writing source audio or sidecars.
 - Bounded ID3v2 MP3 and FLAC/Ogg Vorbis-comment indexing preserves Unicode
   descriptions and selected Soundminer/ASWG text fields while skipping artwork.
   Versioned UCS 8.2.1 filename categories have additive catalog APIs, a native

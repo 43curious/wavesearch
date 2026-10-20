@@ -16,6 +16,7 @@
 #define WS_CAP_FINGERPRINT_REPACK (UINT64_C(1) << 5)
 #define WS_CAP_FILE_METADATA     (UINT64_C(1) << 7)
 #define WS_CAP_UCS_CATEGORIES    (UINT64_C(1) << 8)
+#define WS_CAP_PORTABLE_SELECTS  (UINT64_C(1) << 9)
 #define WS_CAP_FILE_LOOKUP       (UINT64_C(1) << 6)
 // Allocation-free, thread-safe, valid before init and after deinit. Capabilities
 // describe compiled APIs, not model installation, provider loading or DB state.
@@ -67,6 +68,36 @@ int ws_category_list_v1(int folder_id, WSCategory *out, int max_categories);
 // Returns 1 known, 0 unknown/missing, -1 error; unchanged output on 0/-1.
 int ws_file_category_v1(int file_id, WSCategory *out);
 // Existing search APIs accept cat:CatID, alone or with text/duration filters.
+
+typedef struct WSQueryRequest WSQueryRequest;
+
+#define WS_SELECTS_FAVOURITE 0u
+#define WS_SELECTS_TAG 1u
+#define WS_SELECTS_COLLECTION 2u
+typedef struct {
+    uint32_t struct_size, version, imported, merged, unresolved, conflicts;
+} WSSelectsImportReport;
+// Owned version-1 UTF-8 JSON snapshot (<=16 MiB); NULL on error. Free exactly
+// once with the paired free call. Snapshot remains valid after catalog close.
+char *ws_selects_export_v1(void);
+void ws_selects_json_free_v1(char *json);
+// Merge only: union tags/ranges/favourites, retain unresolved/conflicting refs.
+// Input length excludes NUL. Unknown versions/fields or invalid input abort all.
+int ws_selects_import_v1(const char *json, uint64_t length, WSSelectsImportReport *out);
+// Once per catalog, migrate a JSON array of legacy favourite paths (including
+// missing paths). Repeated calls do nothing; catalog backups retain this flag.
+int ws_selects_seed_favourites_v1(const char *json, uint64_t length);
+// Edit one indexed file. name required for tags/collections (1..128 UTF-8 bytes).
+// start/end=-1 means whole file; ranges only for collections, 0<=start<end<=INT32_MAX.
+// enabled must be 0/1. All edits return 0 success, -1 error; no source file I/O.
+int ws_selects_edit_v1(int file_id, uint32_t kind, const char *name,
+                      int64_t start_ms, int64_t end_ms, int enabled);
+// Explicitly bind a missing reference to an indexed file, merging annotations.
+int ws_selects_relink_v1(const char *source_id, int file_id);
+// ID-ordered keyset pages of existing files. Missing refs remain in JSON.
+// folder=-1 all, after_id=0 first page, max<=1000; query handle required.
+int ws_selects_list_v1(WSQueryRequest *request, uint32_t kind, const char *name,
+                      int folder_id, int after_id, WSResult *out, int max_results);
 
 #define WS_SEMANTIC_STATUS_VERSION 2u
 
@@ -213,7 +244,6 @@ int  ws_search(const char *query, int folder_id, WSResult *out, int max_results)
 // Native inference/OS calls may finish before cancellation is observed. Copy
 // ws_last_error_message() on the calling worker immediately after a failure.
 // Drain all calls before ws_deinit(); cancellation is not a drain barrier.
-typedef struct WSQueryRequest WSQueryRequest;
 #define WS_QUERY_CANCELLED (-2)
 #define WS_SEARCH_HYBRID 0u
 #define WS_SEARCH_LEXICAL_ONLY 1u

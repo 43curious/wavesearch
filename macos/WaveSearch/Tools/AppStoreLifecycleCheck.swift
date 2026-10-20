@@ -513,7 +513,7 @@ struct AppStoreLifecycleCheck {
                 events.add("\(text)-\(lexical ? "lexical" : "hybrid")")
                 if lexical { return SearchOutcome(files: [marker]) }
                 hybrid.block()
-            case .browse, .browseMore:
+            case .browse, .browseMore, .selects:
                 events.add("browse")
                 browse.block()
             case .example:
@@ -833,6 +833,7 @@ struct AppStoreLifecycleCheck {
         precondition(store.results.count == 1 && !store.isSearching, "Live browse failed")
         let originalFile = store.results[0]
         store.toggleFavourite(originalFile)
+        await store.waitForSelects()
         store.clearWaveformCache()
         await store.waitForLibraryChange()
         precondition(store.recoveryError == nil && store.isReady && store.folders[0].fileCount == 1 && store.isFavourite(originalFile),

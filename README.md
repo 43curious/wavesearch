@@ -101,7 +101,13 @@ library and checks; Linux and Windows desktop apps are future work.
    your editor. **Copy files to Exports** copies whole files unchanged and
    renders partial selections as trimmed PCM24 WAVs in a persistent folder.
 
-Right-click a result to find similar sounds, manage favourites, or reveal the
+Use **Library → Tags, Collections & Favourites…** to add tags, save sounds or
+preview ranges into named collections, and import/export your selects as JSON.
+**Browse** opens a tag, collection or favourites in results. Unresolved references
+are retained and can be linked explicitly after adding/reconnecting a library.
+See [portable selects](documentation/PORTABLE_SELECTS.md).
+
+Right-click a result to find similar sounds, manage favourites and collections, or reveal the
 source in Finder. The waveform search icon beside the search field lets you
 choose an audio file as a search example; you can also drop one onto the search
 bar. WAV/AIFF examples use the core decoder. Other formats use macOS audio

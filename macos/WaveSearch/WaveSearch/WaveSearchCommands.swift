@@ -14,6 +14,11 @@ struct WaveSearchCommands: Commands {
             .keyboardShortcut("s", modifiers: [.command, .control])
         }
         CommandMenu("Library") {
+            Button("Tags, Collections & Favourites…") { store.showsSelects = true }
+                .disabled(!store.canUseLibrary)
+            Button("Browse Favourites") { store.browseSelects(kind: 0) }
+                .disabled(!store.canUseLibrary)
+            Divider()
             Button("Add Library…") { store.addFolder() }
                 .keyboardShortcut("o", modifiers: [.command, .shift])
                 .disabled(!store.canModifyLibraries)

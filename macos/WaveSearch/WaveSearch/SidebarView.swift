@@ -61,7 +61,7 @@ struct SidebarView: View {
         .onChange(of: selection) { _, newValue in
             guard store.selectedFolderId != newValue else { return }
             store.selectedFolderId = newValue
-            store.search(store.query)
+            store.refreshSearch()
         }
         // Keep local state in sync if store changes it externally
         .onAppear { selection = store.selectedFolderId }
@@ -122,7 +122,7 @@ struct LibraryTabsView: View {
         let isSelected = store.selectedFolderId == folderID
         return Button {
             store.selectedFolderId = folderID
-            store.search(store.query)
+            store.refreshSearch()
         } label: {
             Label(title, systemImage: systemImage)
                 .font(.system(size: 12, weight: isSelected ? .semibold : .regular))

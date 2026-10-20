@@ -264,6 +264,7 @@ final class AppStore: ObservableObject {
             nextFolderId = (folders.map(\.id).max() ?? 0) + 1
             isReady = true
             PlayerController.shared.resume()
+            await refreshSelects()
             startRefinement()
             startAvailabilityMonitoring()
             updateLibraryWatching()
@@ -419,17 +420,114 @@ final class AppStore: ObservableObject {
     }
 
     func isFavourite(_ file: SoundFile) -> Bool {
-        favouritePaths.contains(file.url.standardizedFileURL.path)
+        if let indexedFavouriteIDs { return indexedFavouriteIDs.contains(Int32(file.id)) }
+        return favouritePaths.contains(file.url.standardizedFileURL.path)
     }
 
     func toggleFavourite(_ file: SoundFile) {
-        let path = file.url.standardizedFileURL.path
-        if favouritePaths.contains(path) {
-            favouritePaths.remove(path)
-        } else {
-            favouritePaths.insert(path)
-        }
+        editSelects(file: file, kind: UInt32(WS_SELECTS_FAVOURITE), name: "", enabled: !isFavourite(file))
+    }
+
+    @Published var showsSelects = false
+    @Published private(set) var selectsDocument = SelectsDocument()
+    @Published private(set) var isEditingSelects = false
+    @Published private(set) var selectsStatus: String?
+    @Published private(set) var selectsFilter: SelectsFilter?
+    private var selectsTask: Task<Void, Never>?
+    private var selectsRevision: UInt64 = 0
+    private var indexedFavouriteIDs: Set<Int32>?
+
+    private func applySelects(_ document: SelectsDocument) {
+        indexedFavouriteIDs = Set(document.sources.filter(\.favourite).compactMap(\.file_id))
+        selectsDocument = document
+        favouritePaths = Set(document.sources.filter(\.favourite).map(\.path))
         preferences.set(favouritePaths.sorted(), forKey: favouritesKey)
+    }
+
+    func refreshSelects() async {
+        guard canUseLibrary, !isEditingSelects else { return }
+        let generation = backendWork.generation
+        let revision = selectsRevision
+        let legacy = favouritePaths.sorted()
+        guard let result = await backendWork.run(expectedGeneration: generation, {
+            Result { try PortableSelects.snapshot(legacyFavourites: legacy) }
+        }), canUseLibrary, generation == backendWork.generation, revision == selectsRevision else { return }
+        switch result {
+        case .success(let document): applySelects(document)
+        case .failure(let error): selectsStatus = error.localizedDescription
+        }
+    }
+
+    private func performSelects(_ operation: @escaping @Sendable () throws -> String) {
+        guard canUseLibrary, !isEditingSelects else { return }
+        isEditingSelects = true
+        selectsRevision &+= 1
+        let generation = backendWork.generation
+        selectsTask = Task {
+            defer { isEditingSelects = false; selectsTask = nil }
+            let result = await backendWork.run(expectedGeneration: generation) {
+                Result { () -> (SelectsDocument, String) in
+                    let status = try operation()
+                    return (try PortableSelects.snapshot(), status)
+                }
+            }
+            guard canUseLibrary, generation == backendWork.generation, let result else { return }
+            switch result {
+            case .success(let (document, status)):
+                applySelects(document)
+                selectsStatus = status
+                if selectsFilter != nil { refreshSearch() }
+            case .failure(let error): selectsStatus = error.localizedDescription
+            }
+        }
+    }
+
+    func waitForSelects() async { await selectsTask?.value }
+
+    func editSelects(file: SoundFile, kind: UInt32, name: String, range: SelectsMembership? = nil, enabled: Bool = true) {
+        performSelects {
+            try PortableSelects.edit(file: Int32(file.id), kind: kind, name: name, range: range, enabled: enabled)
+            return "Saved in the catalog."
+        }
+    }
+
+    func relinkSelects(_ source: SelectsSource, to file: SoundFile) {
+        performSelects {
+            guard source.id.withCString({ ws_selects_relink_v1($0, Int32(file.id)) }) == 0 else { throw PortableSelects.failure() }
+            return "Linked reference; existing annotations were merged."
+        }
+    }
+
+    func browseSelects(kind: UInt32, name: String = "") {
+        guard canUseLibrary else { return }
+        query = ""
+        isExampleSearch = false
+        exampleSourceURL = nil
+        selectsFilter = SelectsFilter(kind: kind, name: name)
+        lastSearchRequest = ""
+        submitSearch(.selects(kind: kind, name: name, afterID: 0))
+    }
+
+    func exportSelects() {
+        guard canUseLibrary, !isEditingSelects else { return }
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "WaveSearch-selects.json"
+        panel.allowedContentTypes = [.json]
+        panel.allowsOtherFileTypes = false
+        panel.message = "Export tags, collections, saved ranges and favourites. Source audio stays in place."
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        performSelects { try PortableSelects.writeExport(url); return "Exported to \(url.lastPathComponent)." }
+    }
+
+    func importSelects() {
+        guard canUseLibrary, !isEditingSelects else { return }
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.allowedContentTypes = [.json]
+        panel.message = "Merge a WaveSearch selects JSON file. Existing annotations and unresolved references are preserved."
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        performSelects { try PortableSelects.importData(PortableSelects.readImport(url)) }
     }
 
     func addFolder() {
@@ -651,6 +749,9 @@ final class AppStore: ObservableObject {
             selectedFolderId = nil
             results = []
             isExampleSearch = false
+            selectsFilter = nil
+            selectsDocument = SelectsDocument()
+            indexedFavouriteIDs = nil
             await AudioAnalysisRepository.shared.clearMemory()
             recoveryStatus = "Restored backup. Previous catalog saved to \(safety.path)."
             if case .failure(let error) = check { recoveryError = error.localizedDescription }
@@ -978,8 +1079,10 @@ final class AppStore: ObservableObject {
 
     func refreshSearch() {
         lastSearchRequest = ""
-        Task { await refreshCategories() }
-        if isExampleSearch, let url = exampleSourceURL {
+        Task { await refreshCategories(); await refreshSelects() }
+        if let filter = selectsFilter {
+            submitSearch(.selects(kind: filter.kind, name: filter.name, afterID: 0))
+        } else if isExampleSearch, let url = exampleSourceURL {
             submitSearch(.example(url))
         } else {
             search(query)
@@ -987,6 +1090,7 @@ final class AppStore: ObservableObject {
     }
 
     func search(_ q: String) {
+        selectsFilter = nil
         isExampleSearch = false
         exampleSourceURL = nil
         query = q
@@ -1007,6 +1111,10 @@ final class AppStore: ObservableObject {
     }
 
     func loadMore() {
+        if let filter = selectsFilter, canUseLibrary, canBrowseMore, !isSearching, let after = results.last {
+            submitSearch(.selects(kind: filter.kind, name: filter.name, afterID: Int32(after.id)))
+            return
+        }
         guard canBrowseMore, !isSearching, !isExampleSearch,
               query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               selectedFolderId != nil, let after = results.last else { return }
@@ -1015,7 +1123,11 @@ final class AppStore: ObservableObject {
 
     private func submitSearch(_ kind: SearchRequest.Kind) {
         let append: Bool
-        if case .browseMore = kind { append = true } else { append = false }
+        switch kind {
+        case .browseMore: append = true
+        case .selects(_, _, let afterID): append = afterID > 0
+        default: append = false
+        }
         canBrowseMore = false
         currentSearchID = nil
         searchWorker.cancel()

@@ -179,3 +179,36 @@ portable consumers should use CatID/version. Unknown names have no category.
 Existing search calls accept `cat:CatID` with text/duration/folder filtering,
 applied before candidate limits in lexical and hybrid vector retrieval.
 See [metadata discovery and limits](AUDIO_METADATA.md).
+
+## Portable selects
+
+`WS_CAP_PORTABLE_SELECTS` adds the `_v1` functions declared together in the
+header. `ws_selects_export_v1` returns a library-owned NUL-terminated UTF-8 JSON
+copy. Free exactly once with `ws_selects_json_free_v1`; it can outlive the catalog
+and must not be mutated. NULL signals an error. Imports/legacy seeding borrow a
+byte buffer of explicit length (excluding NUL), at most 16 MiB. No media I/O,
+folder authorization or sidecar writes occur in these calls.
+
+Import requires `WSSelectsImportReport` (24 bytes), struct_size >= 24. Success
+returns 0 and version 1 with imported/merged/unresolved/conflicts counts; failure
+returns -1 and leaves output untouched. Larger caller tails remain unchanged.
+Imports validate the whole document and commit all merges together. Favourites,
+tags and ranges merge additively. Unknown versions/fields and over-limit unions
+fail. Local `file_id` input values are ignored. Legacy favourite seeding takes a
+JSON array of paths, runs once per catalog, and preserves missing paths.
+
+Edits accept file ID, kind (favourite/tag/collection), optional name, start/end
+milliseconds and enabled=0/1. Both bounds -1 mean whole file. Only collections
+accept ranges; names are exact Unicode strings of 1..128 UTF-8 bytes. Relinking
+binds an unresolved reference to a user-selected indexed file and unions existing
+annotations. Both return 0/-1. A reference ID is a 32-character lowercase hex
+string, not a catalog file ID. The source/query schema and identity/conflict
+rules are described in [portable selects](PORTABLE_SELECTS.md).
+
+List queries require an owned query request and support cancellation (-2),
+folder=-1 (all), after_id=0 (first page), and up to 1,000 WSResult entries.
+Results are ordered by increasing file ID; pass the last ID for the next page.
+A collection returns each matching file once, independently of its saved ranges.
+Unresolved references appear in JSON, not live result rows. Return is count,
+-1 error, or -2 cancellation; discard partial output on failure. Own/drain these
+calls with the same catalog and query-handle lifecycle as ordinary search.

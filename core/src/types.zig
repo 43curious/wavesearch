@@ -30,6 +30,15 @@ pub const WSCategory = extern struct {
     taxonomy_version: [16]u8,
 };
 
+pub const WSSelectsImportReport = extern struct {
+    struct_size: u32,
+    version: u32,
+    imported: u32,
+    merged: u32,
+    unresolved: u32,
+    conflicts: u32,
+};
+
 pub const WSFileMetadata = extern struct {
     struct_size: u32,
     version: u32,
