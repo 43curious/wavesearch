@@ -20,13 +20,15 @@ fn queryProgress(_: ?*anyopaque) callconv(.c) c_int {
 pub const c = @import("c");
 extern fn ws_sqlite_transient() c.sqlite3_destructor_type;
 
-pub const SCHEMA_VERSION: i32 = 16;
+pub const SCHEMA_VERSION: i32 = 17;
 pub const Testing = if (builtin.is_test) struct {
     pub threadlocal var before_fingerprint_repack_publish: ?*const fn () void = null;
 } else struct {};
 const file_identity = @import("file_identity.zig");
 const storage_schema = @import("storage_schema.zig");
 const move_schema = @import("move_schema.zig");
+const category_schema = @import("category_schema.zig");
+const ucs = @import("ucs.zig");
 const metadata_schema = @import("metadata_schema.zig");
 const Technical = @import("wav_metadata.zig").Technical;
 pub const PAGE_SIZE: usize = 16384;
@@ -375,12 +377,21 @@ fn migrateLocked() !void {
     const version = try userVersionLocked();
     if (version > SCHEMA_VERSION) return error.FutureSchemaVersion;
     if (version == SCHEMA_VERSION) return validateRestoreSchema(try handleLocked(), version, true);
+    if (version == 16) {
+        try execLocked("BEGIN IMMEDIATE;");
+        errdefer execLocked("ROLLBACK;") catch {};
+        try createCategorySchemaLocked();
+        try execLocked("PRAGMA user_version=17;");
+        try validateRestoreSchema(try handleLocked(), SCHEMA_VERSION, true);
+        try execLocked("COMMIT;");
+        return;
+    }
     if (version == 14 or version == 15) {
         try execLocked("BEGIN IMMEDIATE;");
         errdefer execLocked("ROLLBACK;") catch {};
         try execLocked(move_schema.create);
         try createMetadataSchemaLocked();
-        try execLocked("PRAGMA user_version=16;");
+        try execLocked("PRAGMA user_version=17;");
         try validateRestoreSchema(try handleLocked(), SCHEMA_VERSION, true);
         try execLocked("COMMIT;");
         return;
@@ -389,7 +400,7 @@ fn migrateLocked() !void {
         try execLocked("BEGIN IMMEDIATE;");
         errdefer execLocked("ROLLBACK;") catch {};
         try createStorageSchemaLocked();
-        try execLocked("PRAGMA user_version=16;");
+        try execLocked("PRAGMA user_version=17;");
         try validateRestoreSchema(try handleLocked(), SCHEMA_VERSION, true);
         try execLocked("COMMIT;");
         return;
@@ -399,7 +410,7 @@ fn migrateLocked() !void {
         errdefer execLocked("ROLLBACK;") catch {};
         try execLocked(refinement_schema.create);
         try createStorageSchemaLocked();
-        try execLocked("PRAGMA user_version=16;");
+        try execLocked("PRAGMA user_version=17;");
         try validateRestoreSchema(try handleLocked(), SCHEMA_VERSION, true);
         try execLocked("COMMIT;");
         return;
@@ -430,7 +441,7 @@ fn migrateLocked() !void {
         try execLocked(optimization_schema.create);
         try execLocked(refinement_schema.create);
         try createStorageSchemaLocked();
-        try execLocked("PRAGMA user_version=16;");
+        try execLocked("PRAGMA user_version=17;");
         try validateRestoreSchema(try handleLocked(), SCHEMA_VERSION, true);
         try execLocked("COMMIT;");
         return;
@@ -480,7 +491,7 @@ fn migrateLocked() !void {
     try execLocked(optimization_schema.create);
     try execLocked(refinement_schema.create);
     try createStorageSchemaLocked();
-    try execLocked("PRAGMA user_version=16;");
+    try execLocked("PRAGMA user_version=17;");
     try execLocked("COMMIT;");
 }
 
@@ -508,6 +519,13 @@ fn createMetadataSchemaLocked() !void {
     try addStorageColumnLocked("files", "description", "ALTER TABLE files ADD COLUMN description TEXT NOT NULL DEFAULT '';");
     try execLocked(metadata_schema.create);
     try execLocked(metadata_schema.rebuild);
+    try createCategorySchemaLocked();
+}
+
+fn createCategorySchemaLocked() !void {
+    try addStorageColumnLocked("files", "ucs_id", "ALTER TABLE files ADD COLUMN ucs_id INTEGER CHECK(ucs_id>=0 AND ucs_id<753);");
+    try addStorageColumnLocked("file_audio_metadata", "extraction_version", "ALTER TABLE file_audio_metadata ADD COLUMN extraction_version INTEGER NOT NULL DEFAULT 1;");
+    try execLocked(category_schema.create);
 }
 
 fn createDerivedSchemaLocked() !void {
@@ -803,7 +821,7 @@ pub const IndexStage = struct {
         try execOn(live.handle, "BEGIN DEFERRED;");
         errdefer execOn(live.handle, "ROLLBACK;") catch {};
         const revision = try catalogRevisionOn(live.handle, live.serial);
-        const old = try prepareOn(live.handle, "SELECT f.relative_path,f.file_size,f.mtime_ns,f.content_hash,f.id,f.identity_kind,f.hash_algorithm,m.sha256,a.file_id IS NOT NULL FROM files f LEFT JOIN file_move_identities m ON m.file_id=f.id LEFT JOIN file_audio_metadata a ON a.file_id=f.id WHERE f.folder_id=? ORDER BY f.relative_path");
+        const old = try prepareOn(live.handle, "SELECT f.relative_path,f.file_size,f.mtime_ns,f.content_hash,f.id,f.identity_kind,f.hash_algorithm,m.sha256,(a.file_id IS NOT NULL AND a.extraction_version=2) FROM files f LEFT JOIN file_move_identities m ON m.file_id=f.id LEFT JOIN file_audio_metadata a ON a.file_id=f.id WHERE f.folder_id=? ORDER BY f.relative_path");
         defer _ = c.sqlite3_finalize(old);
         try bindInt(old, 1, folder_id);
         var old_count: usize = 0;
@@ -1187,9 +1205,11 @@ fn applyFolderIndexRows(folder_id: i32, files: []const ScannedFile, stage: ?*Ind
     defer _ = c.sqlite3_finalize(update_preserving_waveform);
     const update_path = try prepareOn(h, "UPDATE files SET path=? WHERE id=?");
     defer _ = c.sqlite3_finalize(update_path);
+    const update_category = try prepareOn(h, "UPDATE files SET ucs_id=? WHERE id=?");
+    defer _ = c.sqlite3_finalize(update_category);
     const update_description = try prepareOn(h, "UPDATE files SET description=? WHERE id=? AND description!=?");
     defer _ = c.sqlite3_finalize(update_description);
-    const update_metadata = try prepareOn(h, "INSERT INTO file_audio_metadata(file_id,channels,sample_rate,bit_depth,encoding,limited) VALUES(?,?,?,?,?,?) ON CONFLICT(file_id) DO UPDATE SET channels=excluded.channels,sample_rate=excluded.sample_rate,bit_depth=excluded.bit_depth,encoding=excluded.encoding,limited=excluded.limited");
+    const update_metadata = try prepareOn(h, "INSERT INTO file_audio_metadata(file_id,channels,sample_rate,bit_depth,encoding,limited,extraction_version) VALUES(?,?,?,?,?,?,2) ON CONFLICT(file_id) DO UPDATE SET channels=excluded.channels,sample_rate=excluded.sample_rate,bit_depth=excluded.bit_depth,encoding=excluded.encoding,limited=excluded.limited,extraction_version=2");
     defer _ = c.sqlite3_finalize(update_metadata);
     const update_identity = try prepareOn(h, "UPDATE files SET identity_kind=?1,hash_algorithm=?2 WHERE id=?3 AND (identity_kind!=?1 OR hash_algorithm!=?2)");
     defer _ = c.sqlite3_finalize(update_identity);
@@ -1293,6 +1313,10 @@ fn applyFolderIndexRows(folder_id: i32, files: []const ScannedFile, stage: ?*Ind
         try bindInt64(update_identity, 3, published_id);
         if (c.sqlite3_step(update_identity) != c.SQLITE_DONE) return error.UpdateFailed;
         if (file.sha256) |digest| try saveMoveDigestOn(h, published_id, digest);
+        _ = c.sqlite3_reset(update_category);
+        if (ucs.fromFilename(file.name)) |category| try bindInt64(update_category, 1, category) else if (c.sqlite3_bind_null(update_category, 1) != c.SQLITE_OK) return error.BindFailed;
+        try bindInt64(update_category, 2, published_id);
+        if (c.sqlite3_step(update_category) != c.SQLITE_DONE) return error.UpdateFailed;
         _ = c.sqlite3_reset(update_description);
         try bindText(update_description, 1, file.description);
         try bindInt64(update_description, 2, published_id);
@@ -1319,12 +1343,12 @@ fn applyFolderIndexRows(folder_id: i32, files: []const ScannedFile, stage: ?*Ind
     try execOn(h, "COMMIT;");
 }
 
-pub fn unicodeCandidates(allocator: std.mem.Allocator, query: []const u8, min_ms: i32, max_ms: i32, folder_id: ?i32, limit: usize) ![]Candidate {
-    return ftsCandidates(allocator, "files_fts", query, min_ms, max_ms, folder_id, limit);
+pub fn unicodeCandidates(allocator: std.mem.Allocator, query: []const u8, filter: vector.Filter, limit: usize) ![]Candidate {
+    return ftsCandidates(allocator, "files_fts", query, filter, limit);
 }
 
-pub fn trigramCandidates(allocator: std.mem.Allocator, query: []const u8, min_ms: i32, max_ms: i32, folder_id: ?i32, limit: usize) ![]Candidate {
-    return ftsCandidates(allocator, "files_trigram", query, min_ms, max_ms, folder_id, limit);
+pub fn trigramCandidates(allocator: std.mem.Allocator, query: []const u8, filter: vector.Filter, limit: usize) ![]Candidate {
+    return ftsCandidates(allocator, "files_trigram", query, filter, limit);
 }
 
 const LexicalHit = struct {
@@ -1335,33 +1359,26 @@ const LexicalHit = struct {
     }
 };
 
-fn ftsCandidates(allocator: std.mem.Allocator, comptime table: []const u8, query: []const u8, min_ms: i32, max_ms: i32, folder_id: ?i32, limit: usize) ![]Candidate {
+fn ftsCandidates(allocator: std.mem.Allocator, comptime table: []const u8, query: []const u8, filter: vector.Filter, limit: usize) ![]Candidate {
     if (limit == 0) return allocator.alloc(Candidate, 0);
     lock();
     defer mutex.unlock();
-    const filter = if (folder_id != null) " AND rowid IN (SELECT id FROM files WHERE folder_id=? AND duration_ms>=? AND (?=0 OR duration_ms<=?))" else if (min_ms != 0 or max_ms != 0) " AND rowid IN (SELECT id FROM files WHERE duration_ms>=? AND (?=0 OR duration_ms<=?))" else "";
+    const has_filter = filter.folder_id != null or filter.min_duration_ms != 0 or filter.max_duration_ms != 0 or filter.category != null;
+    const predicate = if (has_filter) " AND rowid IN (SELECT id FROM files WHERE (?2 IS NULL OR folder_id=?2) AND duration_ms>=?3 AND (?4=0 OR duration_ms<=?4) AND (?5 IS NULL OR ucs_id=?5))" else "";
     var sql_buf: [1024]u8 = undefined;
-    // Trigram ties are common; sorting compact IDs inside SQLite measured
-    // faster than crossing the C boundary for every tied row. Unicode FTS can
-    // use native rank ordering, with complete deterministic cutoff ties below.
     const trigram = comptime std.mem.eql(u8, table, "files_trigram");
-    const order = if (trigram) " ORDER BY rank,rowid LIMIT ?" else " ORDER BY rank";
-    const sql = try std.mem.printSentinel(&sql_buf, "SELECT rowid,rank FROM {s} WHERE {s} MATCH ?{s}{s}", .{ table, table, filter, order }, 0);
+    const order = if (trigram) " ORDER BY rank,rowid LIMIT ?6" else " ORDER BY rank";
+    const sql = try std.mem.printSentinel(&sql_buf, "SELECT rowid,rank FROM {s} WHERE {s} MATCH ?1{s}{s}", .{ table, table, predicate, order }, 0);
     const stmt = try prepareLocked(sql);
     defer _ = c.sqlite3_finalize(stmt);
     try bindText(stmt, 1, query);
-    var parameter: c_int = 2;
-    if (folder_id) |fid| {
-        try bindInt(stmt, parameter, fid);
-        parameter += 1;
+    if (has_filter) {
+        try bindOptionalInt(stmt, 2, filter.folder_id);
+        try bindInt(stmt, 3, filter.min_duration_ms);
+        try bindInt(stmt, 4, filter.max_duration_ms);
+        try bindOptionalInt(stmt, 5, if (filter.category) |value| @intCast(value) else null);
     }
-    if (filter.len != 0) {
-        try bindInt(stmt, parameter, min_ms);
-        try bindInt(stmt, parameter + 1, max_ms);
-        try bindInt(stmt, parameter + 2, max_ms);
-        parameter += 3;
-    }
-    if (trigram) try bindInt64(stmt, parameter, @intCast(limit));
+    if (trigram) try bindInt64(stmt, 6, @intCast(limit));
     var hits: std.ArrayList(LexicalHit) = .empty;
     defer hits.deinit(allocator);
     try hits.ensureTotalCapacity(allocator, limit);
@@ -1410,7 +1427,7 @@ fn ftsCandidates(allocator: std.mem.Allocator, comptime table: []const u8, query
 pub fn exactNameCandidates(allocator: std.mem.Allocator, key: []const u8, filter: vector.Filter, limit: usize) ![]Candidate {
     lock();
     defer mutex.unlock();
-    const stmt = try prepareLocked("SELECT f.id,f.folder_id,f.path,f.name,f.duration_ms,f.content_hash,f.search_text,0.0 FROM files f NOT INDEXED WHERE f.id IN (SELECT file_id FROM file_search_keys WHERE name_key=? UNION SELECT file_id FROM file_search_keys WHERE stem_key=?) AND (? IS NULL OR f.folder_id=?) AND f.duration_ms>=? AND (?=0 OR f.duration_ms<=?) ORDER BY f.id LIMIT ?");
+    const stmt = try prepareLocked("SELECT f.id,f.folder_id,f.path,f.name,f.duration_ms,f.content_hash,f.search_text,0.0 FROM files f NOT INDEXED WHERE f.id IN (SELECT file_id FROM file_search_keys WHERE name_key=? UNION SELECT file_id FROM file_search_keys WHERE stem_key=?) AND (? IS NULL OR f.folder_id=?) AND f.duration_ms>=? AND (?=0 OR f.duration_ms<=?) AND (?8 IS NULL OR f.ucs_id=?8) ORDER BY f.id LIMIT ?9");
     defer _ = c.sqlite3_finalize(stmt);
     try bindText(stmt, 1, key);
     try bindText(stmt, 2, key);
@@ -1419,7 +1436,8 @@ pub fn exactNameCandidates(allocator: std.mem.Allocator, key: []const u8, filter
     try bindInt(stmt, 5, filter.min_duration_ms);
     try bindInt(stmt, 6, filter.max_duration_ms);
     try bindInt(stmt, 7, filter.max_duration_ms);
-    try bindInt(stmt, 8, @intCast(limit));
+    try bindOptionalInt(stmt, 8, if (filter.category) |value| @intCast(value) else null);
+    try bindInt(stmt, 9, @intCast(limit));
     return collectCandidates(allocator, stmt, limit);
 }
 
@@ -1454,25 +1472,16 @@ pub fn shortTypoTerms(allocator: std.mem.Allocator, token: []const u8) ![][]u8 {
     return terms.toOwnedSlice(allocator);
 }
 
-pub fn durationCandidates(allocator: std.mem.Allocator, min_ms: i32, max_ms: i32, folder_id: ?i32, limit: usize) ![]Candidate {
+pub fn durationCandidates(allocator: std.mem.Allocator, filter: vector.Filter, limit: usize) ![]Candidate {
     lock();
     defer mutex.unlock();
-    const all_sql = "SELECT id,folder_id,path,name,duration_ms,content_hash,search_text,0.0 FROM files WHERE duration_ms>=? AND (?=0 OR duration_ms<=?) ORDER BY name COLLATE NOCASE,id LIMIT ?";
-    const folder_sql = "SELECT id,folder_id,path,name,duration_ms,content_hash,search_text,0.0 FROM files WHERE folder_id=? AND duration_ms>=? AND (?=0 OR duration_ms<=?) ORDER BY name COLLATE NOCASE,id LIMIT ?";
-    const stmt = try prepareLocked(if (folder_id == null) all_sql else folder_sql);
+    const stmt = try prepareLocked("SELECT id,folder_id,path,name,duration_ms,content_hash,search_text,0.0 FROM files WHERE (?1 IS NULL OR folder_id=?1) AND duration_ms>=?2 AND (?3=0 OR duration_ms<=?3) AND (?4 IS NULL OR ucs_id=?4) ORDER BY name COLLATE NOCASE,id LIMIT ?5");
     defer _ = c.sqlite3_finalize(stmt);
-    var i: c_int = 1;
-    if (folder_id) |fid| {
-        try bindInt(stmt, i, fid);
-        i += 1;
-    }
-    try bindInt(stmt, i, min_ms);
-    i += 1;
-    try bindInt(stmt, i, max_ms);
-    i += 1;
-    try bindInt(stmt, i, max_ms);
-    i += 1;
-    try bindInt(stmt, i, @intCast(@min(limit, @as(usize, std.math.maxInt(i32)))));
+    try bindOptionalInt(stmt, 1, filter.folder_id);
+    try bindInt(stmt, 2, filter.min_duration_ms);
+    try bindInt(stmt, 3, filter.max_duration_ms);
+    try bindOptionalInt(stmt, 4, if (filter.category) |value| @intCast(value) else null);
+    try bindInt64(stmt, 5, @intCast(limit));
     return collectCandidates(allocator, stmt, limit);
 }
 
@@ -1683,6 +1692,50 @@ pub fn captureMoveIdentity(file_id: i32, expected_hash: i64, cancel: @import("ca
 }
 
 /// Copy catalog metadata only: source files are never opened by this lookup.
+pub fn categoryValue(index: u32, count: u32) !@import("types.zig").WSCategory {
+    if (index >= ucs.entries.len) return error.InvalidStoredCategory;
+    const entry = ucs.entries[index];
+    var result = std.mem.zeroes(@import("types.zig").WSCategory);
+    result.struct_size = @sizeOf(@import("types.zig").WSCategory);
+    result.version = 1;
+    result.index = index;
+    result.file_count = count;
+    inline for (.{ .{ "cat_id", entry.id }, .{ "category", entry.category }, .{ "subcategory", entry.subcategory }, .{ "taxonomy_version", ucs.version } }) |field| {
+        const dest = &@field(result, field[0]);
+        if (field[1].len >= dest.len) return error.CategoryTooLong;
+        @memcpy(dest[0..field[1].len], field[1]);
+    }
+    return result;
+}
+
+pub fn categoryList(folder: ?i32, out: []@import("types.zig").WSCategory) !usize {
+    lock();
+    defer mutex.unlock();
+    const stmt = try prepareLocked("SELECT ucs_id,COUNT(*) FROM files WHERE ucs_id IS NOT NULL AND (?1 IS NULL OR folder_id=?1) GROUP BY ucs_id ORDER BY ucs_id");
+    defer _ = c.sqlite3_finalize(stmt);
+    try bindOptionalInt(stmt, 1, folder);
+    var count: usize = 0;
+    while (count < out.len) : (count += 1) {
+        const rc = c.sqlite3_step(stmt);
+        if (rc == c.SQLITE_DONE) break;
+        if (rc != c.SQLITE_ROW) return error.StepFailed;
+        out[count] = try categoryValue(@intCast(c.sqlite3_column_int64(stmt, 0)), @intCast(@min(c.sqlite3_column_int64(stmt, 1), std.math.maxInt(u32))));
+    }
+    return count;
+}
+
+pub fn fileCategory(file_id: i32) !?@import("types.zig").WSCategory {
+    lock();
+    defer mutex.unlock();
+    const stmt = try prepareLocked("SELECT ucs_id FROM files WHERE id=? AND ucs_id IS NOT NULL");
+    defer _ = c.sqlite3_finalize(stmt);
+    try bindInt(stmt, 1, file_id);
+    const rc = c.sqlite3_step(stmt);
+    if (rc == c.SQLITE_DONE) return null;
+    if (rc != c.SQLITE_ROW) return error.StepFailed;
+    return try categoryValue(@intCast(c.sqlite3_column_int64(stmt, 0)), 1);
+}
+
 pub fn fileMetadata(file_id: i32) !?@import("types.zig").WSFileMetadata {
     lock();
     defer mutex.unlock();
@@ -2816,7 +2869,7 @@ fn retrieveVectors(allocator: std.mem.Allocator, reader: *c.sqlite3, info: Seman
     try bindInt64(state, 1, info.model_id);
     if (c.sqlite3_step(state) != c.SQLITE_ROW) return error.StaleSemanticSnapshot;
     const read_generation = c.sqlite3_column_int64(state, 0);
-    const filtered = filter.folder_id != null or filter.min_duration_ms > 0 or filter.max_duration_ms != 0;
+    const filtered = filter.folder_id != null or filter.min_duration_ms > 0 or filter.max_duration_ms != 0 or filter.category != null;
     var use_quantized = mode == .quantized and k <= SQ8_MAX_SEED / 4;
     if (mode == .auto and k <= SQ8_MAX_SEED / 4) {
         const counts = try prepareOn(reader, "SELECT embedded_count,quantized_count FROM embedding_models WHERE id=?");
@@ -2830,9 +2883,9 @@ fn retrieveVectors(allocator: std.mem.Allocator, reader: *c.sqlite3, info: Seman
             // Stop at the crossover instead of counting a whole matching corpus.
             // Read only identities, never canonical Float32 payloads, in this probe.
             const population = try prepareOn(reader, if (filter.folder_id != null)
-                "SELECT COUNT(*) FROM (SELECT f.id FROM files f INDEXED BY idx_files_folder_duration CROSS JOIN file_embeddings e ON e.file_id=f.id WHERE f.folder_id=?2 AND f.duration_ms>=?3 AND f.duration_ms<=?4 AND e.model_id=?1 AND e.source_content_hash=f.content_hash LIMIT ?5)"
+                "SELECT COUNT(*) FROM (SELECT f.id FROM files f INDEXED BY idx_files_folder_duration CROSS JOIN file_embeddings e ON e.file_id=f.id WHERE f.folder_id=?2 AND f.duration_ms>=?3 AND f.duration_ms<=?4 AND e.model_id=?1 AND e.source_content_hash=f.content_hash AND (?6 IS NULL OR f.ucs_id=?6) LIMIT ?5)"
             else
-                "SELECT COUNT(*) FROM (SELECT f.id FROM files f INDEXED BY idx_files_duration CROSS JOIN file_embeddings e ON e.file_id=f.id WHERE f.duration_ms>=?3 AND f.duration_ms<=?4 AND e.model_id=?1 AND e.source_content_hash=f.content_hash AND ?2<0 LIMIT ?5)");
+                "SELECT COUNT(*) FROM (SELECT f.id FROM files f INDEXED BY idx_files_duration CROSS JOIN file_embeddings e ON e.file_id=f.id WHERE f.duration_ms>=?3 AND f.duration_ms<=?4 AND e.model_id=?1 AND e.source_content_hash=f.content_hash AND ?2<0 AND (?6 IS NULL OR f.ucs_id=?6) LIMIT ?5)");
             defer _ = c.sqlite3_finalize(population);
             try bindVectorFilter(population, info.model_id, filter);
             try bindInt(population, 5, SQ8_MIN_ROWS);
@@ -2956,11 +3009,12 @@ fn bindVectorFilter(stmt: *c.sqlite3_stmt, model_id: i64, filter: vector.Filter)
     try bindInt(stmt, 2, filter.folder_id orelse -1);
     try bindInt(stmt, 3, filter.min_duration_ms);
     try bindInt(stmt, 4, if (filter.max_duration_ms == 0) std.math.maxInt(i32) else filter.max_duration_ms);
+    try bindOptionalInt(stmt, 6, if (filter.category) |value| @intCast(value) else null);
 }
 
 fn vectorScanSql(comptime table: []const u8, comptime payload: []const u8, filter: vector.Filter) [:0]const u8 {
     const projection = "SELECT f.id,e." ++ payload ++ ",f.content_hash FROM ";
-    const predicate = " WHERE e.model_id=?1 AND e.source_content_hash=f.content_hash AND f.duration_ms>=?3 AND f.duration_ms<=?4";
+    const predicate = " WHERE e.model_id=?1 AND e.source_content_hash=f.content_hash AND f.duration_ms>=?3 AND f.duration_ms<=?4 AND (?6 IS NULL OR f.ucs_id=?6)";
     if (filter.folder_id != null)
         return projection ++ "files f INDEXED BY idx_files_folder_duration CROSS JOIN " ++ table ++ " e ON e.file_id=f.id" ++ predicate ++ " AND f.folder_id=?2";
     if (filter.min_duration_ms > 0 or filter.max_duration_ms != 0)
@@ -3895,7 +3949,7 @@ fn validateRestoreSchema(handle: *c.sqlite3, version: i32, canonical: bool) !voi
         10 => "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('files','files_fts','files_trigram','embedding_models','file_embeddings','semantic_state','embedding_failures','fingerprint_algorithms','file_fingerprints','fingerprint_postings','fingerprint_failures','acoustic_edges','acoustic_groups','acoustic_group_state','waveform_analyses','waveform_tiers','waveform_cache_state','waveform_failures')",
         11 => "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('files','files_fts','files_trigram','embedding_models','file_embeddings','semantic_state','embedding_failures','fingerprint_algorithms','file_fingerprints','fingerprint_postings','fingerprint_failures','acoustic_edges','acoustic_groups','acoustic_group_state','waveform_analyses','waveform_tiers','waveform_cache_state','waveform_failures','semantic_sq8')",
         12 => "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('files','files_fts','files_trigram','embedding_models','file_embeddings','semantic_state','embedding_failures','fingerprint_algorithms','file_fingerprints','fingerprint_postings','fingerprint_failures','acoustic_edges','acoustic_groups','acoustic_group_state','waveform_analyses','waveform_tiers','waveform_cache_state','waveform_failures','semantic_sq8','file_search_keys','files_vocab','catalog_stats','fingerprint_df')",
-        13, 14, 15, 16 => "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('files','files_fts','files_trigram','embedding_models','file_embeddings','semantic_state','embedding_failures','fingerprint_algorithms','file_fingerprints','fingerprint_postings','fingerprint_failures','acoustic_edges','acoustic_groups','acoustic_group_state','waveform_analyses','waveform_tiers','waveform_cache_state','waveform_failures','semantic_sq8','file_search_keys','files_vocab','catalog_stats','fingerprint_df','pending_embeddings','pending_fingerprints')",
+        13, 14, 15, 16, 17 => "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('files','files_fts','files_trigram','embedding_models','file_embeddings','semantic_state','embedding_failures','fingerprint_algorithms','file_fingerprints','fingerprint_postings','fingerprint_failures','acoustic_edges','acoustic_groups','acoustic_group_state','waveform_analyses','waveform_tiers','waveform_cache_state','waveform_failures','semantic_sq8','file_search_keys','files_vocab','catalog_stats','fingerprint_df','pending_embeddings','pending_fingerprints')",
         else => return error.UnsupportedSchemaVersion,
     };
     const expected_tables: c_int = switch (version) {
@@ -3909,7 +3963,7 @@ fn validateRestoreSchema(handle: *c.sqlite3, version: i32, canonical: bool) !voi
         10 => 18,
         11 => 19,
         12 => 23,
-        13, 14, 15, 16 => 25,
+        13, 14, 15, 16, 17 => 25,
         else => unreachable,
     };
     var tables: ?*c.sqlite3_stmt = null;
@@ -3927,6 +3981,12 @@ fn validateRestoreSchema(handle: *c.sqlite3, version: i32, canonical: bool) !voi
     var contract: ?*c.sqlite3_stmt = null;
     if (c.sqlite3_prepare_v2(handle, file_contract, -1, &contract, null) != c.SQLITE_OK) return error.InvalidBackupSchema;
     _ = c.sqlite3_finalize(contract);
+    if (version >= 17) {
+        const category = try prepareOn(handle, "SELECT ucs_id FROM files LIMIT 0");
+        defer _ = c.sqlite3_finalize(category);
+        const extraction = try prepareOn(handle, "SELECT extraction_version FROM file_audio_metadata LIMIT 0");
+        defer _ = c.sqlite3_finalize(extraction);
+    }
     if (version >= 16) {
         const metadata = try prepareOn(handle, "SELECT file_id,channels,sample_rate,bit_depth,encoding,limited FROM file_audio_metadata LIMIT 0");
         defer _ = c.sqlite3_finalize(metadata);
@@ -4353,7 +4413,7 @@ test "SQ8 indexed retrieval reranks exactly, filters early, maintains identity, 
     _ = try setSemanticModel("test/sq8-v1", 16);
     try execLocked("DELETE FROM files WHERE id=1;");
     // Existing v10 catalogs are backfilled atomically without re-running CLAP.
-    try execLocked(metadata_schema.dropForTests ++ move_schema.dropForTests ++ storage_schema.dropForTests ++ refinement_schema.dropForTests ++ optimization_schema.dropForTests ++ DROP_QUANTIZED_INDEX_SQL ++ "PRAGMA user_version=10;");
+    try execLocked(category_schema.dropForTests ++ metadata_schema.dropForTests ++ move_schema.dropForTests ++ storage_schema.dropForTests ++ refinement_schema.dropForTests ++ optimization_schema.dropForTests ++ DROP_QUANTIZED_INDEX_SQL ++ "PRAGMA user_version=10;");
     close();
     try open(allocator, path);
     try std.testing.expectEqual(SCHEMA_VERSION, try schemaVersion());

@@ -19,6 +19,17 @@ pub const WSResult = extern struct {
     content_hash: i64,
 };
 
+pub const WSCategory = extern struct {
+    struct_size: u32,
+    version: u32,
+    index: u32,
+    file_count: u32,
+    cat_id: [16]u8,
+    category: [64]u8,
+    subcategory: [64]u8,
+    taxonomy_version: [16]u8,
+};
+
 pub const WSFileMetadata = extern struct {
     struct_size: u32,
     version: u32,

@@ -112,7 +112,7 @@ pub fn clean(allocator: std.mem.Allocator, out: *std.ArrayList(u8), bytes: []con
 
 fn descriptive(name: []const u8) bool {
     const local = if (std.mem.lastIndexOfScalar(u8, name, ':')) |i| name[i + 1 ..] else name;
-    for ([_][]const u8{ "DESCRIPTION", "BWF_DESCRIPTION", "NOTE", "NOTES", "COMMENT", "TITLE", "SUBJECT", "KEYWORDS" }) |key| if (std.ascii.eqlIgnoreCase(local, key)) return true;
+    for ([_][]const u8{ "DESCRIPTION", "BWF_DESCRIPTION", "NOTE", "NOTES", "COMMENT", "TITLE", "SUBJECT", "KEYWORDS", "FXNAME", "ASWG_FXNAME", "SM_DESCRIPTION" }) |key| if (std.ascii.eqlIgnoreCase(local, key)) return true;
     return false;
 }
 

@@ -958,8 +958,27 @@ final class AppStore: ObservableObject {
         }
     }
 
+    @Published private(set) var categoryFacets: [CategoryFacet] = []
+
+    func refreshCategories() async {
+        guard canUseLibrary else { return }
+        let folder = selectedFolderId.map(Int32.init) ?? -1
+        guard let facets = await backendWork.run({ CategoryFacet.load(folder: folder) }),
+              canUseLibrary, folder == (selectedFolderId.map(Int32.init) ?? -1) else { return }
+        switch facets {
+        case .success(let values): categoryFacets = values
+        case .failure(let error): lastBackendError = error.localizedDescription
+        }
+    }
+
+    func searchCategory(_ catID: String) {
+        let text = query.split(whereSeparator: { $0.isWhitespace }).filter { !$0.hasPrefix("cat:") }.joined(separator: " ")
+        search((text.isEmpty ? "" : text + " ") + "cat:" + catID)
+    }
+
     func refreshSearch() {
         lastSearchRequest = ""
+        Task { await refreshCategories() }
         if isExampleSearch, let url = exampleSourceURL {
             submitSearch(.example(url))
         } else {

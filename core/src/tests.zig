@@ -291,7 +291,7 @@ test "v5 migration adds current embedding failures fingerprints groups and wavef
     defer fixture.deinit();
     try openFixture(&fixture);
     db.close();
-    try rawExec(fixture.db_path, @import("metadata_schema.zig").dropForTests ++ @import("storage_schema.zig").dropForTests ++ @import("refinement_schema.zig").dropForTests ++ @import("schema_optimizations.zig").dropForTests);
+    try rawExec(fixture.db_path, @import("category_schema.zig").dropForTests ++ @import("metadata_schema.zig").dropForTests ++ @import("storage_schema.zig").dropForTests ++ @import("refinement_schema.zig").dropForTests ++ @import("schema_optimizations.zig").dropForTests);
     try rawExec(fixture.db_path, "DROP TRIGGER waveform_analysis_source_changed;DROP TRIGGER waveform_files_ai;DROP TRIGGER waveform_tier_rescan_au;DROP TRIGGER waveform_claim_source_changed;DROP TRIGGER waveform_claim_file_ad;DROP TABLE waveform_failures;DROP TABLE waveform_cache_state;DROP TABLE waveform_tiers;DROP TABLE waveform_analyses;DROP TRIGGER acoustic_edges_ai;DROP TRIGGER acoustic_edges_ad;DROP TABLE acoustic_group_state;DROP TABLE acoustic_groups;DROP TABLE acoustic_edges;DROP TABLE fingerprint_postings;DROP TABLE fingerprint_failures;DROP TABLE file_fingerprints;DROP TABLE fingerprint_algorithms;DROP TABLE embedding_failures;" ++ db.DROP_QUANTIZED_INDEX_SQL ++ "PRAGMA user_version=5;");
     try openFixture(&fixture);
     try std.testing.expectEqual(db.SCHEMA_VERSION, try db.schemaVersion());
@@ -319,7 +319,7 @@ test "v6 migration preserves semantic rows and adds current derived schemas" {
     const file_id: i32 = @intCast((try db.inspectFile("preserved.wav")).?.id);
     try db.upsertSemanticEmbedding(allocator, file_id, 55, &.{ 1, 0 });
     db.close();
-    try rawExec(fixture.db_path, @import("metadata_schema.zig").dropForTests ++ @import("storage_schema.zig").dropForTests ++ @import("refinement_schema.zig").dropForTests ++ @import("schema_optimizations.zig").dropForTests);
+    try rawExec(fixture.db_path, @import("category_schema.zig").dropForTests ++ @import("metadata_schema.zig").dropForTests ++ @import("storage_schema.zig").dropForTests ++ @import("refinement_schema.zig").dropForTests ++ @import("schema_optimizations.zig").dropForTests);
     try rawExec(fixture.db_path, "DROP TRIGGER waveform_analysis_source_changed;DROP TRIGGER waveform_files_ai;DROP TRIGGER waveform_tier_rescan_au;DROP TRIGGER waveform_claim_source_changed;DROP TRIGGER waveform_claim_file_ad;DROP TABLE waveform_failures;DROP TABLE waveform_cache_state;DROP TABLE waveform_tiers;DROP TABLE waveform_analyses;DROP TRIGGER acoustic_edges_ai;DROP TRIGGER acoustic_edges_ad;DROP TABLE acoustic_group_state;DROP TABLE acoustic_groups;DROP TABLE acoustic_edges;DROP TABLE fingerprint_postings;DROP TABLE fingerprint_failures;DROP TABLE file_fingerprints;DROP TABLE fingerprint_algorithms;PRAGMA user_version=6;");
     try openFixture(&fixture);
     try std.testing.expectEqual(db.SCHEMA_VERSION, try db.schemaVersion());
@@ -342,7 +342,7 @@ test "v7 migration preserves fingerprints and adds current derived schemas" {
     defer allocator.free(selected);
     try db.upsertFingerprint(algorithm_id, file_id, 71, blob, selected);
     db.close();
-    try rawExec(fixture.db_path, @import("metadata_schema.zig").dropForTests ++ @import("storage_schema.zig").dropForTests ++ @import("refinement_schema.zig").dropForTests ++ @import("schema_optimizations.zig").dropForTests);
+    try rawExec(fixture.db_path, @import("category_schema.zig").dropForTests ++ @import("metadata_schema.zig").dropForTests ++ @import("storage_schema.zig").dropForTests ++ @import("refinement_schema.zig").dropForTests ++ @import("schema_optimizations.zig").dropForTests);
     try rawExec(fixture.db_path, "DROP TRIGGER waveform_analysis_source_changed;DROP TRIGGER waveform_files_ai;DROP TRIGGER waveform_tier_rescan_au;DROP TRIGGER waveform_claim_source_changed;DROP TRIGGER waveform_claim_file_ad;DROP TABLE waveform_failures;DROP TABLE waveform_cache_state;DROP TABLE waveform_tiers;DROP TABLE waveform_analyses;DROP TRIGGER acoustic_edges_ai;DROP TRIGGER acoustic_edges_ad;DROP TABLE acoustic_group_state;DROP TABLE acoustic_groups;DROP TABLE acoustic_edges;PRAGMA user_version=7;");
     try openFixture(&fixture);
     try std.testing.expectEqual(db.SCHEMA_VERSION, try db.schemaVersion());
@@ -361,7 +361,7 @@ test "v8 migration preserves legacy waveform and adds current derived schemas" {
     try db.applyFolderIndex(8, &files);
     try db.saveWaveform(files[0].path, &.{ 0.25, 0.5 });
     db.close();
-    try rawExec(fixture.db_path, @import("metadata_schema.zig").dropForTests ++ @import("storage_schema.zig").dropForTests ++ @import("refinement_schema.zig").dropForTests ++ @import("schema_optimizations.zig").dropForTests);
+    try rawExec(fixture.db_path, @import("category_schema.zig").dropForTests ++ @import("metadata_schema.zig").dropForTests ++ @import("storage_schema.zig").dropForTests ++ @import("refinement_schema.zig").dropForTests ++ @import("schema_optimizations.zig").dropForTests);
     try rawExec(fixture.db_path, "DROP TRIGGER waveform_analysis_source_changed;DROP TRIGGER waveform_files_ai;DROP TRIGGER waveform_tier_rescan_au;DROP TRIGGER waveform_claim_source_changed;DROP TRIGGER waveform_claim_file_ad;DROP TABLE waveform_failures;DROP TABLE waveform_cache_state;DROP TABLE waveform_tiers;DROP TABLE waveform_analyses;PRAGMA user_version=8;");
     try openFixture(&fixture);
     try std.testing.expectEqual(db.SCHEMA_VERSION, try db.schemaVersion());
@@ -380,7 +380,7 @@ test "v9 migration invalidates legacy analysis and adds current derived schemas"
     try db.applyFolderIndex(9, &files);
     try db.saveWaveformCacheBlob(files[0].path, "WWF2-old");
     db.close();
-    try rawExec(fixture.db_path, @import("metadata_schema.zig").dropForTests ++ @import("storage_schema.zig").dropForTests ++ @import("refinement_schema.zig").dropForTests ++ @import("schema_optimizations.zig").dropForTests);
+    try rawExec(fixture.db_path, @import("category_schema.zig").dropForTests ++ @import("metadata_schema.zig").dropForTests ++ @import("storage_schema.zig").dropForTests ++ @import("refinement_schema.zig").dropForTests ++ @import("schema_optimizations.zig").dropForTests);
     try rawExec(fixture.db_path, "DROP TRIGGER waveform_analysis_source_changed;DROP TRIGGER waveform_files_ai;DROP TRIGGER waveform_tier_rescan_au;DROP TRIGGER waveform_claim_source_changed;DROP TRIGGER waveform_claim_file_ad;DROP TABLE waveform_failures;DROP TABLE waveform_cache_state;DROP TABLE waveform_tiers;CREATE TRIGGER waveform_analysis_source_changed AFTER UPDATE OF file_size,mtime_ns,content_hash ON files BEGIN DELETE FROM waveform_analyses WHERE file_id=new.id; END;PRAGMA user_version=9;");
     try openFixture(&fixture);
     try std.testing.expectEqual(db.SCHEMA_VERSION, try db.schemaVersion());
@@ -397,7 +397,7 @@ test "early development v10 failure rows and claim columns upgrade safely" {
     const files = [_]db.ScannedFile{.{ .path = "/dev10.wav", .relative_path = "dev10.wav", .name = "dev10.wav", .search_text = "dev10 wav", .duration_ms = 1, .content_hash = 10, .file_size = 100, .mtime_ns = 200 }};
     try db.applyFolderIndex(10, &files);
     db.close();
-    try rawExec(fixture.db_path, @import("metadata_schema.zig").dropForTests ++ @import("storage_schema.zig").dropForTests ++ @import("refinement_schema.zig").dropForTests ++ @import("schema_optimizations.zig").dropForTests ++ db.DROP_QUANTIZED_INDEX_SQL ++ "PRAGMA user_version=10;");
+    try rawExec(fixture.db_path, @import("category_schema.zig").dropForTests ++ @import("metadata_schema.zig").dropForTests ++ @import("storage_schema.zig").dropForTests ++ @import("refinement_schema.zig").dropForTests ++ @import("schema_optimizations.zig").dropForTests ++ db.DROP_QUANTIZED_INDEX_SQL ++ "PRAGMA user_version=10;");
     try rawExec(fixture.db_path, "DROP TRIGGER waveform_claim_source_changed;DROP TRIGGER waveform_claim_file_ad;" ++
         "DROP TRIGGER waveform_analysis_source_changed;" ++
         "CREATE TRIGGER waveform_analysis_source_changed AFTER UPDATE OF file_size,mtime_ns,content_hash ON files BEGIN DELETE FROM waveform_analyses WHERE file_id=new.id;DELETE FROM waveform_tiers WHERE file_id=new.id;DELETE FROM waveform_failures WHERE file_id=new.id;UPDATE waveform_cache_state SET universal_scan_complete=0 WHERE singleton=1;END;" ++
@@ -1528,7 +1528,7 @@ test "schema 12 migration and restore rebuild pending work from canonical identi
     try db.recordEmbeddingFailureForModel(model, 2, 2, "decode", "terminal fixture");
     try db.recordFingerprintFailure(algorithm, 1, 1, "decode", "terminal fixture");
     db.close();
-    try rawExec(fixture.db_path, @import("metadata_schema.zig").dropForTests ++ @import("refinement_schema.zig").dropForTests ++ "PRAGMA user_version=12;");
+    try rawExec(fixture.db_path, @import("category_schema.zig").dropForTests ++ @import("metadata_schema.zig").dropForTests ++ @import("refinement_schema.zig").dropForTests ++ "PRAGMA user_version=12;");
     try openFixture(&fixture);
     try std.testing.expectEqual(db.SCHEMA_VERSION, try db.schemaVersion());
     const semantic_pending = try db.pendingSemanticFilesForModel(allocator, model, null, 16);
@@ -2356,7 +2356,7 @@ test "indexed exact names survive BM25 exclusion and short typos need no shared 
     try db.applyFolderIndex(1, rows);
     const exact = (try db.inspectFile("Impact.wav")).?;
     const query = search.buildQuery("Impact.wav");
-    const capped = try db.unicodeCandidates(allocator, query.slice(), 0, 0, null, 256);
+    const capped = try db.unicodeCandidates(allocator, query.slice(), .{}, 256);
     defer allocator.free(capped);
     try std.testing.expectEqual(@as(usize, 256), capped.len);
     for (capped) |row| try std.testing.expect(row.file_id != exact.id);
@@ -2949,7 +2949,7 @@ test "legacy fingerprint repacking resumes across migration cancellation reopen 
     try db.replaceAcousticEdges(algorithm_id, ids[0], &.{.{ .other_file_id = ids[1], .score_ppm = 900000, .aligned = 32 }});
     try db.rebuildAcousticGroups(allocator, algorithm_id);
     db.close();
-    try rawExec(fixture.db_path, @import("metadata_schema.zig").dropForTests ++ @import("storage_schema.zig").dropForTests ++ "PRAGMA user_version=13;");
+    try rawExec(fixture.db_path, @import("category_schema.zig").dropForTests ++ @import("metadata_schema.zig").dropForTests ++ @import("storage_schema.zig").dropForTests ++ "PRAGMA user_version=13;");
     try openFixture(&fixture);
     try std.testing.expectEqual(db.SCHEMA_VERSION, try db.schemaVersion());
     try std.testing.expectEqual(@as(i64, 2), try rawScalar(fixture.db_path, "SELECT COUNT(*) FROM file_fingerprints WHERE storage_version=0"));
@@ -3203,7 +3203,7 @@ test "schema 14 migration preserves analysis but does not invent move proofs" {
     _ = try db.setSemanticModel("migration-proof", 2);
     try db.upsertSemanticEmbedding(allocator, @intCast(old.id), old.content_hash, &.{ 1, 0 });
     db.close();
-    try rawExec(fixture.db_path, @import("metadata_schema.zig").dropForTests ++ @import("move_schema.zig").dropForTests ++ "PRAGMA user_version=14;");
+    try rawExec(fixture.db_path, @import("category_schema.zig").dropForTests ++ @import("metadata_schema.zig").dropForTests ++ @import("move_schema.zig").dropForTests ++ "PRAGMA user_version=14;");
     try openFixture(&fixture);
     try std.testing.expectEqual(db.SCHEMA_VERSION, try db.schemaVersion());
     try std.testing.expectEqual(@as(i64, 1), (try db.semanticStatus()).embedded_count);
@@ -3258,6 +3258,168 @@ fn appendMetadataChunk(bytes: *std.ArrayList(u8), id: []const u8, payload: []con
     try bytes.appendSlice(allocator, &size);
     try bytes.appendSlice(allocator, payload);
     if (payload.len & 1 != 0) try bytes.append(allocator, 0);
+}
+
+fn appendTagInteger(bytes: *std.ArrayList(u8), n: usize) !void {
+    var value: [4]u8 = undefined;
+    std.mem.writeInt(u32, &value, @intCast(n), .little);
+    try bytes.appendSlice(allocator, &value);
+}
+
+fn appendID3Frame(bytes: *std.ArrayList(u8), id: *const [4]u8, value: []const u8) !void {
+    try bytes.appendSlice(allocator, id);
+    var size: [4]u8 = undefined;
+    std.mem.writeInt(u32, &size, @intCast(value.len), .big);
+    try bytes.appendSlice(allocator, &size);
+    try bytes.appendSlice(allocator, &.{ 0, 0 });
+    try bytes.appendSlice(allocator, value);
+}
+
+test "compressed metadata skips large artwork and indexes Unicode duplicate and vendor values" {
+    var fixture = try Fixture.init();
+    defer fixture.deinit();
+    var id3: std.ArrayList(u8) = .empty;
+    defer id3.deinit(allocator);
+    try id3.appendSlice(allocator, "ID3\x03\x00\x00\x00\x00\x00\x00");
+    const artwork = try allocator.alloc(u8, 6 * 1024 * 1024);
+    defer allocator.free(artwork);
+    @memset(artwork, 'x');
+    try appendID3Frame(&id3, "APIC", artwork);
+    try appendID3Frame(&id3, "TIT2", "\x01\xff\xfe\x71\x67\xac\x4e");
+    try appendID3Frame(&id3, "TXXX", "\x03SM_Description\x00café lluvia");
+    try appendID3Frame(&id3, "TXXX", "\x03ASWG_fxName\x00puerta suave");
+    try appendID3Frame(&id3, "COMM", "\x00eng\x00rivi\xe8re");
+    const size = id3.items.len - 10;
+    for (0..4) |i| id3.items[6 + i] = @intCast((size >> @as(u6, @intCast((3 - i) * 7))) & 127);
+    try fixture.tmp.dir.writeFile(io, .{ .sub_path = "AIRBlow_opaque.mp3", .data = id3.items });
+
+    var comments: std.ArrayList(u8) = .empty;
+    defer comments.deinit(allocator);
+    try appendTagInteger(&comments, 0);
+    try appendTagInteger(&comments, 5);
+    for ([_][]const u8{ "TITLE=море 東京", "DESCRIPTION=océano", "description=café lluvia", "ASWG_FXNAME=puerta suave", "METADATA_BLOCK_PICTURE=" }) |field| {
+        const picture = std.mem.endsWith(u8, field, "PICTURE=");
+        try appendTagInteger(&comments, field.len + if (picture) artwork.len else @as(usize, 0));
+        try comments.appendSlice(allocator, field);
+        if (picture) try comments.appendSlice(allocator, artwork);
+    }
+    var flac: std.ArrayList(u8) = .empty;
+    defer flac.deinit(allocator);
+    try flac.appendSlice(allocator, "fLaC\x84");
+    var length: [3]u8 = undefined;
+    std.mem.writeInt(u24, &length, @intCast(comments.items.len), .big);
+    try flac.appendSlice(allocator, &length);
+    try flac.appendSlice(allocator, comments.items);
+    try fixture.tmp.dir.writeFile(io, .{ .sub_path = "unknown.flac", .data = flac.items });
+
+    var all: std.ArrayList(u8) = .empty;
+    defer all.deinit(allocator);
+    var description: std.ArrayList(u8) = .empty;
+    defer description.deinit(allocator);
+    for ([_][]const u8{ "AIRBlow_opaque.mp3", "unknown.flac" }) |name| {
+        var file = try fixture.tmp.dir.openFile(io, name, .{});
+        defer file.close(io);
+        const reader = @import("audio_file.zig").Reader{ .handle = &file, .io = io, .size = (try file.stat(io)).size };
+        all.clearRetainingCapacity();
+        description.clearRetainingCapacity();
+        var reads: u64 = 0;
+        @import("audio_file.zig").bytes_read = &reads;
+        defer @import("audio_file.zig").bytes_read = null;
+        try std.testing.expect(!try @import("compressed_metadata.zig").read(allocator, &all, &description, reader, 256 * 1024));
+        try std.testing.expect(reads < 2048);
+        try std.testing.expect(std.mem.indexOf(u8, description.items, "東京") != null);
+        try std.testing.expect(std.mem.indexOf(u8, description.items, "café lluvia") != null);
+        try std.testing.expect(std.mem.indexOf(u8, description.items, "puerta suave") != null);
+        try std.testing.expect(std.mem.indexOf(u8, all.items, "xxxx") == null);
+        std.debug.print("compressed metadata: {s} source={d} reader_bytes={d}\n", .{ name, reader.size, reads });
+        try std.testing.expect(try @import("compressed_metadata.zig").read(allocator, &all, &description, reader, 1));
+    }
+    try fixture.tmp.dir.writeFile(io, .{ .sub_path = "broken.mp3", .data = "ID3\x04\x00\x00\xff\xff\xff\xff" });
+    try fixture.tmp.dir.writeFile(io, .{ .sub_path = "missing.mp3", .data = "no tags" });
+    try openFixture(&fixture);
+    const root = try fixture.path("");
+    defer allocator.free(root);
+    try search.indexFolderWithOptions(allocator, 1, root, .{ .fast = true });
+    var rows: [10]main_c.WSResult = undefined;
+    try std.testing.expectEqual(@as(usize, 2), try search.search(allocator, "東京", null, &rows, rows.len));
+    try std.testing.expectEqual(@as(usize, 2), try search.search(allocator, "café lluvia", null, &rows, rows.len));
+    try std.testing.expectEqual(@as(usize, 1), try search.search(allocator, "cat:AIRBlow", null, &rows, rows.len));
+    try std.testing.expectEqual(@as(usize, 1), try search.search(allocator, "東京 cat:AIRBlow", null, &rows, rows.len));
+    try std.testing.expectEqual(@as(usize, 0), try search.search(allocator, "東京 cat:unknown", null, &rows, rows.len));
+    try std.testing.expectEqual(@as(usize, 0), try search.search(allocator, "cat:AIRBlow >1s", null, &rows, rows.len));
+    var categories: [4]main_c.WSCategory = @splat(std.mem.zeroes(main_c.WSCategory));
+    for (&categories) |*category| category.struct_size = @sizeOf(main_c.WSCategory);
+    try std.testing.expectEqual(@as(c_int, 1), main_c.ws_category_list_v1(-1, &categories, categories.len));
+    try std.testing.expectEqualStrings("AIRBlow", std.mem.sliceTo(&categories[0].cat_id, 0));
+    try std.testing.expectEqual(@as(c_int, 0), main_c.ws_category_list_v1(2, &categories, categories.len));
+    std.debug.print("compressed fixture catalog_bytes={d} files=4 (synthetic, analysis excluded)\n", .{try rawScalar(fixture.db_path, "SELECT page_count*page_size FROM pragma_page_count(),pragma_page_size()")});
+    const known = (try db.inspectFile("AIRBlow_opaque.mp3")).?;
+    try std.testing.expectEqual(@as(c_int, 1), main_c.ws_file_category_v1(@intCast(known.id), &categories[0]));
+    const unknown = (try db.inspectFile("unknown.flac")).?;
+    try std.testing.expectEqual(@as(c_int, 0), main_c.ws_file_category_v1(@intCast(unknown.id), &categories[0]));
+    // Both vector and lexical retrieval must apply facets before top-k cutoff.
+    _ = try db.setSemanticModel("test/ucs", 2);
+    try db.upsertSemanticEmbedding(allocator, @intCast(known.id), known.content_hash, &.{ 1, 0 });
+    try db.upsertSemanticEmbedding(allocator, @intCast(unknown.id), unknown.content_hash, &.{ 1, 0 });
+    try std.testing.expectEqual(@as(usize, 1), try search.searchWithEmbedding(allocator, "cat:AIRBlow 東京", &.{ 1, 0 }, null, &rows, 1));
+    try std.testing.expectEqual(known.id, rows[0].file_id);
+    const malformed = (try db.inspectFile("broken.mp3")).?;
+    try std.testing.expectEqual(@as(u32, 1), (try db.fileMetadata(@intCast(malformed.id))).?.flags);
+    try std.testing.expectEqual(@sizeOf(main_c.WSCategory), @sizeOf(abi_c.WSCategory));
+    try std.testing.expectEqual(@as(u32, 0), (try db.integrityCheck(true)).errors_found);
+    db.close();
+    try rawExec(fixture.db_path, @import("category_schema.zig").dropForTests ++ "ALTER TABLE file_audio_metadata DROP COLUMN extraction_version; PRAGMA user_version=16;");
+    try openFixture(&fixture);
+    try std.testing.expectEqual(known.id, (try db.inspectFile("AIRBlow_opaque.mp3")).?.id);
+    try search.indexFolderWithOptions(allocator, 1, root, .{ .fast = true });
+    try std.testing.expectEqual(@as(usize, 1), try search.search(allocator, "cat:AIRBlow 東京", null, &rows, rows.len));
+}
+
+test "Ogg comments cross pages and malformed lengths or cancellation stay bounded" {
+    var fixture = try Fixture.init();
+    defer fixture.deinit();
+    var comments: std.ArrayList(u8) = .empty;
+    defer comments.deinit(allocator);
+    try comments.appendSlice(allocator, "\x03vorbis");
+    try appendTagInteger(&comments, 260);
+    try comments.appendSlice(allocator, &(@as([260]u8, @splat('v'))));
+    try appendTagInteger(&comments, 2);
+    for ([_][]const u8{ "TITLE=雨 東京", "DESCRIPTION=café" }) |field| {
+        try appendTagInteger(&comments, field.len);
+        try comments.appendSlice(allocator, field);
+    }
+    try comments.append(allocator, 1);
+    var ogg: std.ArrayList(u8) = .empty;
+    defer ogg.deinit(allocator);
+    const packets = [_][]const u8{ "\x01vorbis", comments.items[0..255], comments.items[255..] };
+    for (packets, 0..) |packet, index| {
+        var page: [28]u8 = @splat(0);
+        @memcpy(page[0..4], "OggS");
+        page[5] = if (index == 0) 2 else if (index == 2) 1 else 0;
+        page[14] = 1;
+        page[18] = @intCast(index);
+        page[26] = 1;
+        page[27] = @intCast(packet.len);
+        try ogg.appendSlice(allocator, &page);
+        try ogg.appendSlice(allocator, packet);
+    }
+    try fixture.tmp.dir.writeFile(io, .{ .sub_path = "test.ogg", .data = ogg.items });
+    var file = try fixture.tmp.dir.openFile(io, "test.ogg", .{});
+    defer file.close(io);
+    var token: std.atomic.Value(bool) = .init(false);
+    const reader = @import("audio_file.zig").Reader{ .handle = &file, .io = io, .size = ogg.items.len, .cancel = &token };
+    var all: std.ArrayList(u8) = .empty;
+    defer all.deinit(allocator);
+    var description: std.ArrayList(u8) = .empty;
+    defer description.deinit(allocator);
+    try std.testing.expect(!try @import("compressed_metadata.zig").read(allocator, &all, &description, reader, 256 * 1024));
+    try std.testing.expectEqualStrings("雨 東京 café", description.items);
+    token.store(true, .release);
+    try std.testing.expectError(error.Cancelled, @import("compressed_metadata.zig").read(allocator, &all, &description, reader, 256 * 1024));
+    token.store(false, .release);
+    ogg.items[27] = 255; // Declared identification packet crosses unrelated pages.
+    try fixture.tmp.dir.writeFile(io, .{ .sub_path = "test.ogg", .data = ogg.items });
+    try std.testing.expectError(error.MalformedMetadata, @import("compressed_metadata.zig").read(allocator, &all, &description, reader, 256 * 1024));
 }
 
 fn metadataWav(dir: std.Io.Dir, name: []const u8, xml: []const u8, data_size: usize) !void {
@@ -3371,7 +3533,7 @@ test "metadata limits unknown formats migration and source changes remain explic
     _ = try db.setSemanticModel("metadata-migrate", 2);
     try db.upsertSemanticEmbedding(allocator, @intCast(old.id), old.content_hash, &.{ 1, 0 });
     db.close();
-    try rawExec(fixture.db_path, @import("metadata_schema.zig").dropForTests ++ "PRAGMA user_version=15;");
+    try rawExec(fixture.db_path, @import("category_schema.zig").dropForTests ++ @import("metadata_schema.zig").dropForTests ++ "PRAGMA user_version=15;");
     try openFixture(&fixture);
     try std.testing.expect((try db.fileMetadata(@intCast(old.id))) == null);
     try std.testing.expectEqual(@as(i64, 1), (try db.semanticStatus()).embedded_count);

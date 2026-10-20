@@ -1,6 +1,8 @@
 const std = @import("std");
 const db = @import("db.zig");
 const types = @import("types.zig");
+const compressed_metadata = @import("compressed_metadata.zig");
+const ucs = @import("ucs.zig");
 const wav_metadata = @import("wav_metadata.zig");
 const clap_audio = @import("clap_audio.zig");
 const audio_file = @import("audio_file.zig");
@@ -92,6 +94,18 @@ pub fn indexFolderWithOptions(allocator: std.mem.Allocator, folder_id: i32, path
                 error.TruncatedMetadata, error.MalformedMetadata => true,
                 else => return err,
             };
+        } else {
+            metadata.limited = compressed_metadata.read(allocator, &text, &description, reader, if (options.fast) wav_metadata.FAST_BUDGET else wav_metadata.NORMAL_BUDGET) catch |err| switch (err) {
+                error.TruncatedMetadata, error.MalformedMetadata => true,
+                else => return err,
+            };
+        }
+        if (ucs.fromFilename(entry.basename)) |index| {
+            const category = ucs.entries[index];
+            try wav_metadata.clean(allocator, &text, category.category);
+            try wav_metadata.clean(allocator, &text, category.subcategory);
+            try wav_metadata.clean(allocator, &description, category.category);
+            try wav_metadata.clean(allocator, &description, category.subcategory);
         }
         var duration_ms: i32 = 0;
         if (clap_audio.isBuiltInAudioPath(full_path.items)) {
@@ -234,13 +248,19 @@ pub const ParsedQuery = struct {
     min_ms: i32 = 0,
     max_ms: i32 = 0,
     impossible: bool = false,
+    category: ?u32 = null,
 };
 
 pub fn parseSearchQuery(query: []const u8) ParsedQuery {
     var parsed = ParsedQuery{ .text = QueryBuf{} };
     var it = std.mem.tokenizeAny(u8, query, " \t\n\r");
     while (it.next()) |part| {
-        if (parseDurationFilter(part)) |filter| {
+        if (std.mem.startsWith(u8, part, "cat:")) {
+            if (ucs.lookup(part[4..])) |category| {
+                if (parsed.category != null and parsed.category.? != category) parsed.impossible = true;
+                parsed.category = category;
+            } else parsed.impossible = true;
+        } else if (parseDurationFilter(part)) |filter| {
             // Zero denotes unknown duration in the catalog and an unbounded
             // upper limit in retrieval. Duration filters match known values.
             parsed.min_ms = @max(parsed.min_ms, 1);
@@ -362,9 +382,10 @@ fn fetchLexicalRows(allocator: std.mem.Allocator, query: []const u8, folder_id: 
     const parsed = parseSearchQuery(query);
     if (parsed.impossible) return allocator.alloc(db.Candidate, 0);
     const raw_text = parsed.text.slice();
+    const filter = vector.Filter{ .folder_id = folder_id, .min_duration_ms = parsed.min_ms, .max_duration_ms = parsed.max_ms, .category = parsed.category };
     if (raw_text.len == 0) {
-        if (parsed.min_ms == 0 and parsed.max_ms == 0) return allocator.alloc(db.Candidate, 0);
-        return db.durationCandidates(allocator, parsed.min_ms, parsed.max_ms, folder_id, limit);
+        if (parsed.category == null and parsed.min_ms == 0 and parsed.max_ms == 0) return allocator.alloc(db.Candidate, 0);
+        return db.durationCandidates(allocator, filter, limit);
     }
 
     const fts = buildFtsQuery(raw_text, false);
@@ -378,16 +399,16 @@ fn fetchLexicalRows(allocator: std.mem.Allocator, query: []const u8, folder_id: 
     defer seen.deinit();
 
     const candidate_limit = @min(MAX_CANDIDATES, @max(limit * 4, @as(usize, 32)));
-    const exact = try db.exactNameCandidates(allocator, normalized.slice(), .{ .folder_id = folder_id, .min_duration_ms = parsed.min_ms, .max_duration_ms = parsed.max_ms }, candidate_limit);
+    const exact = try db.exactNameCandidates(allocator, normalized.slice(), filter, candidate_limit);
     defer allocator.free(exact);
     for (exact) |*row| try addRanked(allocator, &candidates, &ranked, &seen, row, 0);
     if (!(exact.len > 0 and limit == 1)) {
-        const primary = try db.unicodeCandidates(allocator, fts.slice(), parsed.min_ms, parsed.max_ms, folder_id, candidate_limit);
+        const primary = try db.unicodeCandidates(allocator, fts.slice(), filter, candidate_limit);
         defer allocator.free(primary);
         for (primary) |*row| try addRanked(allocator, &candidates, &ranked, &seen, row, classify(normalized.slice(), row, true) orelse 3);
         const expanded = buildQuery(raw_text);
         if (primary.len < candidate_limit and !(exact.len > 0 and std.fs.path.extension(raw_text).len > 0) and !std.mem.eql(u8, expanded.slice(), fts.slice())) {
-            const synonyms = try db.unicodeCandidates(allocator, expanded.slice(), parsed.min_ms, parsed.max_ms, folder_id, candidate_limit);
+            const synonyms = try db.unicodeCandidates(allocator, expanded.slice(), filter, candidate_limit);
             defer allocator.free(synonyms);
             for (synonyms) |*row| try addRanked(allocator, &candidates, &ranked, &seen, row, classify(normalized.slice(), row, true) orelse 3);
         }
@@ -396,7 +417,7 @@ fn fetchLexicalRows(allocator: std.mem.Allocator, query: []const u8, folder_id: 
     if (!(exact.len > 0 and (limit == 1 or std.fs.path.extension(raw_text).len > 0)) and ranked.items.len < candidate_limit and normalized.len >= 3) {
         const tri_query = buildTrigramQuery(normalized.slice());
         if (!tri_query.isEmpty()) {
-            const fuzzy = try db.trigramCandidates(allocator, tri_query.slice(), parsed.min_ms, parsed.max_ms, folder_id, candidate_limit);
+            const fuzzy = try db.trigramCandidates(allocator, tri_query.slice(), filter, candidate_limit);
             defer allocator.free(fuzzy);
             for (fuzzy) |*row| {
                 try query_cancel.check();
@@ -419,7 +440,7 @@ fn fetchLexicalRows(allocator: std.mem.Allocator, query: []const u8, folder_id: 
             }
             for (terms) |term| {
                 const typo_query = buildFtsQuery(term, false);
-                const rows = try db.unicodeCandidates(allocator, typo_query.slice(), parsed.min_ms, parsed.max_ms, folder_id, candidate_limit);
+                const rows = try db.unicodeCandidates(allocator, typo_query.slice(), filter, candidate_limit);
                 defer allocator.free(rows);
                 for (rows) |*row| if (classify(normalized.slice(), row, false)) |class| try addRanked(allocator, &candidates, &ranked, &seen, row, class);
                 if (ranked.items.len >= candidate_limit) break;
@@ -473,6 +494,7 @@ pub fn searchWithEmbedding(
         .folder_id = folder_id,
         .min_duration_ms = parsed.min_ms,
         .max_duration_ms = parsed.max_ms,
+        .category = parsed.category,
     }, candidate_limit);
     const retrieval = maybe_retrieval orelse return copyResults(lexical, out, max);
     defer allocator.free(retrieval.matches);

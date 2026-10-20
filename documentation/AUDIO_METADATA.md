@@ -128,3 +128,71 @@ installer and refinement-policy scripts, and strict Swift app compilation with
 warnings treated as errors. Full `make check` stops at this host's Xcode runtime
 abort. The lifecycle script still fails its previously reproduced native autoplay
 assertion; desktop interaction and real-library browsing latency remain unverified.
+
+## Compressed descriptions and UCS categories (schema 17)
+
+MP3 ID3v2.2/2.3/2.4 text frames and comments support ISO-8859-1, UTF-16 with BOM,
+UTF-16BE and UTF-8. FLAC Vorbis-comment blocks and Ogg Vorbis/Opus comment packets
+use UTF-8. Duplicate fields contribute all values. These are bounded metadata
+extractors, not audio decoders or complete container validators (Ogg CRCs are
+not verified). M4A atoms, ID3v1, compressed/encrypted/grouped frames, and whole-tag
+v2.2/v2.3 unsynchronisation are not extracted. Unsupported ID3 representations
+set the existing metadata-limit flag; missing tags leave fields unknown.
+
+Payload budgets remain 256 KiB/2 MiB for fast/normal and deep scans. Individual
+text fields are capped at 64 KiB and ID3 frames/FLAC blocks/comment counts at
+4,096. ID3 APIC and FLAC picture blocks are skipped by length. FLAC comments
+inspect at most 128 bytes of each field name before skipping base64 artwork;
+large ignored values do not consume the text budget. Ogg reassembles at most
+one budget-sized packet across up to 1,024 sequential pages of one logical
+stream. A comment packet exceeding that budget is limited rather than loaded
+fully. Malformed lengths never become allocations proportional to declared
+sizes, and cancellation/I/O errors still abort publication.
+
+Descriptive fields are TITLE, DESCRIPTION, COMMENT, KEYWORDS, SUBJECT, NOTES and
+FXNAME. Other searchable fields are ARTIST, ALBUM, GENRE, CATEGORY, SUBCATEGORY,
+CATID, DESIGNER, LIBRARY, VENDOR, SOURCE, LOCATION, RECORDIST, MANUFACTURER,
+MICROPHONE, CREATORID, SOURCEID and USERCATEGORY. Vorbis and ID3 TXXX keys accept
+case-insensitive `SM_`, `ASWG_` or namespace prefixes. This supports explicit
+Soundminer/ASWG-style text carried in these standard containers; it does not
+claim to parse proprietary Soundminer binary metadata. WAV XML also recognizes
+FXNAME/ASWG_FXNAME/SM_DESCRIPTION as descriptive values.
+
+The bundled UCS 8.2.1 table is an exact allowlist. Only the filename's initial
+CatID, ending at `_` or the optional `-UserCategory` before `_`, establishes a
+structured category. Arbitrary CATEGORY/CATID tag text remains searchable and
+does not override filename classification. Unknown/misspelled IDs stay NULL;
+filenames and source media are never rewritten. Recognized English category
+and subcategory text joins the descriptive search field with its existing
+weight 2; exact names retain priority. Taxonomy indices and provenance are
+recorded in [the data notes](../core/src/data/README.md).
+
+The native UCS Categories menu lists categories actually indexed in the selected
+library (or all libraries), with per-subcategory counts. Choosing one inserts
+`cat:AIRBlow`, for example. This can be combined with text and duration filters;
+contradictory or unknown CatIDs match nothing. Filters apply inside SQL before
+lexical/vector top-k limits. Acoustic example searches retain their own mode.
+`WS_CAP_UCS_CATEGORIES` exposes catalog-only facet and per-file APIs; no original
+C result layouts change. See [the C contract](C_API.md).
+
+Schema 17 adds a nullable integer category and its index, plus a metadata
+extraction-version column. Older records refresh once on scan, including their
+category and compressed descriptions; unchanged-file reuse resumes afterward.
+Migration opens no sources, retains analysis/IDs, and supports schema-16 backups.
+Category rows count missing sources until their library is reconciled.
+
+Fixtures cover 6 MiB artwork preceding text, duplicate/missing/malformed fields,
+Unicode/UTF-16, Ogg page continuation, cancellation, vendor keys, recognized and
+unknown IDs, migration, C outputs, and combined lexical/vector facets. Direct
+metadata reads were 132 bytes for a 6,291,588-byte MP3 and 304 bytes for a
+6,291,603-byte FLAC, excluding shared prefixes and hashing. The four-file
+synthetic catalog occupied 999,424 logical bytes before optional analysis;
+this is a whole-catalog cost, not a per-file or real-library estimate.
+The existing 26-query lexical and 24-query hybrid judgments remain separate
+controlled relevance checks; real-library held-out UCS judgments and cold/removable
+storage acceptance remain outstanding.
+
+Specifications: [ID3v2.3](https://id3.org/id3v2.3.0),
+[ID3v2.4 structure](https://id3.org/id3v2.4.0-structure),
+[ID3v2.4 frames](https://id3.org/id3v2.4.0-frames), and
+[Xiph Vorbis comments](https://xiph.org/vorbis/doc/v-comment.html).

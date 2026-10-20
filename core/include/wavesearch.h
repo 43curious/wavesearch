@@ -15,6 +15,7 @@
 #define WS_CAP_EXACT_DUPLICATES  (UINT64_C(1) << 4)
 #define WS_CAP_FINGERPRINT_REPACK (UINT64_C(1) << 5)
 #define WS_CAP_FILE_METADATA     (UINT64_C(1) << 7)
+#define WS_CAP_UCS_CATEGORIES    (UINT64_C(1) << 8)
 #define WS_CAP_FILE_LOOKUP       (UINT64_C(1) << 6)
 // Allocation-free, thread-safe, valid before init and after deinit. Capabilities
 // describe compiled APIs, not model installation, provider loading or DB state.
@@ -52,6 +53,20 @@ typedef struct {
     int  duration_ms;
     int64_t content_hash; // opaque identity; negative values are provisional or sampled, not exact duplicate proof
 } WSResult;
+
+// Catalog-only UCS facets; unknown names have no category. Counts do not stat
+// physical sources. Entries are ordered by CatID and contain copied strings.
+#define WS_CATEGORY_VERSION 1u
+typedef struct {
+    uint32_t struct_size, version, index, file_count;
+    char cat_id[16], category[64], subcategory[64], taxonomy_version[16];
+} WSCategory;
+// folder_id=-1 means all libraries, max_categories<=753. Exact array element
+// sizes required. Returns count, -1 error. Discard output on error.
+int ws_category_list_v1(int folder_id, WSCategory *out, int max_categories);
+// Returns 1 known, 0 unknown/missing, -1 error; unchanged output on 0/-1.
+int ws_file_category_v1(int file_id, WSCategory *out);
+// Existing search APIs accept cat:CatID, alone or with text/duration filters.
 
 #define WS_SEMANTIC_STATUS_VERSION 2u
 

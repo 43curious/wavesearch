@@ -1,4 +1,12 @@
-# Third-party notices for optional CLAP support
+# Third-party notices
+
+WaveSearch bundles the public-domain **Universal Category System 8.2.1** CatID,
+category and subcategory list. UCS is an initiative by Tim Nielsen, Justin
+Drury, Kai Paquin and the sound community. See the
+[official site](https://universalcategorysystem.com/) and the bundled
+[data provenance](core/src/data/README.md) for source/version details.
+
+## Optional CLAP support
 
 Optional semantic support is not included in WaveSearch distributions. Users
 who explicitly agree to the Settings download or invoke

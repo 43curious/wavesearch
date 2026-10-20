@@ -229,6 +229,26 @@ private struct SearchHeader: View {
                     .strokeBorder(AppTheme.hairline, lineWidth: 1)
             )
 
+            Menu {
+                if store.categoryFacets.isEmpty {
+                    Text("No recognized UCS categories. Re-index to refresh metadata.")
+                }
+                ForEach(CategoryFacet.groups(store.categoryFacets), id: \.name) { group in
+                    Menu(group.name) {
+                        ForEach(group.facets) { facet in
+                            Button("\(facet.subcategory) · \(facet.count)") { store.searchCategory(facet.id) }
+                        }
+                    }
+                }
+            } label: {
+                Label("UCS Categories", systemImage: "line.3.horizontal.decrease.circle")
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .disabled(!store.canUseLibrary)
+            .help("Filter by a recognized UCS category; combine with text or duration")
+            .task(id: store.selectedFolderId) { await store.refreshCategories() }
+
             Button {
                 store.chooseSearchExample()
             } label: {

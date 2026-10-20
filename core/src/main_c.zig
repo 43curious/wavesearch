@@ -17,6 +17,7 @@ const query_cancel = @import("query.zig");
 const refinement_schedule = @import("refinement_schedule.zig");
 
 pub const WSResult = types.WSResult;
+pub const WSCategory = types.WSCategory;
 pub const WSFileMetadata = types.WSFileMetadata;
 pub const WSFileIdentity = types.WSFileIdentity;
 pub const WSDuplicateVerification = types.WSDuplicateVerification;
@@ -49,7 +50,7 @@ pub export fn ws_capabilities() u64 {
     const c = @import("c");
     return c.WS_CAP_QUERY_CANCELLATION | c.WS_CAP_WAVEFORM_V1 |
         c.WS_CAP_EXTERNAL_SEMANTIC | c.WS_CAP_CLAP |
-        c.WS_CAP_EXACT_DUPLICATES | c.WS_CAP_FINGERPRINT_REPACK | c.WS_CAP_FILE_LOOKUP | c.WS_CAP_FILE_METADATA;
+        c.WS_CAP_EXACT_DUPLICATES | c.WS_CAP_FINGERPRINT_REPACK | c.WS_CAP_FILE_LOOKUP | c.WS_CAP_FILE_METADATA | c.WS_CAP_UCS_CATEGORIES;
 }
 
 fn lockMutations() void {
@@ -299,6 +300,36 @@ pub export fn ws_file_lookup_path_v1(path: ?[*:0]const u8, out: ?*WSResult) c_in
         return -1;
     }) orelse return 0;
     search.copyResult(&row, out.?);
+    return 1;
+}
+
+pub export fn ws_category_list_v1(folder_id: c_int, out: ?[*]WSCategory, max_categories: c_int) c_int {
+    if (folder_id < -1 or max_categories < 0 or max_categories > 753 or (max_categories > 0 and out == null)) {
+        setLastErrorMessage("InvalidCategoryArguments");
+        return -1;
+    }
+    if (max_categories == 0) return 0;
+    const values = out.?[0..@intCast(max_categories)];
+    for (values) |value| if (value.struct_size != @sizeOf(WSCategory)) {
+        setLastErrorMessage("InvalidCategorySize");
+        return -1;
+    };
+    return @intCast(db.categoryList(if (folder_id == -1) null else folder_id, values) catch |err| {
+        setLastError(err);
+        return -1;
+    });
+}
+
+pub export fn ws_file_category_v1(file_id: c_int, out: ?*WSCategory) c_int {
+    if (file_id <= 0 or out == null or out.?.struct_size < @sizeOf(WSCategory)) {
+        setLastErrorMessage("InvalidCategoryArguments");
+        return -1;
+    }
+    const result = (db.fileCategory(file_id) catch |err| {
+        setLastError(err);
+        return -1;
+    }) orelse return 0;
+    out.?.* = result;
     return 1;
 }
 

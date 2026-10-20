@@ -162,3 +162,20 @@ caller tail preservation, exact waveform size/version checks, handle ownership,
 and a separately compiled caller with frozen original catalog declarations.
 The focused C contract can also be run with
 `cd core && zig build waveform-abi -Doptimize=safe`.
+
+## UCS category facets
+
+`WS_CAP_UCS_CATEGORIES` adds `ws_category_list_v1` and `ws_file_category_v1`.
+Both perform catalog I/O only and use `WSCategory` version 1 (176 bytes).
+The list accepts folder `-1` for all libraries and at most 753 entries;
+initialize every array element with exact struct_size. Return is count or -1;
+discard partial arrays on errors. Per-file lookup accepts a struct_size at
+least 176, preserves larger tails, and returns 1 known, 0 unknown/missing or -1
+error, leaving output unchanged on 0/-1. Empty lists may use NULL/zero capacity.
+
+Outputs include the bundled taxonomy version, exact CatID, English category,
+subcategory and catalog count. Index numbers are private to that taxonomy;
+portable consumers should use CatID/version. Unknown names have no category.
+Existing search calls accept `cat:CatID` with text/duration/folder filtering,
+applied before candidate limits in lexical and hybrid vector retrieval.
+See [metadata discovery and limits](AUDIO_METADATA.md).

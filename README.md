@@ -33,8 +33,8 @@ The SwiftUI/AppKit macOS interface connects to `libwavesearch`, a Zig core for
 indexing, SQLite FTS5 search, audio analysis, acoustic fingerprints, and optional
 local CLAP semantic search.
 
-- **Search your libraries.** Search filenames and WAV metadata, filter by
-  duration, browse folders, and keep favourites.
+- **Search your libraries.** Search filenames and WAV/MP3/FLAC/Ogg metadata,
+  filter by duration or UCS category, browse folders, and keep favourites.
 - **Preview and compare.** Play audio, seek through channel waveforms, inspect
   loudness, and find similar sounds or duplicate families.
 - **Keep working while indexing.** Searchable snapshots appear before optional
@@ -166,6 +166,12 @@ seeking before setting **In / Out** points. **Copy for Editor** provides a file
 URL to paste into compatible editors; keep-in-place mode supplies the full
 original even for a range. The **Library** menu provides selected-library
 management. See [accessibility workflows and verification limits](documentation/ACCESSIBILITY.md).
+
+Use **UCS Categories** beside search to filter recognized filename categories,
+including counts for the selected library. You can combine `cat:AIRBlow` with
+text or duration. Unknown CatIDs stay uncategorized. Re-index older libraries
+to refresh compressed descriptions and category facets. See
+[metadata formats and limits](documentation/AUDIO_METADATA.md).
 
 ### Duration filters
 

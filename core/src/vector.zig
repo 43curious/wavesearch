@@ -8,6 +8,7 @@ const NORMALIZED_TOLERANCE: f64 = 1.0e-4;
 
 pub const Filter = struct {
     folder_id: ?i32 = null,
+    category: ?u32 = null,
     min_duration_ms: i32 = 0,
     max_duration_ms: i32 = 0,
 };

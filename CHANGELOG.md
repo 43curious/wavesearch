@@ -12,6 +12,11 @@ changelog/agent documentation added afterward.
 
 ### Added
 
+- Bounded ID3v2 MP3 and FLAC/Ogg Vorbis-comment indexing preserves Unicode
+  descriptions and selected Soundminer/ASWG text fields while skipping artwork.
+  Versioned UCS 8.2.1 filename categories have additive catalog APIs, a native
+  category menu and `cat:CatID` filters applied before lexical/vector result
+  limits. Schema 17 refreshes older metadata on the next scan.
 - Schema-16 technical audio metadata and an additive lookup API let macOS browse
   indexed WAV/AIFF headers without reopening AVAudioFile. Unknown or changed
   sources retain bounded native fallback; migration refreshes legacy rows on scan.

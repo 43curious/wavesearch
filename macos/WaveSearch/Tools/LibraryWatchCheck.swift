@@ -112,8 +112,8 @@ struct LibraryWatchCheck {
                           16,0,0,0,1,0,1,0,64,31,0,0,128,62,0,0,2,0,16,0,
                           100,97,116,97,128,62,0,0])
         bytes.append(Data(repeating: 0, count: 16000))
-        let old = sounds.appendingPathComponent("old.wav")
-        let new = sounds.appendingPathComponent("new.wav")
+        let old = sounds.appendingPathComponent("AIRBlow_old.wav")
+        let new = sounds.appendingPathComponent("AIRBlow_new.wav")
         try bytes.write(to: old)
         let wrongVolume = LibraryFolder(id: 99, name: "Wrong volume", path: sounds.path,
                                         volumeUUID: "another-volume", isMissing: false)
@@ -142,6 +142,11 @@ struct LibraryWatchCheck {
         store.selectedFolderId = store.folders[0].id
         store.search("")
         await store.waitForSearch()
+        await store.refreshCategories()
+        precondition(store.categoryFacets.count == 1 && store.categoryFacets[0].id == "AIRBlow" && store.categoryFacets[0].count == 1)
+        store.searchCategory("AIRBlow")
+        await store.waitForSearch()
+        precondition(store.results.count == 1 && store.query == "cat:AIRBlow")
         let file = store.results.first!
         store.toggleFavourite(file)
         let player = PlayerController.shared
@@ -233,7 +238,7 @@ struct LibraryWatchCheck {
             exit(2)
         }
         defer { stop() }
-        try Data([0]).write(to: root.appendingPathComponent("new.wav"))
+        try Data([0]).write(to: root.appendingPathComponent("AIRBlow_new.wav"))
         await until { observed }
         print("PASS: native FSEvents delivered a disposable audio-file change")
     }
