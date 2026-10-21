@@ -34,6 +34,13 @@ nonisolated enum LocalizedText {
         return formatter.string(from: max(0, seconds.rounded())) ?? "—"
     }
 
+    static func audioDuration(_ seconds: TimeInterval) -> String {
+        guard seconds.isFinite, seconds >= 0 else { return "—" }
+        return Measurement(value: seconds, unit: UnitDuration.seconds).formatted(
+            .measurement(width: .wide, usage: .asProvided,
+                         numberFormatStyle: .number.precision(.fractionLength(2))))
+    }
+
     static func position(_ seconds: TimeInterval) -> String {
         guard seconds.isFinite, seconds < Double(Int.max / 100) else { return "—" }
         let hundredths = Int((max(0, seconds) * 100).rounded())

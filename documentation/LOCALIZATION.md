@@ -19,8 +19,9 @@ language capabilities.
 files, sounds, loaded sounds, matches and channels. Its second format argument
 contains the locale-grouped number. Both plural forms must retain `%2$@`; the
 `lld` count chooses the rule without formatting a second visible count. Native
-number formatting and `DateComponentsFormatter` supply localized decimals and
-time units. The preview clock retains its minute/second layout and hundredths;
+number/measurement formatting preserves fractional audio durations, while
+`DateComponentsFormatter` supplies elapsed-time units. The preview clock retains
+its minute/second layout and hundredths;
 rounding crosses minute boundaries before rendering. Exported ranges remain
 integer milliseconds and all machine-readable formats retain their contracts.
 

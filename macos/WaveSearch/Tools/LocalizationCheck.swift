@@ -35,6 +35,7 @@ struct LocalizationCheck {
         precondition(LocalizedText.position(65.25) == (spanish ? "1:05,25" : "1:05.25"))
         precondition(LocalizedText.position(0) == (spanish ? "0:00,00" : "0:00.00"))
         precondition(LocalizedText.position(59.999) == (spanish ? "1:00,00" : "1:00.00"))
+        precondition(LocalizedText.audioDuration(0.043) == (spanish ? "0,04 segundos" : "0.04 seconds"))
         // Domain and persisted keys remain independent of presentation language.
         precondition(RefinementMode.fastOnly.rawValue == "fastOnly")
         precondition(AudioImportBehavior.keepInPlace.rawValue == "keepInPlace")

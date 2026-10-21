@@ -646,7 +646,7 @@ private struct ResultRow: View {
     }
 
     private var accessibilitySummary: String {
-        var parts = [file.durationMs > 0 ? LocalizedText.duration(Double(file.durationMs) / 1000) : String(localized: "Duration unknown"),
+        var parts = [file.durationMs > 0 ? LocalizedText.audioDuration(Double(file.durationMs) / 1000) : String(localized: "Duration unknown"),
                      store.libraryLocation(for: file)]
         if let channels = metadata?.channels { parts.append(LocalizedText.count(channels, .channels)) }
         if store.isFavourite(file) { parts.append(String(localized: "Favourite")) }

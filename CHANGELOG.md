@@ -14,9 +14,9 @@ changelog/agent documentation added afterward.
 
 - Native English/Spanish interface resources cover views, menus, progress,
   errors and shortcut/accessibility copy. File/sound/match/channel counts use
-  plural rules and grouped numbers; preview positions and durations follow the
-  current locale. Headless checks load both language bundles and validate
-  compiler-extracted keys and format arguments.
+  plural rules and grouped numbers; preview/audio times retain localized
+  fractional seconds. Elapsed durations follow the locale. Headless checks load
+  both language bundles and validate compiler-extracted keys and format arguments.
 - Catalog-backed tags, named collections with optional saved ranges, favourites
   browsing, and versioned JSON import/export. Imports union annotations and
   preserve missing references and ID conflicts; users can explicitly relink
