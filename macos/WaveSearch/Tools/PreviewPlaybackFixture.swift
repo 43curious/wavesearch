@@ -6,6 +6,9 @@ nonisolated final class PreviewTestClock: @unchecked Sendable {
     private let lock = NSLock()
     private var time: TimeInterval = 0
     private var starts: [(String, TimeInterval)] = []
+    private var pitch: Float = 0
+    var lastPitch: Float { lock.lock(); defer { lock.unlock() }; return pitch }
+    func pitched(_ value: Float) { lock.lock(); pitch = value; lock.unlock() }
 
     var now: TimeInterval { lock.lock(); defer { lock.unlock() }; return time }
     var playedNames: [String] { lock.lock(); defer { lock.unlock() }; return starts.map(\.0) }
@@ -25,6 +28,8 @@ nonisolated final class PreviewTestClock: @unchecked Sendable {
 nonisolated final class PreviewTestPlayback: PreviewPlayback {
     let duration: TimeInterval = 1
     var enableRate = true
+    var pitch: Float = 0 { didSet { clock.pitched(pitch) } }
+    var supportsPitch: Bool { true }
     var numberOfLoops = 0
     var volume: Float = 1
     private let clock: PreviewTestClock

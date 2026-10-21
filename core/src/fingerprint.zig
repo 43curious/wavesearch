@@ -169,7 +169,9 @@ fn emitLandmarks(allocator: std.mem.Allocator, landmarks: *std.ArrayList(Landmar
     }
 }
 
-fn fft(real: []f64, imag: []f64) void {
+/// In-place 1,024-point forward FFT shared with spectral inspection.
+pub fn fft(real: []f64, imag: []f64) void {
+    std.debug.assert(real.len == FFT_SIZE and imag.len == FFT_SIZE);
     var j: usize = 0;
     for (1..FFT_SIZE) |i| {
         var bit = FFT_SIZE >> 1;

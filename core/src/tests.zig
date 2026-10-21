@@ -19,6 +19,7 @@ const c = db.c;
 
 test "module tests are included" {
     std.testing.refAllDecls(tokenizer);
+    std.testing.refAllDecls(@import("spectrum.zig"));
     std.testing.refAllDecls(clap_audio);
     std.testing.refAllDecls(onnx_runtime);
     std.testing.refAllDecls(model_manifest);

@@ -212,3 +212,22 @@ A collection returns each matching file once, independently of its saved ranges.
 Unresolved references appear in JSON, not live result rows. Return is count,
 -1 error, or -2 cancellation; discard partial output on failure. Own/drain these
 calls with the same catalog and query-handle lifecycle as ordinary search.
+
+## Bounded spectrum column
+
+`WS_CAP_SPECTRUM` advertises `ws_spectrum_column_v1`. It needs no catalog/model
+or retained handle. Borrow 1..32 non-null planar Float32 channel pointers, each
+with 1..1,024 finite frames, and a separate output of capacity at least 513.
+Success returns 0 and writes exactly 513 bins (DC through Nyquist, sample-rate /
+1,024 spacing); failures return -1 with output unchanged and a thread-local
+error. Inputs and output must not overlap. Independent calls may run concurrently;
+keep buffers alive until each synchronous call returns. A call is bounded; host
+cancellation occurs between calls, and actual calls must finish before teardown.
+
+The periodic Hann window covers the submitted frame extent, then zero pads to
+1,024. The maximum calibrated amplitude across channels is returned in dBFS,
+clamped to −100..0, preserving opposite-phase stereo. DC/Nyquist are single-sided;
+other bins receive the two-sided amplitude correction. Scratch is heap allocated.
+This function neither decodes files nor implements an exhaustive spectrogram;
+the host defines bounded windows and frequency/time display. See
+[audio preview](WAVEFORM_AND_AUDIO_PREVIEW.md#pitch-loudness-and-spectral-inspection).

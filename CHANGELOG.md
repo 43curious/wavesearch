@@ -12,6 +12,13 @@ changelog/agent documentation added afterward.
 
 ### Added
 
+- Preview-only ±12-semitone pitch with independent rate, native streaming and
+  peak limiting; unsupported formats/components retain basic playback with pitch
+  disabled. The panel exposes original whole-file LUFS/sample peak and an opt-in,
+  range-aware sampled spectrogram backed by bounded Zig FFT analysis. Headless
+  checks cover spectrum isolation, replacement/drain and controlled pitch/rate;
+  native DSP/output and desktop acceptance remain pending on a working session.
+
 - A disposable WAV/AIFF/optional-ALAC interoperability fixture generator and
   explicit editor-import matrix record expected whole/range media, Unicode paths,
   editor copy settings, external-drive and post-quit persistence checks. Installed

@@ -29,6 +29,17 @@ int main(void) {
         WS_CAP_EXTERNAL_SEMANTIC | WS_CAP_CLAP | WS_CAP_EXACT_DUPLICATES |
         WS_CAP_FINGERPRINT_REPACK | WS_CAP_FILE_METADATA;
     if ((ws_capabilities() & required_caps) != required_caps) return 31;
+    float spectrum_pcm[1024] = {0};
+    const float *spectrum_planes[] = {spectrum_pcm};
+    float spectrum_bins[514];
+    for (int i = 0; i < 514; ++i) spectrum_bins[i] = 42.0f;
+    if (!(ws_capabilities() & WS_CAP_SPECTRUM)) return 60;
+    if (ws_spectrum_column_v1(spectrum_planes, 1, 1024, spectrum_bins, 512) != -1 || spectrum_bins[0] != 42.0f) return 61;
+    if (ws_spectrum_column_v1(spectrum_planes, 1, 1025, spectrum_bins, 514) != -1 || spectrum_bins[0] != 42.0f) return 62;
+    if (ws_spectrum_column_v1(NULL, 1, 1024, spectrum_bins, 514) != -1 || spectrum_bins[0] != 42.0f) return 63;
+    if (ws_spectrum_column_v1(spectrum_planes, 1, 1024, spectrum_bins, 514) != 0) return 64;
+    for (int i = 0; i < 513; ++i) if (spectrum_bins[i] != -100.0f) return 65;
+    if (spectrum_bins[513] != 42.0f) return 66;
     int legacy_status = ws_legacy_abi_test();
     if (legacy_status != 0) return legacy_status;
     if (ws_abi_version() != WS_ABI_VERSION ||

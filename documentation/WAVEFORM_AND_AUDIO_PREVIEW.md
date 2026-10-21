@@ -22,8 +22,11 @@ between the waveform, keyboard marks and player, and reset when files change.
 
 ### Playback and playhead
 
-The bottom playback controls start and pause `AVAudioPlayer`. While playback is
-active, `PlayerController` samples `AVAudioPlayer.currentTime` every 40 ms and
+The bottom playback controls start and pause the native preview transport. Mono
+and stereo sources use AVAudioEngine with independent time/pitch processing and
+a final peak limiter. Unsupported graph formats or unavailable Audio Units fall
+back to AVAudioPlayer with pitch disabled. While playback is active,
+`PlayerController` samples source time every 40 ms and
 publishes a normalized progress value from `0` through `1`.
 
 The waveform displays progress in two ways:
@@ -65,11 +68,65 @@ are 0.5×, 0.75×, 1×, 1.5× and 2×. These controls never modify sources or re
 exports. The existing h/l shuttle remains available and explicit rate selection
 ends shuttling.
 
-Whole-file looping uses AVAudioPlayer's native loop count. Selected-range stop
-and loop boundaries are checked on the 40 ms progress timer; they are approximate
+The engine reschedules whole-file loops at EOF; the fallback uses AVAudioPlayer's
+loop count. Engine loops are not guaranteed gapless. Selected-range stop and
+loop boundaries are checked on the 40 ms progress timer; they are approximate
 preview boundaries, not sample-accurate or guaranteed gapless loops. Main-thread
 scheduling can delay a tick, and higher rates increase the audible overshoot.
 Selected-range exports still use the exact frame-boundary rules below.
+
+### Pitch, loudness and spectral inspection
+
+**Pitch** adjusts preview by −12 through +12 semitones, independently of the
+0.5×–2× rate setting. The native engine streams the source through
+AVAudioUnitTimePitch and a peak limiter; it does not retain full decoded PCM.
+Pitch, rate and looping are session settings. Mono/stereo sources supported by
+the native graph can use pitch. Multichannel sources and unavailable Audio Units
+retain AVAudioPlayer playback with the Pitch picker disabled. Changing pitch
+never changes source files, selected ranges, copied originals or PCM24 exports.
+Native pickers/buttons retain Tab/arrow/VoiceOver operation.
+
+The panel displays integrated **LUFS** and **dBFS sample peak** from the existing
+whole-file analysis before preview effects/volume. It explicitly shows analyzing
+or unknown states; unavailable/silent numeric values appear as a dash. Sample
+peak is not a true-peak measurement, nor a post-effect loudness meter.
+
+**Spectrogram** is opt-in and follows the original source and temporary range.
+It displays 1..256 evenly spaced windows, each at most 1,024 source frames, with
+no reads beyond the selected frame extent. Each column is a periodic Hann-windowed
+1,024-point FFT, zero-padded for shorter ranges; amplitudes are calibrated in dBFS
+with a −100..0 dB display clamp. It takes the maximum channel magnitude instead
+of mixing opposite-phase channels to silence. Frequency is linear, DC at the
+bottom and Nyquist at the top; time proceeds left to right. White is louder.
+Sparse windows can miss events between windows; this is an inspection overview,
+not an exact continuous STFT. Higher sample rates also increase bin spacing.
+
+The canonical spectrum calculation lives in Zig; AVFoundation decoding, file
+permissions and display live in macOS. The host supports up to 32 decoded
+channels, keeps one 256×513 grayscale raster (131,328 bytes), no disk cache, and
+one 1,024-frame decode buffer (at most 128 KiB of PCM). FFT scratch is about
+20 KiB on the heap. At most 262,144 frames per channel are requested, independent
+of recording length; codecs may perform additional internal seeking/decoding.
+The latest-request worker retains one active and one newest waiting request.
+Replacement/closing the panel cancels between native reads/FFT calls; shutdown
+awaits actual work through both the worker and BlockingWorkRegistry. Source
+signature changes reject publication. Audio does not wait for spectrum work.
+
+`bash scripts/test-preview-inspection.sh` checks real WAV decoding, range
+isolation, opposite-phase stereo, raster bounds, replacement and actual drain.
+When Apple Audio Units are available it also checks offline-rendered pitch
+frequency, independent rate, finite/clamped output, seek and stop. Add
+`--native-pitch` to require DSP rather than accept an explicit skip. On the
+2026-10-21 host, every queried required Audio Unit was absent; AVAudioPlayerNode
+initialization raised an Objective-C exception even in offline mode. Product
+construction now checks availability before initialization. Controlled transport
+and spectrum checks pass; native pitch DSP, device output, compressed-format
+pitch behavior, loop transitions and keyboard/VoiceOver layout remain unverified.
+A first generated two-second stereo WAV request for its first second produced
+94 columns in about 6.7 ms on this host. This is a synthetic, single-request
+spectrum timing, not physical first-audio or cold/removable-drive latency. The
+older warm AVAudioPlayer timing below predates the pitch transport and is not
+acceptance for the new engine.
 
 ### Seeking
 
@@ -78,7 +135,7 @@ points, is treated as a seek. It:
 
 - Clears the current temporary selection, if any.
 - Converts the horizontal mouse coordinate to a fraction of the full track.
-- Sets `AVAudioPlayer.currentTime` to `duration × fraction`.
+- Sets the transport source time to `duration × fraction`.
 
 A click inside an existing selection leaves it intact so the next movement can
 unambiguously begin a selected-range file drag.
@@ -358,7 +415,7 @@ unchanged for binary compatibility but are not used by the product preview.
   newly selected source.
 
 Playback loading and waveform analysis are independent. A waveform failure does
-not prevent `AVAudioPlayer` from playing a readable source, and playback does not
+not prevent native playback of a readable source, and playback does not
 wait for LUFS refinement.
 
 ## 11. Failure behavior
@@ -395,7 +452,7 @@ controlled transport clock: blocked/rapid replacement, Return during preparation
 cancellation by pause, selected-range stopping/looping, full-file looping, 2×
 preview, rejected playback starts, autoplay preference persistence and shutdown
 draining. It repeats the playback scenario with disposable silent WAVs and real
-AVAudioPlayers when CoreAudio exposes a default output device; otherwise it prints
+the native pitch transport when CoreAudio exposes a default output device; otherwise it prints
 an explicit skip. `bash scripts/test-app-lifecycle.sh --preview-only --native-audio`
 requires native playback and fails if output is unavailable. A controlled-clock
 pass does not establish native output, audible latency or device behavior.
@@ -452,7 +509,7 @@ checking and exercised with a runtime smoke launch.
 | `macos/WaveSearch/WaveSearch/WaveformSignposts.swift` | Points-of-Interest latency and queue instrumentation. |
 | `macos/WaveSearch/WaveSearch/WaveformView.swift` | Canvas rendering, playhead, selection display, AppKit pointer and drag session. |
 | `macos/WaveSearch/WaveSearch/AudioClipExport.swift` | Original-file URLs, persistent whole-file copies, and selected-range PCM24 WAV rendering. |
-| `macos/WaveSearch/WaveSearch/PlayerPanel.swift` | `AVAudioPlayer`, progress timer, staged publication, LUFS gain, panel integration. |
+| `macos/WaveSearch/WaveSearch/PlayerPanel.swift` | Native transport control, progress timer, staged publication, LUFS gain, panel integration. |
 | `core/include/wavesearch.h` | Public opaque waveform-cache C ABI. |
 | `core/src/main_c.zig` | C ABI validation and error translation. |
 | `core/src/db.zig` | Schema-v10 two-tier cache, work/failure state, budget/LRU, migration and integrity. |
@@ -470,3 +527,6 @@ checking and exercised with a runtime smoke launch.
   the source container. Keep-in-place drags supply the full original file.
 - Loudness protection uses sample peak rather than oversampled true peak.
 - Rendering uses SwiftUI Canvas rather than a custom Metal waveform renderer.
+
+For actual editor timeline acceptance and optional clip-reference assessment,
+see [the interoperability matrix](EDITOR_IMPORT_ACCEPTANCE.md).

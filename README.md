@@ -36,7 +36,8 @@ local CLAP semantic search.
 - **Search your libraries.** Search filenames and WAV/MP3/FLAC/Ogg metadata,
   filter by duration or UCS category, browse folders, and keep favourites.
 - **Preview and compare.** Play audio, seek through channel waveforms, inspect
-  loudness, and find similar sounds or duplicate families.
+  LUFS/sample peak, adjust preview pitch, view a sampled spectrogram, and find
+  similar sounds or duplicate families.
 - **Keep working while indexing.** Searchable snapshots appear before optional
   background refinement finishes.
 - **Keep control of your files.** Choose original-file imports or persistent

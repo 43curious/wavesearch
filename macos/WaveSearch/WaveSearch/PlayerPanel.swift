@@ -12,6 +12,8 @@ nonisolated protocol PreviewPlayback: AnyObject {
     var isPlaying: Bool { get }
     var enableRate: Bool { get set }
     var rate: Float { get set }
+    var pitch: Float { get set }
+    var supportsPitch: Bool { get }
     var numberOfLoops: Int { get set }
     var volume: Float { get set }
     func play() -> Bool
@@ -20,7 +22,12 @@ nonisolated protocol PreviewPlayback: AnyObject {
     func setVolume(_ volume: Float, fadeDuration duration: TimeInterval)
 }
 
-extension AVAudioPlayer: nonisolated PreviewPlayback {}
+// Legacy transport remains available for focused fixtures; product preview uses
+// AVAudioEngine so rate and pitch can be adjusted independently.
+extension AVAudioPlayer: nonisolated PreviewPlayback {
+    nonisolated var pitch: Float { get { 0 } set {} }
+    nonisolated var supportsPitch: Bool { false }
+}
 
 /// One-way handoff: preparation owns the player off-main until this wrapper is
 /// returned; only the main actor may then take it, once. No background references
@@ -56,6 +63,9 @@ final class PlayerController: ObservableObject {
     @Published private(set) var selection: ClosedRange<Double>?
     @Published private(set) var loops = false
     @Published private(set) var previewRate: PreviewRate = .normal
+    @Published private(set) var pitchSemitones = 0
+    @Published private(set) var pitchAvailable = false
+    let spectrogram = SpectrogramController()
     @Published private(set) var autoplayOnSelect: Bool
 
     private var player: (any PreviewPlayback)?
@@ -71,11 +81,18 @@ final class PlayerController: ObservableObject {
     static let autoplayKey = "ws_preview_autoplay_v1"
 
     init(preferences: UserDefaults = .standard, prepare: @escaping @Sendable (URL) -> PreparedPreviewPlayer? = { url in
-        guard !Task.isCancelled, let player = try? AVAudioPlayer(contentsOf: url) else { return nil }
+        guard !Task.isCancelled else { return nil }
+        // Preserve native multichannel/codec playback when the pitch graph
+        // cannot represent this source. The interface disables pitch explicitly.
+        let player: any PreviewPlayback
+        if let pitched = try? PitchedPreviewPlayback(url: url) { player = pitched }
+        else if let plain = try? AVAudioPlayer(contentsOf: url) {
+            plain.prepareToPlay()
+            player = plain
+        } else { return nil }
         guard !Task.isCancelled else { return nil }
         player.enableRate = true
         player.rate = 1
-        player.prepareToPlay()
         guard !Task.isCancelled else { return nil }
         return PreparedPreviewPlayer(player)
     }) {
@@ -106,10 +123,12 @@ final class PlayerController: ObservableObject {
             return
         }
 
+        spectrogram.clear()
         preparationWorker.cancel()
         analysisLoadTask?.cancel()
         player?.stop()
         player = nil
+        pitchAvailable = false
         stopTimer()
         stopShuttle()
 
@@ -129,6 +148,7 @@ final class PlayerController: ObservableObject {
         preparationWorker.submit(fileURL) { [weak self] prepared in
             guard let self, self.currentFile == file else { return }
             self.player = prepared?.takePlayer()
+            self.pitchAvailable = self.player?.supportsPitch ?? false
             self.isPreparing = false
             self.duration = self.player?.duration ?? 0
             self.player?.currentTime = self.duration * self.progress
@@ -229,11 +249,13 @@ final class PlayerController: ObservableObject {
     }
 
     func stop() {
+        spectrogram.clear()
         preparationWorker.cancel()
         analysisLoadTask?.cancel()
         analysisLoadTask = nil
         player?.stop()
         player = nil
+        pitchAvailable = false
         stopTimer()
         stopShuttle()
         isPlaying = false
@@ -253,6 +275,7 @@ final class PlayerController: ObservableObject {
         let analysisTask = analysisLoadTask
         stop()
         await preparationWorker.drain()
+        await spectrogram.drain()
         await analysisTask?.value
     }
 
@@ -280,6 +303,11 @@ final class PlayerController: ObservableObject {
         previewRate = rate
         configureTransport()
         if isPlaying { startTimer() }
+    }
+
+    func setPitchSemitones(_ value: Int) {
+        pitchSemitones = min(max(value, -12), 12)
+        configureTransport()
     }
 
     /// Fractions are shared with the waveform/export UI and reset per source.
@@ -310,6 +338,7 @@ final class PlayerController: ObservableObject {
     private var playbackRange: ClosedRange<Double> { selection ?? 0...1 }
 
     private func configureTransport() {
+        player?.pitch = Float(pitchSemitones * 100)
         player?.rate = shuttleSpeed == 2 ? 2 : Float(previewRate.rawValue)
         // Whole-source looping is native; selected ranges use the progress tick.
         player?.numberOfLoops = loops && selection == nil ? -1 : 0
@@ -679,6 +708,7 @@ struct PlayerPanel: View {
     @EnvironmentObject private var store: AppStore
     @ObservedObject private var player = PlayerController.shared
     @StateObject private var clipboard = AudioImportClipboard()
+    @State private var showsSpectrum = false
 
     private var isCurrent: Bool { player.currentFile == file }
     private var positionDescription: String {
@@ -696,6 +726,20 @@ struct PlayerPanel: View {
         let analysis = !isCurrent || player.isAnalyzingWaveform
             ? String(localized: "Analyzing waveform") : player.waveformData == nil ? String(localized: "Waveform unavailable") : String(localized: "Waveform ready")
         return "\(analysis). \(positionDescription). \(rangeDescription)"
+    }
+
+    private var loudnessDescription: String {
+        guard isCurrent, let loudness = player.waveformData?.loudness, loudness.analysisComplete else {
+            return player.isAnalyzingWaveform ? String(localized: "Analyzing loudness") : String(localized: "Loudness unknown")
+        }
+        let lufs = loudness.integratedLUFS.map { $0.formatted(.number.precision(.fractionLength(1))) } ?? "—"
+        let peak = loudness.samplePeakDBFS.map { $0.formatted(.number.precision(.fractionLength(1))) } ?? "—"
+        return String(localized: "\(lufs) LUFS · \(peak) dBFS sample peak")
+    }
+
+    private func refreshSpectrum() {
+        if showsSpectrum, isCurrent { player.spectrogram.load(file, range: player.selection) }
+        else { player.spectrogram.clear() }
     }
 
     var body: some View {
@@ -731,6 +775,25 @@ struct PlayerPanel: View {
             .controlSize(.small)
             .disabled(!isCurrent)
 
+            HStack(spacing: 12) {
+                Picker("Pitch", selection: Binding(get: { player.pitchSemitones }, set: { player.setPitchSemitones($0) })) {
+                    ForEach(-12...12, id: \.self) { value in
+                        Text("\(value.formatted(.number.sign(strategy: .always()))) st").tag(value)
+                    }
+                }
+                .frame(width: 150)
+                .accessibilityValue("\(player.pitchSemitones.formatted()) semitones")
+                .disabled(!isCurrent || !player.pitchAvailable)
+                .help("Preview pitch in semitones; rate and exports stay independent. Unavailable for unsupported playback formats.")
+                Toggle("Spectrogram", isOn: $showsSpectrum).toggleStyle(.button)
+                Spacer()
+                Text(loudnessDescription)
+                    .font(.caption.monospacedDigit())
+                    .accessibilityLabel("Original whole-file loudness and sample peak")
+                    .accessibilityValue(loudnessDescription)
+            }
+            .controlSize(.small)
+
             HStack {
                 Slider(value: Binding(
                     get: { isCurrent ? player.progress * player.duration : 0 },
@@ -763,6 +826,8 @@ struct PlayerPanel: View {
                     .accessibilityValue(clipboard.status)
             }
 
+            if showsSpectrum { SpectrogramView(model: player.spectrogram) }
+
             WaveformView(
                 data: player.currentFile == file ? player.waveformData : nil,
                 progress: player.progress,
@@ -786,10 +851,13 @@ struct PlayerPanel: View {
         .padding(.top, 28)
         .padding(.bottom, 20)
         .frame(maxWidth: .infinity, alignment: .topLeading)
-        .frame(height: 380)
+        .frame(height: showsSpectrum ? 530 : 420)
         .background(AppTheme.panelSunken)
-        .onChange(of: file) { _, _ in clipboard.cancel() }
-        .onDisappear { clipboard.cancel() }
+        .onChange(of: file) { _, _ in clipboard.cancel(); refreshSpectrum() }
+        .onChange(of: player.selection) { _, _ in refreshSpectrum() }
+        .onChange(of: showsSpectrum) { _, _ in refreshSpectrum() }
+        .onAppear { refreshSpectrum() }
+        .onDisappear { clipboard.cancel(); player.spectrogram.clear() }
         .onChange(of: clipboard.status) { _, status in
             if !status.isEmpty { announceAccessibility(status) }
         }

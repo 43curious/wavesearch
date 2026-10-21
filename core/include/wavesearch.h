@@ -16,6 +16,7 @@
 #define WS_CAP_FINGERPRINT_REPACK (UINT64_C(1) << 5)
 #define WS_CAP_FILE_METADATA     (UINT64_C(1) << 7)
 #define WS_CAP_UCS_CATEGORIES    (UINT64_C(1) << 8)
+#define WS_CAP_SPECTRUM          (UINT64_C(1) << 10)
 #define WS_CAP_PORTABLE_SELECTS  (UINT64_C(1) << 9)
 #define WS_CAP_FILE_LOOKUP       (UINT64_C(1) << 6)
 // Allocation-free, thread-safe, valid before init and after deinit. Capabilities
@@ -363,6 +364,15 @@ int ws_search_by_example_pcm(const float *samples, uint64_t frames,
 // Resolve robust duplicate-family information for one indexed file.
 // out->struct_size must be initialized to sizeof(WSAcousticGroup).
 int ws_acoustic_group(int file_id, WSAcousticGroup *out);
+
+// Bounded Hann-windowed 1024-point spectrum, bins 0..512 (DC through Nyquist).
+// Borrow 1..32 planar channels of 1..1024 finite Float32 frames; shorter input
+// is zero padded. Return the maximum channel amplitude per bin in dBFS,
+// clamped to [-100, 0]. No phase-canceling channel downmix. Output capacity >=513.
+// 0 success, -1 invalid input/allocation failure (output unchanged). No catalog
+// needed; independent calls may run concurrently. Inputs/output must not overlap.
+int ws_spectrum_column_v1(const float *const *planes, uint32_t channels,
+                          uint32_t frames, float *out_db, uint32_t capacity);
 
 // Generate waveform data for a file.
 // Writes num_points float32 RMS values (0.0–1.0) into out_samples.

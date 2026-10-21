@@ -136,3 +136,11 @@ Peak-RSS reporting uses Zig's libc `rusage` binding. Translated glibc headers
 can place `ru_maxrss` inside an anonymous union, so directly accessing that
 field in the generated C import is not portable. The helper still reports
 bytes, converting Linux's KiB value and preserving macOS's byte value.
+
+The headless runtime suite also runs `scripts/test-preview-inspection.sh` for
+bounded spectrum decoding, source-range isolation, latest-request cancellation
+and actual-work drain. Native offline pitch rendering runs when the required
+Apple Audio Units are registered. `--native-pitch` requires those DSP checks;
+unavailable components exit 2. The 2026-10-21 host had no registered required
+Audio Units, even for offline rendering. This skip is distinct from controlled
+transport coverage and from device-output acceptance in the lifecycle check.

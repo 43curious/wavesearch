@@ -11,6 +11,7 @@ const fingerprint = @import("fingerprint.zig");
 const clap_audio = @import("clap_audio.zig");
 const operations = @import("operations.zig");
 const waveform = @import("waveform.zig");
+const spectrum = @import("spectrum.zig");
 const cancellation = @import("cancellation.zig");
 const sync = @import("sync.zig");
 const query_cancel = @import("query.zig");
@@ -52,7 +53,7 @@ pub export fn ws_capabilities() u64 {
     const c = @import("c");
     return c.WS_CAP_QUERY_CANCELLATION | c.WS_CAP_WAVEFORM_V1 |
         c.WS_CAP_EXTERNAL_SEMANTIC | c.WS_CAP_CLAP |
-        c.WS_CAP_EXACT_DUPLICATES | c.WS_CAP_FINGERPRINT_REPACK | c.WS_CAP_FILE_LOOKUP | c.WS_CAP_FILE_METADATA | c.WS_CAP_UCS_CATEGORIES | c.WS_CAP_PORTABLE_SELECTS;
+        c.WS_CAP_EXACT_DUPLICATES | c.WS_CAP_FINGERPRINT_REPACK | c.WS_CAP_FILE_LOOKUP | c.WS_CAP_FILE_METADATA | c.WS_CAP_UCS_CATEGORIES | c.WS_CAP_PORTABLE_SELECTS | c.WS_CAP_SPECTRUM;
 }
 
 fn lockMutations() void {
@@ -1567,4 +1568,17 @@ pub export fn ws_waveform_cache_clear() c_int {
 
 pub export fn ws_last_error_message() [*:0]const u8 {
     return &last_error_buf;
+}
+
+// Independent, bounded PCM analysis: no catalog, model, or retained input.
+pub export fn ws_spectrum_column_v1(planes: ?[*]const ?[*]const f32, channels: u32, frames: u32, output: ?[*]f32, capacity: u32) c_int {
+    if (channels == 0 or channels > 32 or frames == 0 or frames > 1024 or capacity < 513 or planes == null or output == null) {
+        setLastError(error.InvalidSpectrumBuffer);
+        return -1;
+    }
+    spectrum.column(allocator, planes.?[0..channels], frames, output.?[0..513]) catch |err| {
+        setLastError(err);
+        return -1;
+    };
+    return 0;
 }

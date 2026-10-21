@@ -429,9 +429,7 @@ struct AppStoreLifecycleCheck {
             if !native {
                 return PreparedPreviewPlayer(PreviewTestPlayback(name: name, clock: clock, acceptsPlayback: name != "E"))
             }
-            guard let audio = try? AVAudioPlayer(contentsOf: url) else { return nil }
-            audio.enableRate = true
-            audio.prepareToPlay()
+            guard let audio = try? PitchedPreviewPlayback(url: url) else { return nil }
             return PreparedPreviewPlayer(audio)
         })
         func file(_ name: String, id: Int = 1) -> SoundFile {
@@ -476,6 +474,9 @@ struct AppStoreLifecycleCheck {
             precondition(clock.playedNames == ["C"] && clock.firstStart == 0.25,
                          "Only the newest transport should receive play at its in point")
         }
+        player.setPitchSemitones(99)
+        precondition(player.pitchSemitones == 12 && player.pitchAvailable)
+        if !native { precondition(clock.lastPitch == 1200) }
         player.setPreviewRate(.double)
         if native {
             try await advance(0.24)
@@ -487,6 +488,10 @@ struct AppStoreLifecycleCheck {
         }
         precondition(!player.isPlaying && abs(player.progress - 0.45) < 0.001,
                      "Non-looping preview did not stop at the out point")
+        player.setPitchSemitones(-99)
+        precondition(player.pitchSemitones == -12)
+        if !native { precondition(clock.lastPitch == -1200) }
+        player.setPitchSemitones(0)
         player.setLoops(true)
         player.playFromSelectionStart()
         try await advance(0.30)

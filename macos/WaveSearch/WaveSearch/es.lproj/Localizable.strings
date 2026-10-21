@@ -420,3 +420,19 @@
 "⌃⌥Space" = "⌃⌥Espacio";
 "⌘K or /" = "⌘K o /";
 "⌘⇧Space" = "⌘⇧Espacio";
+
+/* Preview analysis */
+"Pitch" = "Pitch";
+"%@ st" = "%@ st";
+"Preview pitch in semitones; rate and exports stay independent. Unavailable for unsupported playback formats." = "Pitch de escucha en semitonos; la velocidad y las exportaciones son independientes. No disponible para formatos de reproducción no compatibles.";
+"Spectrogram" = "Espectrograma";
+"Original whole-file loudness and sample peak" = "Sonoridad y pico de muestra del archivo original completo";
+"Analyzing loudness" = "Analizando sonoridad";
+"Loudness unknown" = "Sonoridad desconocida";
+"%@ LUFS · %@ dBFS sample peak" = "%@ LUFS · %@ dBFS de pico de muestra";
+"0–%@ Hz · −100–0 dBFS" = "0–%@ Hz · −100–0 dBFS";
+"Sampled windows; brief events between windows may be missed. Original audio before preview effects." = "Ventanas de muestra; pueden omitirse eventos breves entre ventanas. Audio original antes de los efectos de escucha.";
+"Analyzing spectrum" = "Analizando espectro";
+"Spectrum unavailable" = "Espectro no disponible";
+"%@ semitones" = "%@ semitonos";
+"From %@ to %@; 0 to %@ Hz; sampled original audio." = "De %@ a %@; 0 a %@ Hz; muestras del audio original.";
