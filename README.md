@@ -66,6 +66,10 @@ in Xcode and press **Command–R**. Its pre-build phase rebuilds the core before
 linking the Swift app. Local builds use ad-hoc signing and need no developer
 account.
 
+Signed, notarized DMGs use the separate [release workflow](documentation/RELEASING.md)
+with an explicitly chosen version/commit and Developer ID credentials. It does
+not change normal builds or publish a GitHub release automatically.
+
 The macOS core build compiles arm64 and x86_64 libraries, combines them with
 `lipo`, creates `WaveSearchKit.xcframework`, and copies it into the app sources.
 SQLite is vendored; `build.sh` downloads the amalgamation only if it is missing.

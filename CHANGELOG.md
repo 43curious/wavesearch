@@ -12,6 +12,12 @@ changelog/agent documentation added afterward.
 
 ### Added
 
+- An explicit universal macOS Release/DMG script and manual Actions workflow
+  require chosen metadata and Developer ID/Keychain credentials. App and DMG
+  signing, notarization, stapling, Gatekeeper checks and final checksums precede
+  artifact promotion; failures retain diagnostics. Release-only entitlements
+  permit the optional external runtime. Actual signed-release acceptance remains
+  pending; no release version, tag or public release is assigned automatically.
 - Native English/Spanish interface resources cover views, menus, progress,
   errors and shortcut/accessibility copy. File/sound/match/channel counts use
   plural rules and grouped numbers; preview/audio times retain localized

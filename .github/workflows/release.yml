@@ -1,0 +1,134 @@
+name: Build and upload signed DMG
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version chosen by Jon (MAJOR.MINOR.PATCH)'
+        required: true
+        type: string
+      build_number:
+        description: 'Build number chosen by Jon (positive integer, max 9999)'
+        required: true
+        type: string
+      release_date:
+        description: 'Release date chosen by Jon (YYYY-MM-DD)'
+        required: true
+        type: string
+      commit:
+        description: 'Reviewed release commit (complete 40-character SHA)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wavesearch-signed-distribution
+  cancel-in-progress: false
+
+jobs:
+  distribution:
+    runs-on: macos-26
+    timeout-minutes: 90
+    environment: release
+    defaults:
+      run:
+        shell: bash
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+      RELEASE_VERSION: ${{ inputs.version }}
+      RELEASE_BUILD: ${{ inputs.build_number }}
+      RELEASE_DATE: ${{ inputs.release_date }}
+      RELEASE_COMMIT: ${{ inputs.commit }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.commit }}
+          persist-credentials: false
+
+      - name: Validate chosen release metadata
+        run: |
+          test -d "$DEVELOPER_DIR"
+          test "$(git rev-parse HEAD)" = "$RELEASE_COMMIT"
+          python3 scripts/release-macos.py --plan \
+            --version "$RELEASE_VERSION" --build "$RELEASE_BUILD" \
+            --release-date "$RELEASE_DATE" --commit "$RELEASE_COMMIT"
+
+      - name: Install the pinned Zig release
+        run: bash scripts/setup-ci-zig.sh
+
+      - name: Prepare ephemeral signing and notarization credentials
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.DEVELOPER_ID_CERTIFICATE_P12_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPER_ID_CERTIFICATE_PASSWORD }}
+          NOTARY_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+          NOTARY_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          NOTARY_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64, os
+          from pathlib import Path
+          root = Path(os.environ["RUNNER_TEMP"])
+          files = {"wavesearch-release.p12": base64.b64decode(os.environ["CERTIFICATE_BASE64"], validate=True),
+                   "wavesearch-notary.p8": os.environ["NOTARY_PRIVATE_KEY"].encode()}
+          for name, data in files.items():
+              if not data:
+                  raise SystemExit("Missing release credential")
+              path = root / name
+              descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+              with os.fdopen(descriptor, "wb") as output:
+                  output.write(data)
+          PY
+          keychain="$RUNNER_TEMP/wavesearch-release.keychain-db"
+          keychain_password="$(openssl rand -base64 24)"
+          echo "::add-mask::$keychain_password"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 7200 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$RUNNER_TEMP/wavesearch-release.p12" -P "$CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/security -t cert -f pkcs12 -k "$keychain" >/dev/null
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -k "$keychain_password" "$keychain" >/dev/null
+          xcrun notarytool store-credentials WaveSearchRelease \
+            --key "$RUNNER_TEMP/wavesearch-notary.p8" --key-id "$NOTARY_KEY_ID" \
+            --issuer "$NOTARY_ISSUER" --keychain "$keychain"
+
+      - name: Build, sign, notarize, staple and verify
+        env:
+          SIGNING_IDENTITY: ${{ secrets.DEVELOPER_ID_SIGNING_IDENTITY }}
+          SIGNING_TEAM: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          python3 scripts/release-macos.py \
+            --version "$RELEASE_VERSION" --build "$RELEASE_BUILD" \
+            --release-date "$RELEASE_DATE" --commit "$RELEASE_COMMIT" \
+            --identity "$SIGNING_IDENTITY" --team-id "$SIGNING_TEAM" \
+            --notary-profile WaveSearchRelease \
+            --keychain "$RUNNER_TEMP/wavesearch-release.keychain-db" --headless-checks
+
+      - name: Upload verified distribution
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: WaveSearch-${{ inputs.version }}-${{ inputs.build_number }}
+          path: |
+            dist/*/*.dmg
+            dist/*/SHA256SUMS
+            dist/*/release.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Preserve diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: distribution-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: dist/*/diagnostics/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Remove ephemeral credentials
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/wavesearch-release.keychain-db" || true
+          rm -f "$RUNNER_TEMP/wavesearch-release.p12" "$RUNNER_TEMP/wavesearch-notary.p8"

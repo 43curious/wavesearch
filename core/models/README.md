@@ -79,6 +79,12 @@ project build aborts during runtime initialization; direct Swift compilation
 and deterministic checks provide partial validation only. No library-validation
 bypass or hardened-runtime exception is added by this installer.
 
+The separate [Developer ID release policy](../../documentation/RELEASING.md)
+disables library validation for the signed host process so it can load the
+opt-in third-party runtime. It preserves sandboxing and Hardened Runtime;
+models/runtime remain outside the default DMG. Real provider loading in that
+signed distribution still requires acceptance on a supported Mac.
+
 ## Runtime contract
 
 `manifest.json` must have `format_version=1`, `vector_dimension=512`, nonempty

@@ -126,6 +126,12 @@ network failure/retry, corruption, cancellation/drain and provider-load failure;
 it does not establish real-model or signed-release runtime acceptance. Avoid
 rebuilding the XCFramework concurrently with Swift compilation/linking against it.
 
+Portable script checks also exercise the release pipeline's rejection and
+promotion barriers with injected Apple-tool results. The separate manual
+[signed distribution workflow](RELEASING.md) shares `scripts/setup-ci-zig.sh`
+with this workflow; it requires explicit version/build/date/commit inputs and
+Keychain credentials. Normal CI does not sign, notarize or publish distributions.
+
 Peak-RSS reporting uses Zig's libc `rusage` binding. Translated glibc headers
 can place `ru_maxrss` inside an anonymous union, so directly accessing that
 field in the generated C import is not portable. The helper still reports

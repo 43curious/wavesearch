@@ -52,6 +52,8 @@ current WaveSearch application.
 
 - [Continuous integration](CI.md) — native Linux/macOS jobs, pinned tools,
   headless checks and the desktop validation that remains local.
+- [Signed macOS distribution](RELEASING.md) — explicit release inputs, signing,
+  notarization, DMG verification, credentials and pending real-release acceptance.
 
 - [Repository audit](REPOSITORY_AUDIT.md) — cleanup evidence, build-product
   removal, retained files, and fresh-source validation.

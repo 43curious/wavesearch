@@ -28,3 +28,7 @@ WaveSearchKit.xcframework/
 
 # Logs
 *.log
+
+# Signed distribution products and Python tooling caches
+dist/
+__pycache__/
