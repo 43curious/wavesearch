@@ -20,7 +20,7 @@ nonisolated struct LibraryBackupManifest: Codable, Sendable {
               Set(folders.map(\.id)).count == folders.count,
               Set(folders.map { URL(fileURLWithPath: $0.path).standardizedFileURL.path }).count == folders.count,
               favourites.allSatisfy({ $0.hasPrefix("/") }) else {
-            throw RecoveryFailure(message: "This backup has an unsupported or invalid library manifest.")
+            throw RecoveryFailure(message: String(localized: "This backup has an unsupported or invalid library manifest."))
         }
     }
 }
@@ -41,11 +41,11 @@ nonisolated enum LibraryRecovery {
         var report = WSIntegrityReport()
         report.struct_size = UInt32(MemoryLayout<WSIntegrityReport>.size)
         let rc = ws_integrity_check(UInt32(WS_INTEGRITY_FULL), &report)
-        guard rc >= 0 else { throw backendFailure("Integrity check failed") }
+        guard rc >= 0 else { throw backendFailure(String(localized: "Integrity check failed")) }
         if report.errors_found > 0 {
-            throw RecoveryFailure(message: "Integrity check found \(report.errors_found) inconsistencies across \(report.checks_run) checks. Restore a known good backup or re-index the affected libraries.")
+            throw RecoveryFailure(message: String(localized: "Integrity check found \(report.errors_found) inconsistencies across \(report.checks_run) checks. Restore a known good backup or re-index the affected libraries."))
         }
-        return "Passed \(report.checks_run) integrity checks (schema \(report.schema_version))."
+        return String(localized: "Passed \(report.checks_run) integrity checks (schema \(report.schema_version)).")
     }
 
     static func createBackup(at destination: URL, manifest: LibraryBackupManifest) throws {
@@ -57,7 +57,7 @@ nonisolated enum LibraryRecovery {
         defer { try? fm.removeItem(at: staging) }
         let catalog = staging.appendingPathComponent("catalog.sqlite")
         guard catalog.path.withCString({ ws_backup_create($0) }) == 0 else {
-            throw backendFailure("Backup failed")
+            throw backendFailure(String(localized: "Backup failed"))
         }
         try JSONEncoder().encode(manifest).write(to: staging.appendingPathComponent("manifest.json"), options: .atomic)
         try fm.moveItem(at: staging, to: destination)
@@ -73,7 +73,7 @@ nonisolated enum LibraryRecovery {
     static func restore(at source: URL) throws {
         let catalog = source.appendingPathComponent("catalog.sqlite")
         guard catalog.path.withCString({ ws_backup_restore($0) }) == 0 else {
-            throw backendFailure("Restore failed")
+            throw backendFailure(String(localized: "Restore failed"))
         }
     }
 
@@ -105,18 +105,18 @@ nonisolated enum LibraryRecovery {
             // No core reader exists here. Restore every file already moved if
             // publication fails; the safety folder still retains any leftovers.
             for entry in moved.reversed() { try? fm.moveItem(at: entry.retained, to: entry.original) }
-            throw RecoveryFailure(message: "Recovery could not publish the catalog: \(error.localizedDescription). Retained files are at \(safety.path).")
+            throw RecoveryFailure(message: String(localized: "Recovery could not publish the catalog: \(error.localizedDescription). Retained files are at \(safety.path)."))
         }
         return safety
     }
 
     private static func prepareRecoveredCopy(source: URL, staging: URL, candidate: URL) throws {
         let work = staging.appendingPathComponent("work.sqlite")
-        guard work.path.withCString({ ws_init($0) }) == 0 else { throw backendFailure("Could not open recovery workspace") }
+        guard work.path.withCString({ ws_init($0) }) == 0 else { throw backendFailure(String(localized: "Could not open recovery workspace")) }
         defer { ws_deinit() }
         try restore(at: source)
         _ = try checkIntegrity()
-        guard candidate.path.withCString({ ws_backup_create($0) }) == 0 else { throw backendFailure("Could not prepare recovered catalog") }
+        guard candidate.path.withCString({ ws_backup_create($0) }) == 0 else { throw backendFailure(String(localized: "Could not prepare recovered catalog")) }
     }
 
     /// Re-scan the replacement root using the same ID. The core publishes all
@@ -131,9 +131,9 @@ nonisolated enum LibraryRecovery {
         defer {
             if !succeeded, let scope = access.scope { backend.releaseScope(scope) }
         }
-        guard !access.folder.isMissing else { throw RecoveryFailure(message: "The selected library folder is unavailable.") }
+        guard !access.folder.isMissing else { throw RecoveryFailure(message: String(localized: "The selected library folder is unavailable.")) }
         guard replacement.path.withCString({ ws_index_folder_ex(Int32(folder.id), $0, UInt32(WS_INDEX_FAST)) }) == 0 else {
-            throw backendFailure("Reconnect failed; the previous index was preserved")
+            throw backendFailure(String(localized: "Reconnect failed; the previous index was preserved"))
         }
         access.folder.fileCount = max(0, Int(ws_folder_count(Int32(folder.id))))
         succeeded = true
@@ -143,7 +143,7 @@ nonisolated enum LibraryRecovery {
     static func storage(index: URL, exports: URL, recovery: URL) throws -> LibraryStorageUsage {
         var cache = WSWaveformCacheStatus()
         cache.struct_size = UInt32(MemoryLayout<WSWaveformCacheStatus>.size)
-        guard ws_waveform_cache_status(&cache) == 0 else { throw backendFailure("Could not read cache storage") }
+        guard ws_waveform_cache_status(&cache) == 0 else { throw backendFailure(String(localized: "Could not read cache storage")) }
         return try .init(indexBytes: fileBytes(index),
                          journalBytes: fileBytes(URL(fileURLWithPath: index.path + "-wal")) + fileBytes(URL(fileURLWithPath: index.path + "-shm")),
                          universalBytes: cache.universal_bytes, detailedBytes: cache.detailed_bytes,
@@ -163,7 +163,7 @@ nonisolated enum LibraryRecovery {
         var enumerationError: Error?
         guard let enumerator = FileManager.default.enumerator(at: url, includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey],
             errorHandler: { _, error in enumerationError = error; return false }) else {
-            throw RecoveryFailure(message: "Could not read storage at \(url.path)")
+            throw RecoveryFailure(message: String(localized: "Could not read storage at \(url.path)"))
         }
         var bytes: Int64 = 0
         for case let file as URL in enumerator {

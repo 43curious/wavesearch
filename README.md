@@ -107,6 +107,10 @@ preview ranges into named collections, and import/export your selects as JSON.
 are retained and can be linked explicitly after adding/reconnecting a library.
 See [portable selects](documentation/PORTABLE_SELECTS.md).
 
+The interface follows your macOS app language in English or Spanish. Set a
+per-app language in System Settings → General → Language & Region and reopen
+WaveSearch. This changes interface text; filenames and search terms stay intact.
+
 Right-click a result to find similar sounds, manage favourites and collections, or reveal the
 source in Finder. The waveform search icon beside the search field lets you
 choose an audio file as a search example; you can also drop one onto the search

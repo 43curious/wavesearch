@@ -28,7 +28,7 @@ struct RecoverySettingsView: View {
                         .foregroundStyle(.red).textSelection(.enabled)
                 }
                 if !store.isReady {
-                    Text(store.lastBackendError ?? "The catalog is opening…")
+                    Text(store.lastBackendError ?? String(localized: "The catalog is opening…"))
                         .foregroundStyle(.secondary)
                     if store.canRestoreBackup {
                         Text("Restore a backup to recover an index that cannot open. The original database and journals will be retained in Recovery.")
@@ -69,16 +69,16 @@ struct RecoverySettingsView: View {
                 Button("Delete Waveform Cache…", role: .destructive) { confirmingCacheDeletion = true }
                     .disabled(!store.canModifyLibraries)
                 if let usage = store.storageUsage {
-                    storageRow("Index database", bytes: usage.indexBytes, url: store.indexURL)
-                    storageRow("Index journals", bytes: usage.journalBytes, url: nil)
-                    storageRow("Universal waveforms", bytes: usage.universalBytes, url: nil)
-                    storageRow("Detailed waveforms", bytes: usage.detailedBytes, url: nil)
+                    storageRow(String(localized: "Index database"), bytes: usage.indexBytes, url: store.indexURL)
+                    storageRow(String(localized: "Index journals"), bytes: usage.journalBytes, url: nil)
+                    storageRow(String(localized: "Universal waveforms"), bytes: usage.universalBytes, url: nil)
+                    storageRow(String(localized: "Detailed waveforms"), bytes: usage.detailedBytes, url: nil)
                     Text("Waveform cache is included in the index size. Detailed cache limit: \(formatBytes(usage.detailedBudgetBytes)).")
                         .font(.caption).foregroundStyle(.secondary)
-                    storageRow("Exported clips", bytes: usage.exportBytes, url: store.exportDirectory)
+                    storageRow(String(localized: "Exported clips"), bytes: usage.exportBytes, url: store.exportDirectory)
                     Text("Exports are persistent media that editing projects may reference.")
                         .font(.caption).foregroundStyle(.secondary)
-                    storageRow("Recovery copies", bytes: usage.recoveryBytes, url: store.recoveryDirectory)
+                    storageRow(String(localized: "Recovery copies"), bytes: usage.recoveryBytes, url: store.recoveryDirectory)
                 }
                 if let error = store.storageError {
                     Text(error).foregroundStyle(.red)

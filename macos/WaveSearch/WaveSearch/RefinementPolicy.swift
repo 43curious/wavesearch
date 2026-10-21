@@ -10,20 +10,20 @@ nonisolated enum RefinementMode: String, CaseIterable, Codable, Identifiable, Se
 
     var title: String {
         switch self {
-        case .fastOnly: "Fast only"
-        case .balanced: "Balanced"
-        case .complete: "Complete"
+        case .fastOnly: String(localized: "Fast only")
+        case .balanced: String(localized: "Balanced")
+        case .complete: String(localized: "Complete")
         }
     }
 
     var summary: String {
         switch self {
         case .fastOnly:
-            "Metadata and lexical search only. Selected sounds still receive exact waveform and loudness analysis on demand."
+            String(localized: "Metadata and lexical search only. Selected sounds still receive exact waveform and loudness analysis on demand.")
         case .balanced:
-            "Refines while the Mac is idle and on AC power. Pauses immediately for playback, search, scans, or system pressure."
+            String(localized: "Refines while the Mac is idle and on AC power. Pauses immediately for playback, search, scans, or system pressure.")
         case .complete:
-            "Drains every available refinement queue, while still yielding to foreground work and system pressure."
+            String(localized: "Drains every available refinement queue, while still yielding to foreground work and system pressure.")
         }
     }
 }
@@ -35,9 +35,9 @@ nonisolated enum RefinementQueue: String, Sendable {
 
     var title: String {
         switch self {
-        case .waveform: "waveforms"
-        case .acoustic: "acoustic fingerprints"
-        case .semantic: "semantic embeddings"
+        case .waveform: String(localized: "waveforms")
+        case .acoustic: String(localized: "acoustic fingerprints")
+        case .semantic: String(localized: "semantic embeddings")
         }
     }
 }
@@ -85,20 +85,20 @@ nonisolated enum RefinementBlocker: Equatable, Sendable {
 
     var message: String {
         switch self {
-        case .fastOnly: "Background refinement is disabled in Fast only mode"
-        case .userPaused: "Background refinement is paused"
-        case .metadataScan: "Waiting for the metadata scan to finish"
-        case .search: "Paused for search"
-        case .playback: "Paused for playback"
-        case .selectedAnalysis: "Paused for selected waveform analysis"
-        case .thermalPressure: "Waiting for the Mac to cool down"
-        case .memoryPressure: "Waiting for memory pressure to clear"
-        case .lowPowerMode: "Waiting for Low Power Mode to turn off"
-        case .batteryPower: "Balanced mode waits for AC power"
-        case .waitingForIdle(let seconds): "Waiting for about \(seconds)s of idle time"
-        case .noAvailableLibraries: "Waiting for an available library"
-        case .missingLibrary: "Waiting for a library drive"
-        case .semanticProviderUnavailable: "Optional semantic model is unavailable"
+        case .fastOnly: String(localized: "Background refinement is disabled in Fast only mode")
+        case .userPaused: String(localized: "Background refinement is paused")
+        case .metadataScan: String(localized: "Waiting for the metadata scan to finish")
+        case .search: String(localized: "Paused for search")
+        case .playback: String(localized: "Paused for playback")
+        case .selectedAnalysis: String(localized: "Paused for selected waveform analysis")
+        case .thermalPressure: String(localized: "Waiting for the Mac to cool down")
+        case .memoryPressure: String(localized: "Waiting for memory pressure to clear")
+        case .lowPowerMode: String(localized: "Waiting for Low Power Mode to turn off")
+        case .batteryPower: String(localized: "Balanced mode waits for AC power")
+        case .waitingForIdle(let seconds): String(localized: "Waiting for about \(seconds)s of idle time")
+        case .noAvailableLibraries: String(localized: "Waiting for an available library")
+        case .missingLibrary: String(localized: "Waiting for a library drive")
+        case .semanticProviderUnavailable: String(localized: "Optional semantic model is unavailable")
         }
     }
 }
@@ -167,10 +167,10 @@ nonisolated struct RefinementSnapshot: Sendable {
         case .acoustic: pending = acousticPending
         case .semantic: pending = semanticPending
         }
-        guard pending > 0 else { return "No pending work" }
+        guard pending > 0 else { return String(localized: "No pending work") }
         guard mode != .fastOnly, blocker == nil, !deferredQueues.contains(queue),
-              queue != .semantic || semanticAvailable else { return "Estimate suspended" }
-        guard let estimate = estimates[queue] else { return "Learning processing speed…" }
+              queue != .semantic || semanticAvailable else { return String(localized: "Estimate suspended") }
+        guard let estimate = estimates[queue] else { return String(localized: "Learning processing speed…") }
         return estimate.detail(pending: pending)
     }
 
@@ -178,26 +178,26 @@ nonisolated struct RefinementSnapshot: Sendable {
     var isWorking: Bool { activeQueue != nil }
 
     var phase: String {
-        if let activeQueue { return "Refining \(activeQueue.title)" }
+        if let activeQueue { return String(localized: "Refining \(activeQueue.title)") }
         if let blocker { return blocker.message }
-        if hasPendingWork { return "Refinement ready to continue" }
-        return semanticAvailable ? "Fully refined" : "Available refinement complete"
+        if hasPendingWork { return String(localized: "Refinement ready to continue") }
+        return semanticAvailable ? String(localized: "Fully refined") : String(localized: "Available refinement complete")
     }
 
     var detail: String {
         if mode == .fastOnly {
-            return "Fast metadata and lexical search are ready. Selected sounds are still analyzed on demand."
+            return String(localized: "Fast metadata and lexical search are ready. Selected sounds are still analyzed on demand.")
         }
         if let blocker { return blocker.message }
         if let activeQueue {
-            return "Search is ready · processing one \(activeQueue.title) item at a time"
+            return String(localized: "Search is ready · processing one \(activeQueue.title) item at a time")
         }
         if hasPendingWork {
-            return "Search is ready · background work will resume when policy allows"
+            return String(localized: "Search is ready · background work will resume when policy allows")
         }
         return semanticAvailable
-            ? "Fast search, acoustic families, waveforms, and semantic search are ready"
-            : "Fast search, acoustic families, and waveforms are ready; install CLAP for semantic refinement"
+            ? String(localized: "Fast search, acoustic families, waveforms, and semantic search are ready")
+            : String(localized: "Fast search, acoustic families, and waveforms are ready; install CLAP for semantic refinement")
     }
 }
 
@@ -229,11 +229,11 @@ nonisolated struct RefinementEstimate: Sendable {
     func detail(pending: Int64) -> String {
         let minutes = secondsPerItem * Double(pending) / 60
         let duration: String
-        if minutes < 1 { duration = "less than 1 min" }
-        else if minutes < 10 { duration = "about \(Int(ceil(minutes))) min" }
-        else if minutes < 60 { duration = "about \(Int(ceil(minutes / 5)) * 5) min" }
-        else { duration = "about \((minutes / 60).formatted(.number.precision(.fractionLength(1)))) hr" }
+        if minutes < 1 { duration = String(localized: "less than 1 min") }
+        else if minutes < 10 { duration = String(localized: "about \(Int(ceil(minutes))) min") }
+        else if minutes < 60 { duration = String(localized: "about \(Int(ceil(minutes / 5)) * 5) min") }
+        else { duration = String(localized: "about \((minutes / 60).formatted(.number.precision(.fractionLength(1)))) hr") }
         let rate = (60 / secondsPerItem).formatted(.number.precision(.fractionLength(1)))
-        return "\(rate) items/min · \(duration) active processing"
+        return String(localized: "\(rate) items/min · \(duration) active processing")
     }
 }

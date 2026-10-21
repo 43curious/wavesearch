@@ -26,7 +26,7 @@ nonisolated struct SoundFile: Identifiable, Hashable, Sendable {
 final class AppStore: ObservableObject {
     @Published var isSidebarVisible = true
     @Published private(set) var keepsLibrariesUpdated = true
-    @Published private(set) var libraryWatchStatus = "Waiting for available libraries"
+    @Published private(set) var libraryWatchStatus = String(localized: "Waiting for available libraries")
     private let watchesLibraries: Bool
     private let watchSource: LibraryWatchSource
     private lazy var libraryWatcher = LibraryWatchCoordinator(source: watchSource) { [weak self] id in
@@ -238,7 +238,7 @@ final class AppStore: ObservableObject {
     var selectedFolderName: String {
         guard let id = selectedFolderId,
               let folder = folders.first(where: { $0.id == id })
-        else { return "All Libraries" }
+        else { return String(localized: "All Libraries") }
         return folder.name
     }
 
@@ -406,11 +406,11 @@ final class AppStore: ObservableObject {
     }
 
     func folderName(for id: Int) -> String {
-        folders.first(where: { $0.id == id })?.name ?? "Library"
+        folders.first(where: { $0.id == id })?.name ?? String(localized: "Library")
     }
 
     func libraryLocation(for file: SoundFile) -> String {
-        guard let folder = folders.first(where: { $0.id == file.folderId }) else { return "Library" }
+        guard let folder = folders.first(where: { $0.id == file.folderId }) else { return String(localized: "Library") }
         let folderURL = URL(fileURLWithPath: folder.path, isDirectory: true).standardizedFileURL
         let parentURL = file.url.deletingLastPathComponent().standardizedFileURL
         let root = folderURL.path.hasSuffix("/") ? folderURL.path : folderURL.path + "/"
@@ -487,14 +487,14 @@ final class AppStore: ObservableObject {
     func editSelects(file: SoundFile, kind: UInt32, name: String, range: SelectsMembership? = nil, enabled: Bool = true) {
         performSelects {
             try PortableSelects.edit(file: Int32(file.id), kind: kind, name: name, range: range, enabled: enabled)
-            return "Saved in the catalog."
+            return String(localized: "Saved in the catalog.")
         }
     }
 
     func relinkSelects(_ source: SelectsSource, to file: SoundFile) {
         performSelects {
             guard source.id.withCString({ ws_selects_relink_v1($0, Int32(file.id)) }) == 0 else { throw PortableSelects.failure() }
-            return "Linked reference; existing annotations were merged."
+            return String(localized: "Linked reference; existing annotations were merged.")
         }
     }
 
@@ -514,9 +514,9 @@ final class AppStore: ObservableObject {
         panel.nameFieldStringValue = "WaveSearch-selects.json"
         panel.allowedContentTypes = [.json]
         panel.allowsOtherFileTypes = false
-        panel.message = "Export tags, collections, saved ranges and favourites. Source audio stays in place."
+        panel.message = String(localized: "Export tags, collections, saved ranges and favourites. Source audio stays in place.")
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        performSelects { try PortableSelects.writeExport(url); return "Exported to \(url.lastPathComponent)." }
+        performSelects { try PortableSelects.writeExport(url); return String(localized: "Exported to \(url.lastPathComponent).") }
     }
 
     func importSelects() {
@@ -525,7 +525,7 @@ final class AppStore: ObservableObject {
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.allowedContentTypes = [.json]
-        panel.message = "Merge a WaveSearch selects JSON file. Existing annotations and unresolved references are preserved."
+        panel.message = String(localized: "Merge a WaveSearch selects JSON file. Existing annotations and unresolved references are preserved.")
         guard panel.runModal() == .OK, let url = panel.url else { return }
         performSelects { try PortableSelects.importData(PortableSelects.readImport(url)) }
     }
@@ -536,8 +536,8 @@ final class AppStore: ObservableObject {
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
-        panel.message = "Choose a sound library folder"
-        panel.prompt = "Add Library"
+        panel.message = String(localized: "Choose a sound library folder")
+        panel.prompt = String(localized: "Add Library")
         panel.canCreateDirectories = false
 
         guard panel.runModal() == .OK, let url = panel.url else { return }
@@ -658,8 +658,8 @@ final class AppStore: ObservableObject {
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
-        panel.prompt = "Save Backup Here"
-        panel.message = "Choose where to save a new WaveSearch backup folder. It includes the index, library locations, and favourites. Original audio and exports are stored separately."
+        panel.prompt = String(localized: "Save Backup Here")
+        panel.message = String(localized: "Choose where to save a new WaveSearch backup folder. It includes the index, library locations, and favourites. Original audio and exports are stored separately.")
         guard panel.runModal() == .OK, let parent = panel.url else { return }
         let destination = parent.appendingPathComponent("WaveSearch-\(UUID().uuidString).wavesearchbackup", isDirectory: true)
         createBackup(at: destination)
@@ -667,7 +667,7 @@ final class AppStore: ObservableObject {
 
     func createBackup(at destination: URL) {
         let manifest = backupManifest
-        performRecovery("Creating backup…", operation: {
+        performRecovery(String(localized: "Creating backup…"), operation: {
             let parent = destination.deletingLastPathComponent()
             let scoped = parent.startAccessingSecurityScopedResource()
             defer { if scoped { parent.stopAccessingSecurityScopedResource() } }
@@ -675,7 +675,7 @@ final class AppStore: ObservableObject {
             try LibraryRecovery.createBackup(at: destination, manifest: manifest)
             return destination
         }, apply: { [weak self] url in
-            self?.recoveryStatus = "Backup saved to \(url.path)."
+            self?.recoveryStatus = String(localized: "Backup saved to \(url.path).")
         })
     }
 
@@ -686,14 +686,14 @@ final class AppStore: ObservableObject {
         panel.canChooseFiles = false
         panel.treatsFilePackagesAsDirectories = true
         panel.allowsMultipleSelection = false
-        panel.prompt = "Choose Backup"
-        panel.message = "Select a WaveSearch backup folder containing catalog.sqlite and manifest.json."
+        panel.prompt = String(localized: "Choose Backup")
+        panel.message = String(localized: "Select a WaveSearch backup folder containing catalog.sqlite and manifest.json.")
         guard panel.runModal() == .OK, let source = panel.url, canRestoreBackup else { return }
         let alert = NSAlert()
-        alert.messageText = "Restore this backup?"
-        alert.informativeText = "This replaces the current index, library list, and favourites. WaveSearch will first save a recovery copy of the current catalog. Your original audio and exported clips stay in their locations."
-        alert.addButton(withTitle: "Restore")
-        alert.addButton(withTitle: "Cancel")
+        alert.messageText = String(localized: "Restore this backup?")
+        alert.informativeText = String(localized: "This replaces the current index, library list, and favourites. WaveSearch will first save a recovery copy of the current catalog. Your original audio and exported clips stay in their locations.")
+        alert.addButton(withTitle: String(localized: "Restore"))
+        alert.addButton(withTitle: String(localized: "Cancel"))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         restoreBackup(at: source)
     }
@@ -704,7 +704,7 @@ final class AppStore: ObservableObject {
         let previous = backupManifest
         let recovery = recoveryDirectory
         let backend = backend
-        performRecovery("Restoring backup…", allowUnopened: true, operation: {
+        performRecovery(String(localized: "Restoring backup…"), allowUnopened: true, operation: {
             let scoped = source.startAccessingSecurityScopedResource()
             defer { if scoped { source.stopAccessingSecurityScopedResource() } }
             let manifest = try LibraryRecovery.readManifest(at: source)
@@ -713,8 +713,8 @@ final class AppStore: ObservableObject {
                 let saved = try JSONEncoder().encode(manifest.folders)
                 let opened = backend.open(index.path, saved)
                 let check: Result<String, Error> = opened.opened
-                    ? .success("Recovered catalog passed full integrity checks.")
-                    : .failure(RecoveryFailure(message: opened.error ?? "Recovered catalog could not open. Retry opening the library."))
+                    ? .success(String(localized: "Recovered catalog passed full integrity checks."))
+                    : .failure(RecoveryFailure(message: opened.error ?? String(localized: "Recovered catalog could not open. Retry opening the library.")))
                 return (opened, manifest.favourites, safety, check)
             }
             try FileManager.default.createDirectory(at: recovery, withIntermediateDirectories: true)
@@ -753,24 +753,24 @@ final class AppStore: ObservableObject {
             selectsDocument = SelectsDocument()
             indexedFavouriteIDs = nil
             await AudioAnalysisRepository.shared.clearMemory()
-            recoveryStatus = "Restored backup. Previous catalog saved to \(safety.path)."
+            recoveryStatus = String(localized: "Restored backup. Previous catalog saved to \(safety.path).")
             if case .failure(let error) = check { recoveryError = error.localizedDescription }
         })
     }
 
     func checkIntegrity() {
-        performRecovery("Checking index integrity…", operation: { try LibraryRecovery.checkIntegrity() },
+        performRecovery(String(localized: "Checking index integrity…"), operation: { try LibraryRecovery.checkIntegrity() },
                         apply: { [weak self] report in self?.recoveryStatus = report })
     }
 
     func clearWaveformCache() {
-        performRecovery("Deleting waveform cache…", operation: {
+        performRecovery(String(localized: "Deleting waveform cache…"), operation: {
             guard ws_waveform_cache_clear() == 0 else {
-                throw RecoveryFailure(message: ifBackendError() ?? "Could not delete waveform cache")
+                throw RecoveryFailure(message: ifBackendError() ?? String(localized: "Could not delete waveform cache"))
             }
         }, apply: { [weak self] _ in
             await AudioAnalysisRepository.shared.clearMemory()
-            self?.recoveryStatus = "Waveform cache deleted. Waveforms regenerate when previewed or during background refinement. Freed database space will be reused."
+            self?.recoveryStatus = String(localized: "Waveform cache deleted. Waveforms regenerate when previewed or during background refinement. Freed database space will be reused.")
         })
     }
 
@@ -781,8 +781,8 @@ final class AppStore: ObservableObject {
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
         panel.canCreateDirectories = false
-        panel.prompt = "Reconnect"
-        panel.message = "Choose the new root of \(folder.name). WaveSearch will re-scan this folder and replace its indexed file list; files absent from this root will leave the index."
+        panel.prompt = String(localized: "Reconnect")
+        panel.message = String(localized: "Choose the new root of \(folder.name). WaveSearch will re-scan this folder and replace its indexed file list; files absent from this root will leave the index.")
         guard panel.runModal() == .OK, let url = panel.url else { return }
         reconnectFolder(folder, to: url)
     }
@@ -791,11 +791,11 @@ final class AppStore: ObservableObject {
         guard folders.contains(where: { $0.id == folder.id }) else { return }
         let newPath = url.standardizedFileURL.path
         guard !folders.contains(where: { $0.id != folder.id && URL(fileURLWithPath: $0.path).standardizedFileURL.path == newPath }) else {
-            recoveryError = "This folder is already connected as another library."
+            recoveryError = String(localized: "This folder is already connected as another library.")
             return
         }
         let backend = backend
-        performRecovery("Reconnecting \(folder.name)…", operation: {
+        performRecovery(String(localized: "Reconnecting \(folder.name)…"), operation: {
             try LibraryRecovery.reconnect(folder, to: url, backend: backend)
         }, apply: { [weak self] access in
             guard let self else { return }
@@ -809,7 +809,7 @@ final class AppStore: ObservableObject {
             })
             preferences.set(favouritePaths.sorted(), forKey: favouritesKey)
             saveFolders()
-            recoveryStatus = "Reconnected \(folder.name): \(access.folder.fileCount) sounds indexed."
+            recoveryStatus = String(localized: "Reconnected \(folder.name): \(LocalizedText.count(access.folder.fileCount, .sounds)).")
         })
     }
 
@@ -889,10 +889,10 @@ final class AppStore: ObservableObject {
         semanticRefinedCount = 0
         semanticPendingCount = 0
         semanticFailedCount = 0
-        indexingPhase = deep ? "Deep-scanning library" : "Scanning library"
+        indexingPhase = deep ? String(localized: "Deep-scanning library") : String(localized: "Scanning library")
         indexingProgress = deep
-            ? "Deep re-indexing \(folder.name)…"
-            : "\(isReindex ? "Re-indexing" : "Indexing") \(folder.name)…"
+            ? String(localized: "Deep re-indexing \(folder.name)…")
+            : (isReindex ? String(localized: "Re-indexing \(folder.name)…") : String(localized: "Indexing \(folder.name)…"))
         lastBackendError = nil
         startIndexProgressPolling()
 
@@ -928,7 +928,7 @@ final class AppStore: ObservableObject {
                 let scoped = accessURL?.startAccessingSecurityScopedResource() ?? false
                 defer { if scoped { accessURL?.stopAccessingSecurityScopedResource() } }
                 guard backend.availability([expectedFolder]).first?.isMissing == false else {
-                    return .init(result: -1, count: 0, error: "Library is unavailable or its volume changed; previous index preserved")
+                    return .init(result: -1, count: 0, error: String(localized: "Library is unavailable or its volume changed; previous index preserved"))
                 }
                 guard !Task.isCancelled else { return .init(result: -1, count: 0, error: "Cancelled") }
                 return backend.scan(fid, path, deep, favourites, selected?.id)
@@ -949,14 +949,14 @@ final class AppStore: ObservableObject {
                 indexProgressTask?.cancel()
                 indexProgressTask = nil
                 indexingPhase = scan.error == "Cancelled"
-                    ? (automaticScanDeferred ? "Waiting for foreground work" : "Cancelled") : "Index failed"
+                    ? (automaticScanDeferred ? String(localized: "Waiting for foreground work") : String(localized: "Cancelled")) : String(localized: "Index failed")
                 if scan.error == "Cancelled" {
                     indexingProgress = automaticScanDeferred
-                        ? "File changes remain queued until foreground work finishes"
-                        : "Index cancelled; previous searchable index preserved"
+                        ? String(localized: "File changes remain queued until foreground work finishes")
+                        : String(localized: "Index cancelled; previous searchable index preserved")
                 } else {
-                    lastBackendError = scan.error ?? "Unknown backend error"
-                    indexingProgress = "Index failed for \(folderName)"
+                    lastBackendError = scan.error ?? String(localized: "Unknown backend error")
+                    indexingProgress = String(localized: "Index failed for \(folderName)")
                 }
                 if automatic, scan.error != "Cancelled" { libraryWatcher.retry(folder.id) }
                 clearIndexingDisplay(after: .seconds(4), operationStart: operationStart)
@@ -990,8 +990,8 @@ final class AppStore: ObservableObject {
             // refinement continues one file at a time at background priority.
             saveFolders()
             refreshSearch()
-            indexingPhase = "Search ready"
-            indexingProgress = "\(folderName) is searchable; background refinement follows the selected mode"
+            indexingPhase = String(localized: "Search ready")
+            indexingProgress = String(localized: "\(folderName) is searchable; background refinement follows the selected mode")
             refinementCoordinator.librariesDidChange()
             refinementCoordinator.policyDidChange()
         }
@@ -1023,8 +1023,8 @@ final class AppStore: ObservableObject {
             for folder in folders { libraryWatcher.discard(folder.id) }
             indexTask?.cancel()
             _ = ws_cancel_indexing()
-            indexingPhase = "Cancelling scan"
-            indexingProgress = "Cancelling; the previous searchable snapshot will be preserved…"
+            indexingPhase = String(localized: "Cancelling scan")
+            indexingProgress = String(localized: "Cancelling; the previous searchable snapshot will be preserved…")
         } else {
             pauseBackgroundRefinement()
         }
@@ -1132,7 +1132,7 @@ final class AppStore: ObservableObject {
         currentSearchID = nil
         searchWorker.cancel()
         guard let request = SearchRequest(kind: kind, folderID: selectedFolderId.map(Int32.init) ?? -1) else {
-            lastBackendError = ifBackendError() ?? "Unable to allocate search request"
+            lastBackendError = ifBackendError() ?? String(localized: "Unable to allocate search request")
             lastSearchRequest = ""
             isSearching = false
             return
@@ -1177,8 +1177,8 @@ final class AppStore: ObservableObject {
         panel.canChooseFiles = true
         panel.allowsMultipleSelection = false
         panel.allowedContentTypes = [.audio]
-        panel.message = "Choose an audio clip to find acoustic matches. Compressed examples must be 60 seconds or less."
-        panel.prompt = "Find Similar"
+        panel.message = String(localized: "Choose an audio clip to find acoustic matches. Compressed examples must be 60 seconds or less.")
+        panel.prompt = String(localized: "Find Similar")
         guard panel.runModal() == .OK, let url = panel.url else { return }
         searchByExample(url: url)
     }
@@ -1192,7 +1192,7 @@ final class AppStore: ObservableObject {
     func acceptSearchExamples(_ urls: [URL]) -> Bool {
         guard canUseLibrary else { return false }
         guard urls.count == 1, let url = urls.first, url.isFileURL else {
-            lastBackendError = "Drop one audio file to find similar sounds."
+            lastBackendError = String(localized: "Drop one audio file to find similar sounds.")
             return false
         }
         searchByExample(url: url)
@@ -1270,22 +1270,22 @@ final class AppStore: ObservableObject {
         libraryWatcher.receive(.init(paths: [folder.path]))
         indexTask?.cancel()
         _ = ws_cancel_indexing()
-        indexingPhase = "Waiting for foreground work"
-        indexingProgress = "File changes remain queued until foreground work finishes"
+        indexingPhase = String(localized: "Waiting for foreground work")
+        indexingProgress = String(localized: "File changes remain queued until foreground work finishes")
     }
 
     private func updateLibraryWatching() {
         guard watchesLibraries, keepsLibrariesUpdated, canUseLibrary else {
             libraryWatcher.stop()
-            libraryWatchStatus = "Automatic watching is off. Use Re-index to refresh a library."
+            libraryWatchStatus = String(localized: "Automatic watching is off. Use Re-index to refresh a library.")
             return
         }
         libraryWatcher.update(folders)
         libraryWatchStatus = libraryWatcher.isWatching
-            ? "File changes are coalesced and scanned when foreground work is idle. Manual Re-index and Deep Re-index remain available."
+            ? String(localized: "File changes are coalesced and scanned when foreground work is idle. Manual Re-index and Deep Re-index remain available.")
             : folders.contains(where: { !$0.isMissing })
-                ? "File watching is unavailable. Use Re-index to refresh libraries, or toggle this setting to retry."
-                : "Waiting for available libraries"
+                ? String(localized: "File watching is unavailable. Use Re-index to refresh libraries, or toggle this setting to retry.")
+                : String(localized: "Waiting for available libraries")
     }
 
     private func startAvailabilityMonitoring() {

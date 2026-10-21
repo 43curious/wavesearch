@@ -97,7 +97,7 @@ nonisolated final class SearchRequest: @unchecked Sendable {
                 } catch is CancellationError {
                     return SearchOutcome(cancelled: true)
                 } catch {
-                    return SearchOutcome(error: "Cannot use \(url.lastPathComponent): \(error.localizedDescription)")
+                    return SearchOutcome(error: String(localized: "Cannot use \(url.lastPathComponent): \(error.localizedDescription)"))
                 }
             }
             guard count >= 0 else { return failure(count) }
@@ -141,7 +141,7 @@ nonisolated final class SearchRequest: @unchecked Sendable {
 
     private static func failure(_ code: Int32) -> SearchOutcome {
         // This function runs on the same thread as the failing C call.
-        SearchOutcome(error: ifBackendError() ?? "Search failed", cancelled: code == WS_QUERY_CANCELLED)
+        SearchOutcome(error: ifBackendError() ?? String(localized: "Search failed"), cancelled: code == WS_QUERY_CANCELLED)
     }
 
     static func file(_ result: WSResult, group: Int64 = 0) -> SoundFile {

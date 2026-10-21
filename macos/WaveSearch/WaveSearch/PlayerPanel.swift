@@ -475,7 +475,7 @@ struct AudioFileMetadata: Sendable {
         let rate = sampleRate / 1_000
         let rateText = abs(rate.rounded() - rate) < 0.05
             ? String(Int(rate.rounded()))
-            : String(format: "%.1f", rate)
+            : rate.formatted(.number.precision(.fractionLength(1)))
         if let bitDepth, bitDepth > 0 { return "\(bitDepth)/\(rateText)" }
         if let bitRateKbps, bitRateKbps > 0 { return "\(bitRateKbps)k/\(rateText)" }
         return "—/\(rateText)"
@@ -682,19 +682,19 @@ struct PlayerPanel: View {
 
     private var isCurrent: Bool { player.currentFile == file }
     private var positionDescription: String {
-        guard isCurrent, !player.isPreparing else { return "Preparing preview" }
-        guard player.duration > 0 else { return "Preview unavailable" }
-        return "\(timeString(player.progress * player.duration)) of \(timeString(player.duration))"
+        guard isCurrent, !player.isPreparing else { return String(localized: "Preparing preview") }
+        guard player.duration > 0 else { return String(localized: "Preview unavailable") }
+        return String(localized: "\(timeString(player.progress * player.duration)) of \(timeString(player.duration))")
     }
 
     private var rangeDescription: String {
-        guard isCurrent, let range = player.selection else { return "Whole file" }
-        return "In \(timeString(range.lowerBound * player.duration)), out \(timeString(range.upperBound * player.duration))"
+        guard isCurrent, let range = player.selection else { return String(localized: "Whole file") }
+        return String(localized: "In \(timeString(range.lowerBound * player.duration)), out \(timeString(range.upperBound * player.duration))")
     }
 
     private var waveformDescription: String {
         let analysis = !isCurrent || player.isAnalyzingWaveform
-            ? "Analyzing waveform" : player.waveformData == nil ? "Waveform unavailable" : "Waveform ready"
+            ? String(localized: "Analyzing waveform") : player.waveformData == nil ? String(localized: "Waveform unavailable") : String(localized: "Waveform ready")
         return "\(analysis). \(positionDescription). \(rangeDescription)"
     }
 
@@ -797,9 +797,5 @@ struct PlayerPanel: View {
 }
 
 private func timeString(_ value: Double) -> String {
-    guard value.isFinite, value > 0 else { return "0:00.00" }
-
-    let minutes = Int(value) / 60
-    let seconds = value.truncatingRemainder(dividingBy: 60)
-    return String(format: "%d:%05.2f", minutes, seconds)
+    LocalizedText.position(value)
 }

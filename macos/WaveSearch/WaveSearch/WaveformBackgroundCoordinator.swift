@@ -485,7 +485,7 @@ final class BackgroundRefinementCoordinator {
         }.value
         guard !Task.isCancelled else { return 0 }
         if outcome.0 < 0, outcome.2 != "Cancelled" {
-            lastError = outcome.2 ?? "Acoustic refinement failed"
+            lastError = outcome.2 ?? String(localized: "Acoustic refinement failed")
             try? await Task.sleep(for: .seconds(2))
         } else if outcome.0 > 0 || (outcome.1 ?? pendingBefore) < pendingBefore {
             acousticNoProgressFolders.removeAll()
@@ -517,7 +517,7 @@ final class BackgroundRefinementCoordinator {
         }.value
         guard !Task.isCancelled else { return 0 }
         if outcome.0 < 0, outcome.2 != "Cancelled" {
-            lastError = outcome.2 ?? "Semantic refinement failed"
+            lastError = outcome.2 ?? String(localized: "Semantic refinement failed")
             try? await Task.sleep(for: .seconds(2))
         } else if outcome.0 > 0 || (outcome.1 ?? pendingBefore) < pendingBefore {
             semanticNoProgressFolders.removeAll()
@@ -566,7 +566,7 @@ final class BackgroundRefinementCoordinator {
             lastError = nil
             return true
         }
-        lastError = outcome.1 ?? "Semantic provider could not be loaded"
+        lastError = outcome.1 ?? String(localized: "Semantic provider could not be loaded")
         semanticProviderError = lastError
         return false
     }

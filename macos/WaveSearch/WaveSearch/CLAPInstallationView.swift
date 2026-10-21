@@ -63,18 +63,18 @@ struct CLAPInstallationView: View {
 
     private var installationFound: Bool { installer.phase == .present || installer.phase == .installed }
     private var actionTitle: String {
-        if case .failed = installer.phase { return "Retry installation…" }
-        return installationFound ? "Verify or repair installation…" : "Download semantic search…"
+        if case .failed = installer.phase { return String(localized: "Retry installation…") }
+        return installationFound ? String(localized: "Verify or repair installation…") : String(localized: "Download semantic search…")
     }
     private var status: String {
         switch installer.phase {
-        case .checking: "Checking installation…"
-        case .absent: "Not installed. Downloads start only when you choose them."
-        case .present: "Installation found. Verify or repair it if semantic loading fails."
-        case .installed: "Model files verified. Provider loading checks runtime compatibility."
+        case .checking: String(localized: "Checking installation…")
+        case .absent: String(localized: "Not installed. Downloads start only when you choose them.")
+        case .present: String(localized: "Installation found. Verify or repair it if semantic loading fails.")
+        case .installed: String(localized: "Model files verified. Provider loading checks runtime compatibility.")
         case .working: installer.progress.detail
-        case .cancelling: "Cancelling and cleaning up…"
-        case .unsupported: "This pinned runtime is unavailable for Intel Macs. Lexical search remains available."
+        case .cancelling: String(localized: "Cancelling and cleaning up…")
+        case .unsupported: String(localized: "This pinned runtime is unavailable for Intel Macs. Lexical search remains available.")
         case .failed(let error): error
         }
     }

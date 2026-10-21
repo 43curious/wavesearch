@@ -31,7 +31,7 @@ nonisolated struct SelectsSource: Codable, Identifiable, Sendable {
 nonisolated struct SelectsFilter: Equatable, Sendable {
     let kind: UInt32
     let name: String
-    var title: String { kind == WS_SELECTS_FAVOURITE ? "Favourites" : name }
+    var title: String { kind == WS_SELECTS_FAVOURITE ? String(localized: "Favourites") : name }
 }
 
 /// Blocking catalog/document boundary; callers provide work admission and drain.
@@ -41,12 +41,12 @@ nonisolated enum PortableSelects {
     static func failure() -> NSError {
         let message: String
         switch ifBackendError() {
-        case "InvalidSelectsName": message = "Use a shorter, non-empty tag or collection name."
-        case "InvalidSelectsRange": message = "Choose a valid preview range."
-        case "SelectsLimit": message = "This exceeds the supported document or annotation limit."
-        case "UnsupportedSelectsVersion": message = "This JSON uses an unsupported WaveSearch selects version."
-        case "InvalidNumber", "UnexpectedToken", "MissingField", "UnknownField", "SyntaxError": message = "This is not a valid WaveSearch selects document."
-        default: message = ifBackendError() ?? "Cannot update tags and collections"
+        case "InvalidSelectsName": message = String(localized: "Use a shorter, non-empty tag or collection name.")
+        case "InvalidSelectsRange": message = String(localized: "Choose a valid preview range.")
+        case "SelectsLimit": message = String(localized: "This exceeds the supported document or annotation limit.")
+        case "UnsupportedSelectsVersion": message = String(localized: "This JSON uses an unsupported WaveSearch selects version.")
+        case "InvalidNumber", "UnexpectedToken", "MissingField", "UnknownField", "SyntaxError": message = String(localized: "This is not a valid WaveSearch selects document.")
+        default: message = ifBackendError() ?? String(localized: "Cannot update tags and collections")
         }
         return NSError(domain: "WaveSearch.Selects", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
     }
@@ -80,7 +80,7 @@ nonisolated enum PortableSelects {
         report.struct_size = UInt32(MemoryLayout<WSSelectsImportReport>.size)
         let result = data.withUnsafeBytes { ws_selects_import_v1($0.baseAddress?.assumingMemoryBound(to: CChar.self), UInt64($0.count), &report) }
         guard result == 0 else { throw failure() }
-        return "Imported \(report.imported), merged \(report.merged), unresolved \(report.unresolved), ID conflicts preserved \(report.conflicts)."
+        return String(localized: "Imported \(report.imported), merged \(report.merged), unresolved \(report.unresolved), ID conflicts preserved \(report.conflicts).")
     }
 
     static func readImport(_ url: URL) throws -> Data {

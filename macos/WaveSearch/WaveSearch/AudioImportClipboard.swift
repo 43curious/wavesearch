@@ -32,7 +32,7 @@ final class AudioImportClipboard: ObservableObject {
         let generation = BlockingWorkRegistry.hostFiles.generation
         requestID = id
         isCopying = true
-        status = "Preparing audio for editor…"
+        status = String(localized: "Preparing audio for editor…")
         task = Task { [weak self] in
             defer {
                 if let self, self.requestID == id {
@@ -48,16 +48,16 @@ final class AudioImportClipboard: ObservableObject {
                 )
                 guard let self, !Task.isCancelled, self.requestID == id else { return }
                 guard BlockingWorkRegistry.hostFiles.generation == generation, canPublish() else {
-                    self.status = "Audio copy canceled"
+                    self.status = String(localized: "Audio copy canceled")
                     return
                 }
                 let copied = self.writeURL(url)
                 self.status = copied
-                    ? (behavior == .keepInPlace ? "Original file copied for editor" : "Exported audio copied for editor")
-                    : "Could not copy audio for editor"
+                    ? (behavior == .keepInPlace ? String(localized: "Original file copied for editor") : String(localized: "Exported audio copied for editor"))
+                    : String(localized: "Could not copy audio for editor")
             } catch {
                 guard let self, !Task.isCancelled, self.requestID == id else { return }
-                self.status = "Could not prepare audio: \(error.localizedDescription)"
+                self.status = String(localized: "Could not prepare audio: \(error.localizedDescription)")
             }
         }
     }

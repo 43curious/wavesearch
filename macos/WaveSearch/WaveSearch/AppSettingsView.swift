@@ -23,11 +23,11 @@ private struct AppearanceSettingsView: View {
                 Picker("Appearance", selection: $appearance.mode) {
                     ForEach(AppAppearanceMode.allCases) { mode in Text(mode.title).tag(mode) }
                 }
-                colorPicker("App accent", value: $appearance.accent)
+                colorPicker(String(localized: "App accent"), value: $appearance.accent)
             }
             Section("Waveform colors") {
-                colorPicker("Waveform", value: $appearance.waveform)
-                colorPicker("Played waveform", value: $appearance.played)
+                colorPicker(String(localized: "Waveform"), value: $appearance.waveform)
+                colorPicker(String(localized: "Played waveform"), value: $appearance.played)
                 WaveformColorPreview()
                     .frame(height: 90)
                     .accessibilityLabel("Waveform color preview: played portion on the left")

@@ -86,6 +86,11 @@ same headless scripts. It is useful when `xcodebuild` cannot initialize a projec
 It does not process asset catalogs, validate signing or build an application
 bundle. `make check` and the CI headless target retain the Xcode app build.
 
+The localization script also compiles production code into a disposable resource
+bundle, validates compiler-extracted strings/format types, and runs native plural,
+error and locale checks in English and Spanish. This does not replace
+[both-language desktop acceptance](LOCALIZATION.md#validation).
+
 Lifecycle checks always exercise the real preview controller through a controlled
 transport clock, including replacement, cancellation, range/rate/loop bounds and
 rejected playback starts. CoreAudio output runs additionally when a default output

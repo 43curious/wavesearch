@@ -10,8 +10,8 @@ nonisolated enum AudioImportBehavior: String, CaseIterable, Identifiable {
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .keepInPlace: "Keep the files in place"
-        case .copyToExports: "Copy files to Exports"
+        case .keepInPlace: String(localized: "Keep the files in place")
+        case .copyToExports: String(localized: "Copy files to Exports")
         }
     }
 

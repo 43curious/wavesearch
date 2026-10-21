@@ -45,19 +45,19 @@ struct KeyboardShortcutsView: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Grid(alignment: .leading, horizontalSpacing: 32, verticalSpacing: 9) {
-                shortcut("⌘K or /", "Focus search")
-                shortcut("↓ / ↑ or j / k", "Next / previous sound")
-                shortcut("gg or u / Shift–G", "First / last sound")
-                shortcut("Return", "Play from the in point")
-                shortcut("Space", "Play / pause")
-                shortcut("h / l", "Shuttle backward / forward; repeat to accelerate")
-                shortcut("i / o", "Set in / out point at the playhead")
-                shortcut("b", "Reveal selected sound in Finder")
-                shortcut("⌘⇧C", "Copy sound or range for your editor")
-                shortcut("⌃⌘S", "Show / hide sidebar")
-                shortcut("⌘⇧O", "Add a library")
-                shortcut("⌘,", "Open Settings")
-                shortcut("? or ⌘?", "Show keyboard shortcuts")
+                shortcut(String(localized: "⌘K or /"), String(localized: "Focus search"))
+                shortcut(String(localized: "↓ / ↑ or j / k"), String(localized: "Next / previous sound"))
+                shortcut(String(localized: "gg or u / Shift–G"), String(localized: "First / last sound"))
+                shortcut(String(localized: "Return"), String(localized: "Play from the in point"))
+                shortcut(String(localized: "Space"), String(localized: "Play / pause"))
+                shortcut("h / l", String(localized: "Shuttle backward / forward; repeat to accelerate"))
+                shortcut("i / o", String(localized: "Set in / out point at the playhead"))
+                shortcut("b", String(localized: "Reveal selected sound in Finder"))
+                shortcut("⌘⇧C", String(localized: "Copy sound or range for your editor"))
+                shortcut("⌃⌘S", String(localized: "Show / hide sidebar"))
+                shortcut("⌘⇧O", String(localized: "Add a library"))
+                shortcut("⌘,", String(localized: "Open Settings"))
+                shortcut(String(localized: "? or ⌘?"), String(localized: "Show keyboard shortcuts"))
             }
             Text("Use the Preview position slider to seek, then In and Out to mark a range. Copy for Editor follows your import preference: keep the full original file in place, or copy to Exports and trim selected ranges. Paste into an editor that accepts file URLs.")
                 .foregroundStyle(.secondary)
@@ -74,8 +74,8 @@ struct KeyboardShortcutsView: View {
 
     private func shortcut(_ keys: String, _ action: String) -> some View {
         GridRow {
-            Text(keys).monospaced()
-            Text(action)
+            Text(keys).monospaced().fixedSize()
+            Text(action).fixedSize(horizontal: false, vertical: true)
         }
         .accessibilityElement(children: .combine)
     }

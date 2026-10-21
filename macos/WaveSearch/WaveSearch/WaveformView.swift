@@ -266,7 +266,7 @@ private final class WaveformInteractionNSView: NSView, NSDraggingSource {
                           self.window != nil, self.selection == selection,
                           NSEvent.pressedMouseButtons & 1 != 0 else { return }
                     let item = NSDraggingItem(pasteboardWriter: payload.writer)
-                    let image = NSImage(systemSymbolName: "waveform", accessibilityDescription: "Audio selection")
+                    let image = NSImage(systemSymbolName: "waveform", accessibilityDescription: String(localized: "Audio selection"))
                     item.setDraggingFrame(NSRect(x: point.x - 18, y: point.y - 18, width: 36, height: 36), contents: image)
                     self.beginDraggingSession(with: [item], event: event, source: self)
                 } catch is CancellationError {

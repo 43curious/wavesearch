@@ -13,11 +13,11 @@ nonisolated enum SearchShortcut: String, CaseIterable, Identifiable {
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .disabled: "Off"
-        case .controlOptionSpace: "⌃⌥Space"
+        case .disabled: String(localized: "Off")
+        case .controlOptionSpace: String(localized: "⌃⌥Space")
         case .controlOptionF: "⌃⌥F"
-        case .controlShiftSpace: "⌃⇧Space"
-        case .commandShiftSpace: "⌘⇧Space"
+        case .controlShiftSpace: String(localized: "⌃⇧Space")
+        case .commandShiftSpace: String(localized: "⌘⇧Space")
         }
     }
 
@@ -96,14 +96,14 @@ final class GlobalSearchShortcut: ObservableObject {
                 return noErr
             }, 1, &eventType, Unmanaged.passUnretained(self).toOpaque(), &handler)
             guard status == noErr else {
-                error = "Could not listen for the shortcut (\(status)). Try again."
+                error = String(localized: "Could not listen for the shortcut (\(status)). Try again.")
                 return
             }
         }
         let status = RegisterEventHotKey(key.code, key.modifiers,
             EventHotKeyID(signature: Self.signature, id: 1), GetApplicationEventTarget(), OptionBits(kEventHotKeyExclusive), &hotKey)
         if status != noErr {
-            error = "\(selection.title) could not be registered (\(status)). It may be in use by another app. Choose another shortcut or retry."
+            error = String(localized: "\(selection.title) could not be registered (\(status)). It may be in use by another app. Choose another shortcut or retry.")
         }
     }
 }

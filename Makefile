@@ -68,6 +68,7 @@ check-macos-runtime: core
 
 _check-macos-runtime:
 	bash scripts/test-swift-build.sh
+	bash scripts/test-localization.sh
 	bash scripts/test-refinement-policy.sh
 	bash scripts/test-clap-installer.sh
 	bash scripts/test-library-watching.sh

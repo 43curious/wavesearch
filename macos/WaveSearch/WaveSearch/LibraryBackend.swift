@@ -98,14 +98,14 @@ nonisolated struct LibraryBackend: Sendable {
                 return .init(opened: false, error: error.localizedDescription)
             }
             guard path.withCString({ ws_init($0) }) == 0 else {
-                return .init(opened: false, error: ifBackendError() ?? "Database initialization failed")
+                return .init(opened: false, error: ifBackendError() ?? String(localized: "Database initialization failed"))
             }
             let saved = savedData.flatMap { try? JSONDecoder().decode([LibraryFolder].self, from: $0) } ?? []
             var result = LibraryOpenResult(opened: true)
             for folder in saved {
                 var access = resolveAccess(folder)
                 let count = ws_folder_count(Int32(folder.id))
-                if count < 0 { result.error = ifBackendError() ?? "Failed to read library count" }
+                if count < 0 { result.error = ifBackendError() ?? String(localized: "Failed to read library count") }
                 access.folder.fileCount = max(0, Int(count))
                 result.folders.append(access.folder)
                 if let scope = access.scope { result.scopes[folder.id] = scope }
@@ -113,7 +113,7 @@ nonisolated struct LibraryBackend: Sendable {
             return result
         },
         remove: { id in
-            ws_remove_folder(id) == 0 ? nil : (ifBackendError() ?? "Failed to remove indexed folder")
+            ws_remove_folder(id) == 0 ? nil : (ifBackendError() ?? String(localized: "Failed to remove indexed folder"))
         },
         authorize: { resolveAccess($0) },
         availability: { folders in

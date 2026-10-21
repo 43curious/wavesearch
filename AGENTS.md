@@ -50,6 +50,7 @@ Read these references when touching the corresponding behavior:
 | Tags, collections, favourites, or selects JSON | [Portable selects](documentation/PORTABLE_SELECTS.md) |
 | Platform boundaries, concurrency, or resource scheduling | [Performance and portability plan](documentation/PERFORMANCE_AND_PORTABILITY_PLAN.md); [fair scheduling](documentation/REFINEMENT_QUEUES.md#fair-background-scheduling) |
 | Global search activation or macOS discovery integration | [macOS integration](documentation/MACOS_INTEGRATION.md) |
+| Interface copy, counts, number/time formatting, or localization | [English/Spanish interface](documentation/LOCALIZATION.md) |
 
 Use [documentation/README.md](documentation/README.md) to find further references.
 Treat unchecked roadmap/plan items as proposals, and verify historical notes

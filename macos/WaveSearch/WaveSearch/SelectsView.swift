@@ -100,7 +100,7 @@ struct SelectsView: View {
                         HStack {
                             Label(member.name, systemImage: "folder")
                             if let start = member.start_ms, let end = member.end_ms {
-                                Text(String(format: "%.3f–%.3f s", Double(start) / 1000, Double(end) / 1000)).monospacedDigit()
+                                Text(String(format: "%.3f–%.3f s", locale: Locale.current, Double(start) / 1000, Double(end) / 1000)).monospacedDigit()
                                 if let file = selected(source) {
                                     Button("Use Range") { applyRange(member, file: file) }
                                         .disabled(player.isPreparing || player.currentFile?.id != file.id || player.duration <= 0)

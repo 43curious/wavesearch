@@ -16,12 +16,12 @@ nonisolated enum ExampleAudio {
 
         var errorDescription: String? {
             switch self {
-            case .unsupported: return "This audio format is unavailable or has no readable audio."
-            case .tooLong: return "Choose a compressed audio example of 60 seconds or less."
-            case .tooLarge: return "The decoded example exceeds the 64 MiB limit. Choose a shorter clip."
-            case .truncated: return "The audio ended before its declared length."
-            case .nonfinite: return "The audio contains invalid samples."
-            case .changed: return "The source changed while it was being decoded. Try again."
+            case .unsupported: return String(localized: "This audio format is unavailable or has no readable audio.")
+            case .tooLong: return String(localized: "Choose a compressed audio example of 60 seconds or less.")
+            case .tooLarge: return String(localized: "The decoded example exceeds the 64 MiB limit. Choose a shorter clip.")
+            case .truncated: return String(localized: "The audio ended before its declared length.")
+            case .nonfinite: return String(localized: "The audio contains invalid samples.")
+            case .changed: return String(localized: "The source changed while it was being decoded. Try again.")
             }
         }
     }

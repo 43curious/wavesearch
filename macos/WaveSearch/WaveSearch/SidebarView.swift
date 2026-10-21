@@ -79,7 +79,7 @@ struct LibraryTabsView: View {
             ScrollViewReader { proxy in
                 ScrollView(.horizontal) {
                     HStack(spacing: 4) {
-                        tab("All Libraries", systemImage: "music.note.list", folderID: nil)
+                        tab(String(localized: "All Libraries"), systemImage: "music.note.list", folderID: nil)
                             .id("all")
 
                         ForEach(store.folders) { folder in
@@ -87,7 +87,7 @@ struct LibraryTabsView: View {
                                 systemImage: folder.isMissing ? "externaldrive.badge.xmark" : "folder.fill",
                                 folderID: folder.id, isMissing: folder.isMissing)
                                 .id(String(folder.id))
-                                .help("\(folder.path) · \(folder.isMissing ? "Missing drive" : "\(folder.fileCount) files")")
+                                .help("\(folder.path) · \(folder.isMissing ? String(localized: "Missing drive") : LocalizedText.count(folder.fileCount, .files))")
                                 .contextMenu { LibraryFolderActions(folder: folder) }
                         }
                     }
@@ -175,7 +175,7 @@ struct FolderRow: View {
                         .font(.caption2)
                         .foregroundStyle(.red)
                 } else if folder.fileCount > 0 {
-                    Text("\(folder.fileCount) files")
+                    Text(LocalizedText.count(folder.fileCount, .files))
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -185,7 +185,7 @@ struct FolderRow: View {
         .opacity(folder.isMissing ? 0.6 : 1)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(folder.name)
-        .accessibilityValue(folder.isMissing ? "Missing drive" : "\(folder.fileCount) files")
+        .accessibilityValue(folder.isMissing ? String(localized: "Missing drive") : LocalizedText.count(folder.fileCount, .files))
         .accessibilityHint(folder.path)
     }
 }

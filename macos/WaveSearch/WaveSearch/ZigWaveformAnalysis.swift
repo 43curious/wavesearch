@@ -8,7 +8,7 @@ nonisolated struct WaveformCoreError: Error, CustomStringConvertible, Sendable {
 
     init(status: Int32) {
         self.status = status
-        self.message = ws_last_error_message().map { String(cString: $0) } ?? "Waveform core error \(status)"
+        self.message = ws_last_error_message().map { String(cString: $0) } ?? String(localized: "Waveform core error \(status)")
     }
 
     var description: String { message }

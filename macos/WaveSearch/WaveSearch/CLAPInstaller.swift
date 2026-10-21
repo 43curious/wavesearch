@@ -67,7 +67,7 @@ nonisolated private final class CLAPDownloadProgress: NSObject, URLSessionDownlo
             return true
         }
         guard shouldReport else { return }
-        report(.init(detail: "Downloading " + (artifact.path as NSString).lastPathComponent,
+        report(.init(detail: String(localized: "Downloading ") + (artifact.path as NSString).lastPathComponent,
                      bytes: totalBytesWritten, expected: artifact.size ?? (totalBytesExpectedToWrite > 0 ? totalBytesExpectedToWrite : nil)))
     }
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {}
@@ -94,7 +94,7 @@ nonisolated struct CLAPInstaller: Sendable {
         let (temporary, response) = try await session.download(for: URLRequest(url: artifact.url), delegate: delegate)
         defer { try? FileManager.default.removeItem(at: temporary) }
         guard let response = response as? HTTPURLResponse, response.statusCode == 200 else {
-            throw CLAPInstallFailure(message: "Download failed for \(artifact.path). Check the connection and retry.")
+            throw CLAPInstallFailure(message: String(localized: "Download failed for \(artifact.path). Check the connection and retry."))
         }
         try Task.checkCancellation()
         try FileManager.default.moveItem(at: temporary, to: destination)
@@ -108,7 +108,7 @@ nonisolated struct CLAPInstaller: Sendable {
         while let data = try file.read(upToCount: 1024 * 1024), !data.isEmpty {
             try Task.checkCancellation()
             count += Int64(data.count)
-            guard count <= maximumBytes else { throw CLAPInstallFailure(message: "Artifact exceeds its pinned size limit: \(url.lastPathComponent)") }
+            guard count <= maximumBytes else { throw CLAPInstallFailure(message: String(localized: "Artifact exceeds its pinned size limit: \(url.lastPathComponent)")) }
             sha.update(data: data)
         }
         return (sha.finalize().map { String(format: "%02x", $0) }.joined(), count)
@@ -117,7 +117,7 @@ nonisolated struct CLAPInstaller: Sendable {
     private func verify(_ artifact: CLAPArtifact, at root: URL) throws {
         let (sha, count) = try Self.digest(root.appendingPathComponent(artifact.path), maximumBytes: artifact.maximumBytes)
         guard sha == artifact.sha256, artifact.size == nil || artifact.size == count else {
-            throw CLAPInstallFailure(message: "Integrity check failed for \(artifact.path). Retry to download a fresh copy.")
+            throw CLAPInstallFailure(message: String(localized: "Integrity check failed for \(artifact.path). Retry to download a fresh copy."))
         }
     }
 
@@ -125,10 +125,10 @@ nonisolated struct CLAPInstaller: Sendable {
         for artifact in plan.artifacts where artifact.path != "runtime.tgz" { try verify(artifact, at: root) }
         let runtime = root.appendingPathComponent(plan.runtimePath).resolvingSymlinksInPath()
         let prefix = root.resolvingSymlinksInPath().path + "/"
-        guard runtime.path.hasPrefix(prefix) else { throw CLAPInstallFailure(message: "ONNX Runtime resolves outside its installation.") }
+        guard runtime.path.hasPrefix(prefix) else { throw CLAPInstallFailure(message: String(localized: "ONNX Runtime resolves outside its installation.")) }
         let info = try runtime.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
         guard info.isRegularFile == true, (info.fileSize ?? 0) > 0 else {
-            throw CLAPInstallFailure(message: "ONNX Runtime is missing or empty.")
+            throw CLAPInstallFailure(message: String(localized: "ONNX Runtime is missing or empty."))
         }
         // Native installs retain a digest of the library extracted from the verified
         // archive. CLI installations predate this receipt and are checked at load.
@@ -138,21 +138,21 @@ nonisolated struct CLAPInstaller: Sendable {
             defer { try? receiptFile.close() }
             guard let bytes = try receiptFile.read(upToCount: 65), bytes.count == 64,
                   let expected = String(data: bytes, encoding: .utf8) else {
-                throw CLAPInstallFailure(message: "ONNX Runtime receipt is corrupt. Retry to repair it.")
+                throw CLAPInstallFailure(message: String(localized: "ONNX Runtime receipt is corrupt. Retry to repair it."))
             }
             let (actual, _) = try Self.digest(runtime, maximumBytes: 128 * 1024 * 1024)
-            guard actual == expected else { throw CLAPInstallFailure(message: "ONNX Runtime integrity check failed. Retry to repair it.") }
+            guard actual == expected else { throw CLAPInstallFailure(message: String(localized: "ONNX Runtime integrity check failed. Retry to repair it.")) }
         }
     }
 
     /// Complete validation precedes one atomic rename/exchange on the destination
     /// filesystem. Repairs retain the old bundle beside the new installation.
     func install(at root: URL, report: @escaping Report) async throws {
-        guard plan.supported else { throw CLAPInstallFailure(message: "The pinned runtime supports Apple silicon Macs only. Intel Macs can continue using lexical search.") }
+        guard plan.supported else { throw CLAPInstallFailure(message: String(localized: "The pinned runtime supports Apple silicon Macs only. Intel Macs can continue using lexical search.")) }
         try Task.checkCancellation()
         let fm = FileManager.default
         if fm.fileExists(atPath: root.path) {
-            report(.init(detail: "Verifying existing installation…"))
+            report(.init(detail: String(localized: "Verifying existing installation…")))
             do { try verifyInstalled(root); return }
             catch is CancellationError { throw CancellationError() }
             catch { /* A fully verified replacement is staged before repair. */ }
@@ -167,13 +167,13 @@ nonisolated struct CLAPInstaller: Sendable {
             try Task.checkCancellation()
             let target = stage.appendingPathComponent(artifact.path)
             try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
-            report(.init(detail: "Downloading " + target.lastPathComponent))
+            report(.init(detail: String(localized: "Downloading ") + target.lastPathComponent))
             try await download(artifact, target, report)
-            report(.init(detail: "Verifying " + target.lastPathComponent))
+            report(.init(detail: String(localized: "Verifying ") + target.lastPathComponent))
             try verify(artifact, at: stage)
         }
         try Task.checkCancellation()
-        report(.init(detail: "Unpacking verified runtime…"))
+        report(.init(detail: String(localized: "Unpacking verified runtime…")))
         let extraction = Process()
         extraction.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
         extraction.arguments = ["-xzf", stage.appendingPathComponent("runtime.tgz").path, "-C", stage.path]
@@ -182,27 +182,27 @@ nonisolated struct CLAPInstaller: Sendable {
         try extraction.run()
         extraction.waitUntilExit() // Worker owns/drains the process even after cancellation.
         try Task.checkCancellation()
-        guard extraction.terminationStatus == 0 else { throw CLAPInstallFailure(message: "Could not unpack ONNX Runtime. Retry the installation.") }
+        guard extraction.terminationStatus == 0 else { throw CLAPInstallFailure(message: String(localized: "Could not unpack ONNX Runtime. Retry the installation.")) }
         try verifyInstalled(stage)
         let (sha, _) = try Self.digest(stage.appendingPathComponent(plan.runtimePath), maximumBytes: 128 * 1024 * 1024)
         try sha.write(to: stage.appendingPathComponent("runtime.sha256"), atomically: true, encoding: .utf8)
         try fm.removeItem(at: stage.appendingPathComponent("runtime.tgz"))
         try Task.checkCancellation()
-        report(.init(detail: "Activating verified installation…"))
+        report(.init(detail: String(localized: "Activating verified installation…")))
         if fm.fileExists(atPath: root.path) {
             // Preserve the previous installation, including anything installed by CLI.
             let backup = parent.appendingPathComponent("wavesearch-clap.previous-\(UUID().uuidString)")
             guard renameatx_np(AT_FDCWD, stage.path, AT_FDCWD, root.path, UInt32(RENAME_SWAP)) == 0 else {
-                throw CLAPInstallFailure(message: "Could not activate the replacement installation (\(errno)). Previous files are intact.")
+                throw CLAPInstallFailure(message: String(localized: "Could not activate the replacement installation (\(errno)). Previous files are intact."))
             }
             discardStage = false
             // Swap succeeded: stage now owns the old bundle. Never delete it if
             // keeping the backup fails; its hidden staging path remains recoverable.
             do { try fm.moveItem(at: stage, to: backup) }
-            catch { throw CLAPInstallFailure(message: "Installed successfully; the previous bundle remains at \(stage.path).") }
+            catch { throw CLAPInstallFailure(message: String(localized: "Installed successfully; the previous bundle remains at \(stage.path).")) }
         } else {
             guard renameatx_np(AT_FDCWD, stage.path, AT_FDCWD, root.path, UInt32(RENAME_EXCL)) == 0 else {
-                throw CLAPInstallFailure(message: "Could not activate the installation (\(errno)). Retry after checking the destination.")
+                throw CLAPInstallFailure(message: String(localized: "Could not activate the installation (\(errno)). Retry after checking the destination."))
             }
         }
     }
@@ -214,7 +214,7 @@ final class CLAPInstallationController: ObservableObject {
         case checking, absent, present, installed, working, cancelling, failed(String), unsupported
     }
     @Published private(set) var phase: Phase = .checking
-    @Published private(set) var progress = CLAPInstallProgress(detail: "Checking installation…")
+    @Published private(set) var progress = CLAPInstallProgress(detail: String(localized: "Checking installation…"))
     private let installer: CLAPInstaller
     let root: URL
     private var task: Task<Void, Never>?
@@ -243,7 +243,7 @@ final class CLAPInstallationController: ObservableObject {
         let generation = generation
         let previousPhase: Phase = (phase == .present || phase == .installed) ? .present : .absent
         phase = .working
-        progress = .init(detail: "Preparing installation…")
+        progress = .init(detail: String(localized: "Preparing installation…"))
         let installer = installer
         let root = root
         task = Task {

@@ -21,7 +21,7 @@ nonisolated struct CategoryFacet: Identifiable, Sendable {
         for i in raw.indices { raw[i].struct_size = UInt32(MemoryLayout<WSCategory>.size) }
         let count = raw.withUnsafeMutableBufferPointer { ws_category_list_v1(folder, $0.baseAddress, Int32($0.count)) }
         guard count >= 0 else {
-            return .failure(NSError(domain: "WaveSearch", code: Int(count), userInfo: [NSLocalizedDescriptionKey: ifBackendError() ?? "Cannot read UCS categories"]))
+            return .failure(NSError(domain: "WaveSearch", code: Int(count), userInfo: [NSLocalizedDescriptionKey: ifBackendError() ?? String(localized: "Cannot read UCS categories")]))
         }
         return .success(raw.prefix(Int(count)).map { value in
             func string<T>(_ bytes: T) -> String {

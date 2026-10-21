@@ -32,6 +32,8 @@ current WaveSearch application.
 
 ## Audio preview and waveform
 
+- [English/Spanish interface](LOCALIZATION.md) — native resources, plural and
+  locale formatting, stable domain values and both-language acceptance.
 - [Keyboard and accessibility workflows](ACCESSIBILITY.md) — focus scopes,
   shortcut help, VoiceOver semantics, keyboard editor copies and acceptance limits.
 - [Waveform and audio preview system](WAVEFORM_AND_AUDIO_PREVIEW.md) — user

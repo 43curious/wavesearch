@@ -53,14 +53,14 @@ struct MainView: View {
         }
         .onChange(of: store.isSearching) { wasSearching, isSearching in
             if wasSearching, !isSearching, store.canUseLibrary {
-                announceAccessibility(store.lastBackendError ?? "\(store.results.count) sounds loaded")
+                announceAccessibility(store.lastBackendError ?? LocalizedText.count(store.results.count, .soundsLoaded))
             }
         }
         .onChange(of: store.isMetadataScanning) { _, _ in
             if !store.indexingPhase.isEmpty { announceAccessibility(store.indexingPhase) }
         }
         .onChange(of: store.isRefinementPaused) { _, paused in
-            announceAccessibility(paused ? "Background refinement paused" : "Background refinement resumed")
+            announceAccessibility(paused ? String(localized: "Background refinement paused") : String(localized: "Background refinement resumed"))
         }
     }
 
@@ -180,13 +180,13 @@ private struct SearchHeader: View {
     @State private var isAudioDropTargeted = false
 
     private var placeholder: String {
-        if let filter = store.selectsFilter { return filter.title + " · type to search normally" }
-        if store.isExampleSearch { return "Similar to \(store.exampleSourceName)" }
+        if let filter = store.selectsFilter { return filter.title + String(localized: " · type to search normally") }
+        if store.isExampleSearch { return String(localized: "Similar to \(store.exampleSourceName)") }
         if let id = store.selectedFolderId,
            let folder = store.folders.first(where: { $0.id == id }) {
-            return "Filter \(folder.name)…"
+            return String(localized: "Filter \(folder.name)…")
         }
-        return "Search all libraries…"
+        return String(localized: "Search all libraries…")
     }
 
     var body: some View {
@@ -285,7 +285,7 @@ private struct SearchHeader: View {
                                 .font(.system(size: 11))
                                 .foregroundStyle(.green)
                         }
-                        Text(store.indexingPhase.isEmpty ? "Indexing" : store.indexingPhase)
+                        Text(store.indexingPhase.isEmpty ? String(localized: "Indexing") : store.indexingPhase)
                             .font(.system(size: 11, weight: .medium))
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
@@ -331,7 +331,9 @@ private struct SearchHeader: View {
                     .padding(.bottom, 8)
                     .background(AppTheme.chrome)
             } else if store.isExampleSearch {
-                Text(store.isSearching ? "Analyzing \(store.exampleSourceName) and finding matches…" : "Similar to \(store.exampleSourceName) · \(store.results.count) matches")
+                Text(store.isSearching
+                    ? String(localized: "Analyzing \(store.exampleSourceName) and finding matches…")
+                    : String(localized: "Similar to \(store.exampleSourceName) · \(LocalizedText.count(store.results.count, .matches))"))
                     .foregroundStyle(.secondary)
                     .font(.system(size: 11))
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -368,7 +370,7 @@ private struct IndexingProgressPopover: View {
                         .foregroundStyle(.green)
                 }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(store.indexingPhase.isEmpty ? "Indexing" : store.indexingPhase)
+                    Text(store.indexingPhase.isEmpty ? String(localized: "Indexing") : store.indexingPhase)
                         .font(.system(size: 13, weight: .semibold))
                     Text(store.indexingProgress)
                         .font(.system(size: 11))
@@ -444,7 +446,7 @@ private struct IndexingProgressPopover: View {
 
             if store.indexingDiscoveredCount > 0 {
                 HStack {
-                    Label("\(store.indexingDiscoveredCount.formatted()) files discovered", systemImage: "doc.on.doc")
+                    Label(LocalizedText.count(Int(store.indexingDiscoveredCount), .filesDiscovered), systemImage: "doc.on.doc")
                     Spacer()
                     if store.indexingExpectedCount > 0, isScanning {
                         Text("of about \(store.indexingExpectedCount.formatted())")
@@ -504,11 +506,7 @@ private struct IndexingProgressPopover: View {
 }
 
 private func compactDuration(_ seconds: TimeInterval) -> String {
-    let total = max(0, Int(seconds.rounded()))
-    if total < 60 { return "\(total)s" }
-    let minutes = total / 60
-    if minutes < 60 { return "\(minutes)m \(total % 60)s" }
-    return "\(minutes / 60)h \(minutes % 60)m"
+    LocalizedText.duration(seconds)
 }
 
 struct InlineSpinner: View {
@@ -648,11 +646,11 @@ private struct ResultRow: View {
     }
 
     private var accessibilitySummary: String {
-        var parts = [file.durationMs > 0 ? String(format: "%.2f seconds", Double(file.durationMs) / 1000) : "Duration unknown",
+        var parts = [file.durationMs > 0 ? LocalizedText.duration(Double(file.durationMs) / 1000) : String(localized: "Duration unknown"),
                      store.libraryLocation(for: file)]
-        if let channels = metadata?.channels { parts.append("\(channels) channels") }
-        if store.isFavourite(file) { parts.append("Favourite") }
-        if file.acousticGroupId != 0 { parts.append("Acoustic family") }
+        if let channels = metadata?.channels { parts.append(LocalizedText.count(channels, .channels)) }
+        if store.isFavourite(file) { parts.append(String(localized: "Favourite")) }
+        if file.acousticGroupId != 0 { parts.append(String(localized: "Acoustic family")) }
         return parts.joined(separator: ", ")
     }
 
@@ -749,15 +747,15 @@ private struct LibraryOverviewView: View {
             VStack(alignment: .leading, spacing: 22) {
                 HStack(spacing: 14) {
                     OverviewCard(
-                        title: "Indexed Sounds",
-                        value: "\(store.totalIndexedFiles)",
-                        detail: "Ready for instant prefix search",
+                        title: String(localized: "Indexed Sounds"),
+                        value: store.totalIndexedFiles.formatted(),
+                        detail: String(localized: "Ready for instant prefix search"),
                         systemImage: "bolt.fill"
                     )
                     OverviewCard(
-                        title: "Libraries",
-                        value: "\(store.folders.count)",
-                        detail: "Keep source drives mounted for smooth access",
+                        title: String(localized: "Libraries"),
+                        value: store.folders.count.formatted(),
+                        detail: String(localized: "Keep source drives mounted for smooth access"),
                         systemImage: "externaldrive.fill.badge.checkmark"
                     )
                 }
@@ -793,7 +791,7 @@ private struct LibraryOverviewView: View {
 
                                 Spacer()
 
-                                Text(folder.isMissing ? "Missing" : "\(folder.fileCount) files")
+                                Text(folder.isMissing ? String(localized: "Missing") : LocalizedText.count(folder.fileCount, .files))
                                     .font(.system(size: 12, weight: .medium))
                                     .foregroundStyle(folder.isMissing ? .red : .secondary)
                             }
