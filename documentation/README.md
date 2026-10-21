@@ -38,6 +38,8 @@ current WaveSearch application.
   shortcut help, VoiceOver semantics, keyboard editor copies and acceptance limits.
 - [Waveform and audio preview system](WAVEFORM_AND_AUDIO_PREVIEW.md) — user
   behavior, architecture, cache, rendering, export, failures, and validation.
+- [Native editor import acceptance](EDITOR_IMPORT_ACCEPTANCE.md) — disposable
+  fixture matrix, actual timeline/media/persistence checks and clip-reference assessment.
 - [Waveform algorithm reference](WAVEFORM_ALGORITHM.md) — formulas, sparse and
   exact stages, pseudocode-level behavior, complexity, invariants, tuning
   constants, and extension guidance.

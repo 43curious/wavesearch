@@ -12,6 +12,11 @@ changelog/agent documentation added afterward.
 
 ### Added
 
+- A disposable WAV/AIFF/optional-ALAC interoperability fixture generator and
+  explicit editor-import matrix record expected whole/range media, Unicode paths,
+  editor copy settings, external-drive and post-quit persistence checks. Installed
+  Logic/Resolve versions and clip-reference candidates are documented; actual
+  editor timeline acceptance remains unverified without a desktop session.
 - An explicit universal macOS Release/DMG script and manual Actions workflow
   require chosen metadata and Developer ID/Keychain credentials. App and DMG
   signing, notarization, stapling, Gatekeeper checks and final checksums precede
