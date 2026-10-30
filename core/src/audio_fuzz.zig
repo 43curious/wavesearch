@@ -8,7 +8,7 @@ const compressed_metadata = @import("compressed_metadata.zig");
 
 const max_input = 8192;
 const heap_budget = 4 * 1024 * 1024;
-const seed_count = 24;
+const seed_count = 25;
 
 pub fn main(init: std.process.Init) !void {
     var args = std.process.Args.Iterator.init(init.minimal.args);
@@ -134,7 +134,7 @@ fn exercise(io: std.Io, path: []const u8, bytes: []const u8, backing: []u8) !voi
     var reads: usize = 4096;
     var bounded_reader = reader;
     bounded_reader.read_limit = &reads;
-    _ = compressed_metadata.read(allocator, &text, &description, bounded_reader, max_input) catch false;
+    _ = compressed_metadata.read(allocator, &text, &description, bounded_reader, .mp3, max_input) catch false;
     for ([_][]const u8{ text.items, description.items }) |value| {
         if (value.len > max_input * 2) return error.MetadataOutputLimit;
         if (!std.unicode.utf8ValidateSlice(value)) return error.InvalidMetadataUTF8;
@@ -250,6 +250,14 @@ fn oggPage(out: []u8, pos: *usize, sequence: u32, flags: u8, payload: []const u8
 /// Small valid tags reach text decoding before mutations attack sizes, flags,
 /// UTF encodings, duplicate fields, artwork and Ogg packet continuation.
 fn makeMetadataSeed(out: []u8, kind: usize) usize {
+    if (kind == 24) {
+        @memcpy(out[0..3], "TAG");
+        @memcpy(out[3..7], "caf\xe9");
+        @memcpy(out[97..102], "golpe");
+        out[126] = 1;
+        out[127] = 255;
+        return 128;
+    }
     if (kind <= 18) {
         const version: u8 = @intCast(kind - 14);
         @memcpy(out[0..3], "ID3");
@@ -309,7 +317,7 @@ fn checkMetadataSeed(io: std.Io, path: []const u8, size: usize, backing: []u8) !
     defer file.close(io);
     var all: std.ArrayList(u8) = .empty;
     var description: std.ArrayList(u8) = .empty;
-    const limited = try compressed_metadata.read(fixed.allocator(), &all, &description, .{ .handle = &file, .io = io, .size = size }, max_input);
+    const limited = try compressed_metadata.read(fixed.allocator(), &all, &description, .{ .handle = &file, .io = io, .size = size }, .mp3, max_input);
     if (limited or std.mem.indexOf(u8, description.items, "café") == null) return error.MetadataSeedNotExtracted;
     if (std.mem.indexOf(u8, all.items, "artwork") != null) return error.ArtworkIndexed;
 }

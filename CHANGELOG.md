@@ -15,6 +15,9 @@ changelog/agent documentation added afterward.
 - Saved references, including unresolved imports, can be explicitly removed
   with confirmation. Their tags, ranges and favourite status are discarded while
   indexed sounds, analysis and source audio remain available.
+- Bounded MP3 ID3v1/1.1 footer indexing adds legacy titles, comments, artists and
+  albums when ID3v2 is absent. Existing catalogs refresh metadata once on scan;
+  newer tags remain authoritative and track bytes stay out of search text.
 
 - Audio mutation campaigns now call the compressed metadata reader with ID3v2,
   FLAC and Ogg Vorbis/Opus seeds, including Unicode, duplicate fields, skipped

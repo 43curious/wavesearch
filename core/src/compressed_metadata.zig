@@ -5,9 +5,10 @@ const query = @import("query.zig");
 
 const MAX_FIELDS = 4096;
 const MAX_FIELD = 64 * 1024;
+pub const Format = enum { sniff, mp3 };
 
 /// Metadata only: no decoder, artwork, source writes or unbounded tag allocation.
-pub fn read(allocator: std.mem.Allocator, all: *std.ArrayList(u8), description: *std.ArrayList(u8), reader: Reader, budget: usize) !bool {
+pub fn read(allocator: std.mem.Allocator, all: *std.ArrayList(u8), description: *std.ArrayList(u8), reader: Reader, format: Format, budget: usize) !bool {
     var state = State{ .allocator = allocator, .all = all, .description = description, .reader = reader, .remaining = budget };
     var header: [10]u8 = @splat(0);
     const n = try reader.readAll(&header, 0);
@@ -17,6 +18,8 @@ pub fn read(allocator: std.mem.Allocator, all: *std.ArrayList(u8), description: 
         try state.flac();
     } else if (n >= 4 and std.mem.eql(u8, header[0..4], "OggS")) {
         try state.ogg();
+    } else if (format == .mp3) {
+        try state.id3v1();
     }
     return state.limited;
 }
@@ -45,6 +48,29 @@ const State = struct {
         if (!textField(key)) return;
         try wav.clean(self.allocator, self.all, value_);
         if (descriptive(key)) try wav.clean(self.allocator, self.description, value_);
+    }
+
+    // ID3v2 is authoritative when present. Only MP3 callers may interpret a
+    // trailing TAG block; arbitrary container payloads can contain those bytes.
+    fn id3v1(self: *State) !void {
+        if (self.reader.size < 128) return;
+        const raw = (try self.bytes(self.reader.size - 128, 128)) orelse return;
+        defer self.allocator.free(raw);
+        if (!std.mem.eql(u8, raw[0..3], "TAG")) return;
+        const comment_end: usize = if (raw[125] == 0 and raw[126] != 0) 125 else 127;
+        const fields = [_]struct { key: []const u8, start: usize, end: usize }{
+            .{ .key = "TITLE", .start = 3, .end = 33 },
+            .{ .key = "ARTIST", .start = 33, .end = 63 },
+            .{ .key = "ALBUM", .start = 63, .end = 93 },
+            .{ .key = "COMMENT", .start = 97, .end = comment_end },
+        };
+        for (fields) |field| {
+            const padded = raw[field.start..field.end];
+            const end = std.mem.indexOfScalar(u8, padded, 0) orelse padded.len;
+            const decoded = try decode(self.allocator, 0, std.mem.trim(u8, padded[0..end], " "));
+            defer self.allocator.free(decoded);
+            try self.value(field.key, decoded);
+        }
     }
 
     fn id3(self: *State, header: [10]u8) !void {

@@ -3483,6 +3483,84 @@ fn appendID3Frame(bytes: *std.ArrayList(u8), id: *const [4]u8, value: []const u8
     try bytes.appendSlice(allocator, value);
 }
 
+test "legacy MP3 footer descriptions are searchable without scanning payload or trusting other formats" {
+    var fixture = try Fixture.init();
+    defer fixture.deinit();
+    var footer: [128]u8 = @splat(0);
+    @memcpy(footer[0..3], "TAG");
+    @memcpy(footer[3..8], "caf\xe9 ");
+    @memcpy(footer[33..40], "artistx");
+    @memcpy(footer[63..69], "albumx");
+    @memcpy(footer[97..104], "rivi\xe8re");
+    footer[126] = 'Z'; // ID3v1.1 track byte must not become comment text.
+    footer[127] = 255;
+    // A sparse payload proves footer discovery does not traverse audio bytes.
+    var sparse = try fixture.tmp.dir.createFile(io, "sparse.bin", .{ .read = true });
+    defer sparse.close(io);
+    const payload_size = 16 * 1024 * 1024;
+    try sparse.setLength(io, payload_size + footer.len);
+    try sparse.writePositionalAll(io, &footer, payload_size);
+    var cancel = std.atomic.Value(bool).init(false);
+    const reader = @import("audio_file.zig").Reader{ .handle = &sparse, .io = io, .size = payload_size + footer.len, .cancel = &cancel };
+    var all: std.ArrayList(u8) = .empty;
+    defer all.deinit(allocator);
+    var description: std.ArrayList(u8) = .empty;
+    defer description.deinit(allocator);
+    var reads: u64 = 0;
+    @import("audio_file.zig").bytes_read = &reads;
+    defer @import("audio_file.zig").bytes_read = null;
+    try std.testing.expect(!try @import("compressed_metadata.zig").read(allocator, &all, &description, reader, .mp3, 128));
+    try std.testing.expectEqual(@as(u64, 138), reads);
+    try std.testing.expectEqualStrings("café rivière", description.items);
+    all.clearRetainingCapacity();
+    description.clearRetainingCapacity();
+    try std.testing.expect(try @import("compressed_metadata.zig").read(allocator, &all, &description, reader, .mp3, 127));
+    try std.testing.expectEqual(@as(usize, 0), all.items.len);
+    cancel.store(true, .release);
+    try std.testing.expectError(error.Cancelled, @import("compressed_metadata.zig").read(allocator, &all, &description, reader, .mp3, 128));
+    cancel.store(false, .release);
+    // v1.0 keeps all 30 comment bytes; v1.1 excludes the binary track byte.
+    @memset(footer[97..127], 'q');
+    try sparse.writePositionalAll(io, &footer, payload_size);
+    try std.testing.expect(!try @import("compressed_metadata.zig").read(allocator, &all, &description, reader, .mp3, 128));
+    try std.testing.expect(std.mem.endsWith(u8, description.items, repeatedString("q", 30)));
+    @memset(footer[97..125], 'q');
+    footer[125] = 0;
+    footer[126] = 'Z';
+    try sparse.writePositionalAll(io, &footer, payload_size);
+    all.clearRetainingCapacity();
+    description.clearRetainingCapacity();
+    try std.testing.expect(!try @import("compressed_metadata.zig").read(allocator, &all, &description, reader, .mp3, 128));
+    try std.testing.expect(std.mem.endsWith(u8, description.items, repeatedString("q", 28)));
+    @memset(footer[97..125], 0);
+    @memcpy(footer[97..104], "rivi\xe8re");
+    try fixture.tmp.dir.writeFile(io, .{ .sub_path = "legacy.mp3", .data = &footer });
+    try fixture.tmp.dir.writeFile(io, .{ .sub_path = "not-mp3.aiff", .data = &footer });
+    try fixture.tmp.dir.writeFile(io, .{ .sub_path = "short.mp3", .data = footer[0..127] });
+    var id3: std.ArrayList(u8) = .empty;
+    defer id3.deinit(allocator);
+    try id3.appendSlice(allocator, "ID3\x03\x00\x00\x00\x00\x00\x00");
+    try appendID3Frame(&id3, "TIT2", "\x03modernonly");
+    const size = id3.items.len - 10;
+    for (0..4) |i| id3.items[6 + i] = @intCast((size >> @as(u6, @intCast((3 - i) * 7))) & 127);
+    try id3.appendSlice(allocator, &footer);
+    try fixture.tmp.dir.writeFile(io, .{ .sub_path = "modern.mp3", .data = id3.items });
+    try openFixture(&fixture);
+    try search.indexFolderWithOptions(allocator, 1, fixture.root, .{ .fast = true });
+    var rows: [10]main_c.WSResult = undefined;
+    try std.testing.expectEqual(@as(usize, 1), try search.search(allocator, "café rivière", null, &rows, rows.len));
+    try std.testing.expectEqual(@as(usize, 1), try search.search(allocator, "artistx albumx", null, &rows, rows.len));
+    try std.testing.expectEqual(@as(usize, 1), try search.search(allocator, "modernonly", null, &rows, rows.len));
+    const legacy = (try db.inspectFile("legacy.mp3")).?;
+    // Unchanged sources indexed by the previous extractor must refresh once.
+    db.close();
+    try rawExec(fixture.db_path, "UPDATE file_audio_metadata SET extraction_version=2; UPDATE files SET search_text=name,description='';");
+    try openFixture(&fixture);
+    try search.indexFolderWithOptions(allocator, 1, fixture.root, .{ .fast = true });
+    try std.testing.expectEqual(legacy.id, (try db.inspectFile("legacy.mp3")).?.id);
+    try std.testing.expectEqual(@as(usize, 1), try search.search(allocator, "café rivière", null, &rows, rows.len));
+}
+
 test "compressed metadata skips large artwork and indexes Unicode duplicate and vendor values" {
     var fixture = try Fixture.init();
     defer fixture.deinit();
@@ -3533,14 +3611,14 @@ test "compressed metadata skips large artwork and indexes Unicode duplicate and 
         var reads: u64 = 0;
         @import("audio_file.zig").bytes_read = &reads;
         defer @import("audio_file.zig").bytes_read = null;
-        try std.testing.expect(!try @import("compressed_metadata.zig").read(allocator, &all, &description, reader, 256 * 1024));
+        try std.testing.expect(!try @import("compressed_metadata.zig").read(allocator, &all, &description, reader, .sniff, 256 * 1024));
         try std.testing.expect(reads < 2048);
         try std.testing.expect(std.mem.indexOf(u8, description.items, "東京") != null);
         try std.testing.expect(std.mem.indexOf(u8, description.items, "café lluvia") != null);
         try std.testing.expect(std.mem.indexOf(u8, description.items, "puerta suave") != null);
         try std.testing.expect(std.mem.indexOf(u8, all.items, "xxxx") == null);
         std.debug.print("compressed metadata: {s} source={d} reader_bytes={d}\n", .{ name, reader.size, reads });
-        try std.testing.expect(try @import("compressed_metadata.zig").read(allocator, &all, &description, reader, 1));
+        try std.testing.expect(try @import("compressed_metadata.zig").read(allocator, &all, &description, reader, .sniff, 1));
     }
     try fixture.tmp.dir.writeFile(io, .{ .sub_path = "broken.mp3", .data = "ID3\x04\x00\x00\xff\xff\xff\xff" });
     try fixture.tmp.dir.writeFile(io, .{ .sub_path = "missing.mp3", .data = "no tags" });
@@ -3620,14 +3698,14 @@ test "Ogg comments cross pages and malformed lengths or cancellation stay bounde
     defer all.deinit(allocator);
     var description: std.ArrayList(u8) = .empty;
     defer description.deinit(allocator);
-    try std.testing.expect(!try @import("compressed_metadata.zig").read(allocator, &all, &description, reader, 256 * 1024));
+    try std.testing.expect(!try @import("compressed_metadata.zig").read(allocator, &all, &description, reader, .sniff, 256 * 1024));
     try std.testing.expectEqualStrings("雨 東京 café", description.items);
     token.store(true, .release);
-    try std.testing.expectError(error.Cancelled, @import("compressed_metadata.zig").read(allocator, &all, &description, reader, 256 * 1024));
+    try std.testing.expectError(error.Cancelled, @import("compressed_metadata.zig").read(allocator, &all, &description, reader, .sniff, 256 * 1024));
     token.store(false, .release);
     ogg.items[27] = 255; // Declared identification packet crosses unrelated pages.
     try fixture.tmp.dir.writeFile(io, .{ .sub_path = "test.ogg", .data = ogg.items });
-    try std.testing.expectError(error.MalformedMetadata, @import("compressed_metadata.zig").read(allocator, &all, &description, reader, 256 * 1024));
+    try std.testing.expectError(error.MalformedMetadata, @import("compressed_metadata.zig").read(allocator, &all, &description, reader, .sniff, 256 * 1024));
 }
 
 fn metadataWav(dir: std.Io.Dir, name: []const u8, xml: []const u8, data_size: usize) !void {

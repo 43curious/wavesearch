@@ -95,7 +95,7 @@ pub fn indexFolderWithOptions(allocator: std.mem.Allocator, folder_id: i32, path
                 else => return err,
             };
         } else {
-            metadata.limited = compressed_metadata.read(allocator, &text, &description, reader, if (options.fast) wav_metadata.FAST_BUDGET else wav_metadata.NORMAL_BUDGET) catch |err| switch (err) {
+            metadata.limited = compressed_metadata.read(allocator, &text, &description, reader, if (std.ascii.eqlIgnoreCase(std.fs.path.extension(entry.path), ".mp3")) .mp3 else .sniff, if (options.fast) wav_metadata.FAST_BUDGET else wav_metadata.NORMAL_BUDGET) catch |err| switch (err) {
                 error.TruncatedMetadata, error.MalformedMetadata => true,
                 else => return err,
             };

@@ -141,9 +141,19 @@ MP3 ID3v2.2/2.3/2.4 text frames and comments support ISO-8859-1, UTF-16 with BOM
 UTF-16BE and UTF-8. FLAC Vorbis-comment blocks and Ogg Vorbis/Opus comment packets
 use UTF-8. Duplicate fields contribute all values. These are bounded metadata
 extractors, not audio decoders or complete container validators (Ogg CRCs are
-not verified). M4A atoms, ID3v1, compressed/encrypted/grouped frames, and whole-tag
+not verified). M4A atoms, compressed/encrypted/grouped frames, and whole-tag
 v2.2/v2.3 unsynchronisation are not extracted. Unsupported ID3 representations
 set the existing metadata-limit flag; missing tags leave fields unknown.
+
+MP3 files without an ID3v2 header also support the fixed 128-byte ID3v1/1.1
+footer. Title/comment populate descriptions; artist/album join general search
+text. Fields stop at NUL padding, trim spaces and decode as Latin-1 (legacy
+tags have no encoding declaration). Track/genre bytes and year are not indexed.
+ID3v2 remains authoritative whenever its header is present, including limited
+or malformed tags; stale trailing tags do not supplement it. Other filename
+formats never use this footer fallback. Discovery reads only a 10-byte prefix
+and 128-byte footer without traversing audio; the footer consumes the text
+budget and cancellation/errors follow the existing reader contract.
 
 Payload budgets remain 256 KiB/2 MiB for fast/normal and deep scans. Individual
 text fields are capped at 64 KiB and ID3 frames/FLAC blocks/comment counts at
@@ -186,6 +196,9 @@ extraction-version column. Older records refresh once on scan, including their
 category and compressed descriptions; unchanged-file reuse resumes afterward.
 Migration opens no sources, retains analysis/IDs, and supports schema-16 backups.
 Category rows count missing sources until their library is reconciled.
+Extraction version 3 refreshes pre-ID3v1 records once on their next scan without
+changing the database schema or discarding existing analysis. Later unchanged
+scans resume metadata reuse.
 
 Fixtures cover 6 MiB artwork preceding text, duplicate/missing/malformed fields,
 Unicode/UTF-16, Ogg page continuation, cancellation, vendor keys, recognized and
@@ -199,6 +212,7 @@ controlled relevance checks; real-library held-out UCS judgments and cold/remova
 storage acceptance remain outstanding.
 
 Specifications: [ID3v2.3](https://id3.org/id3v2.3.0),
+[ID3v1/1.1 footer layout](https://id3.org/ID3v1),
 [ID3v2.4 structure](https://id3.org/id3v2.4.0-structure),
 [ID3v2.4 frames](https://id3.org/id3v2.4.0-frames), and
 [Xiph Vorbis comments](https://xiph.org/vorbis/doc/v-comment.html).
