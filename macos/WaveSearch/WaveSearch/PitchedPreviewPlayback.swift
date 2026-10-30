@@ -1,5 +1,6 @@
 import Foundation
 import CoreAudio
+import AudioToolbox
 @preconcurrency import AVFoundation
 
 /// Prepared off-main, then owned only by PlayerController on the main actor.
@@ -67,6 +68,13 @@ nonisolated final class PitchedPreviewPlayback: PreviewPlayback, @unchecked Send
         engine.connect(pitchUnit, to: limiter, format: file.processingFormat)
         engine.connect(limiter, to: engine.mainMixerNode, format: file.processingFormat)
 
+        if file.processingFormat.channelCount == 2 {
+            // Apple's peak locking can leave opposite-phase stereo unshifted.
+            // Use non-coherent processing for stereo; mono retains its default.
+            let status = AudioUnitSetParameter(pitchUnit.audioUnit, kNewTimePitchParam_EnableSpectralCoherence,
+                                               kAudioUnitScope_Global, 0, 0, 0)
+            guard status == noErr else { throw NSError(domain: NSOSStatusErrorDomain, code: Int(status)) }
+        }
         engine.prepare()
     }
 

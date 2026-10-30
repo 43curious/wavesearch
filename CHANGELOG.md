@@ -21,8 +21,9 @@ changelog/agent documentation added afterward.
   peak limiting; unsupported formats/components retain basic playback with pitch
   disabled. The panel exposes original whole-file LUFS/sample peak and an opt-in,
   range-aware sampled spectrogram backed by bounded Zig FFT analysis. Headless
-  checks cover spectrum isolation, replacement/drain and controlled pitch/rate;
-  native DSP/output and desktop acceptance remain pending on a working session.
+  checks cover spectrum isolation, replacement/drain and controlled pitch/rate.
+  Native DSP checks cover generated mono/stereo tones; real-library audition and
+  VoiceOver acceptance remain pending.
 
 - A disposable WAV/AIFF/optional-ALAC interoperability fixture generator and
   explicit editor-import matrix record expected whole/range media, Unicode paths,
@@ -141,6 +142,9 @@ changelog/agent documentation added afterward.
 
 ### Fixed
 
+- Stereo pitch disables native spectral peak locking, which left opposite-phase
+  audio unshifted. Mono keeps its default processing; native checks verify both
+  channels, ±12 semitones, independent half/double speed and unchanged sources.
 - External audio examples reject directories and named pipes on the search
   worker before opening a decoder. Lifecycle checks exercise native PCM search
   with CAF even without ALAC codecs, plus Unicode paths and regular-file symlinks.

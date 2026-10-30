@@ -18,6 +18,7 @@ nonisolated final class InspectionGate: @unchecked Sendable {
 struct PreviewInspectionCheck {
     @MainActor
     static func main() async throws {
+        setbuf(stdout, nil)
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("wavesearch-inspection-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -100,7 +101,29 @@ struct PreviewInspectionCheck {
             if CommandLine.arguments.contains("--native-pitch") { exit(2) }
             return
         }
-        try nativePitch(url)
+        // Keep the phase-cancellation fixture: it exposed a real native DSP
+        // failure. Controls distinguish stereo phase handling from rate/pitch.
+        for (name, channels, sign) in [("mono", 1, Float(1)), ("stereo", 2, Float(1)), ("antiphase", 2, Float(-1))] {
+            let tone = root.appendingPathComponent("pitch-\(name).wav")
+            try await Task.detached {
+                let format = AVAudioFormat(standardFormatWithSampleRate: 48000, channels: AVAudioChannelCount(channels))!
+                let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 144000)!
+                buffer.frameLength = buffer.frameCapacity
+                for frame in 0..<Int(buffer.frameLength) {
+                    let sample = Float(0.25 * sin(Double(frame) * 2 * .pi * 750 / 48000))
+                    buffer.floatChannelData![0][frame] = sample
+                    if channels == 2 { buffer.floatChannelData![1][frame] = sample * sign }
+                }
+                let output = try AVAudioFile(forWriting: tone, settings: [AVFormatIDKey: kAudioFormatLinearPCM,
+                    AVSampleRateKey: 48000, AVNumberOfChannelsKey: channels, AVLinearPCMBitDepthKey: 16])
+                try output.write(from: buffer)
+            }.value
+            let originalTone = try Data(contentsOf: tone)
+            try nativePitch(tone, channels: channels, pitch: 1200, rate: 0.5)
+            if sign == -1 { try nativePitch(tone, channels: channels, pitch: -1200, rate: 2) }
+            let afterTone = try Data(contentsOf: tone)
+            precondition(afterTone == originalTone, "Pitch audition changed source audio")
+        }
     }
 
     @MainActor
@@ -112,31 +135,40 @@ struct PreviewInspectionCheck {
 
     /// Inspect rendered native samples, independently of speaker hardware or
     /// controller state, after the time-pitch unit's startup latency has passed.
-    private static func nativePitch(_ url: URL) throws {
+    private static func nativePitch(_ url: URL, channels: Int, pitch: Float, rate: Float) throws {
         let player = try PitchedPreviewPlayback(url: url, offline: true)
-        let format = AVAudioFormat(standardFormatWithSampleRate: 48000, channels: 2)!
+        let format = AVAudioFormat(standardFormatWithSampleRate: 48000, channels: AVAudioChannelCount(channels))!
         let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4096)!
         player.volume = 0.25
-        player.pitch = 1200
-        player.rate = 0.5
+        player.pitch = pitch
+        player.rate = rate
         precondition(player.play())
-        var samples: [Float] = []
+        var samples = [[Float]](repeating: [], count: channels)
         for _ in 0..<12 {
             let status = try player.renderOffline(frames: 4096, into: buffer)
             precondition(status == .success)
-            samples.append(contentsOf: UnsafeBufferPointer(start: buffer.floatChannelData![0], count: Int(buffer.frameLength)))
+            for channel in 0..<channels {
+                samples[channel].append(contentsOf: UnsafeBufferPointer(start: buffer.floatChannelData![channel], count: Int(buffer.frameLength)))
+            }
         }
-        let middle = samples[16384..<32768]
-        let crossings = zip(middle, middle.dropFirst()).filter { $0 <= 0 && $1 > 0 }.count
-        let frequency = Double(crossings) * 48000 / Double(middle.count)
-        precondition(abs(frequency - 1500) < 25, "Pitch did not double 750 Hz independently of half-speed playback: \(frequency)")
-        precondition(samples.allSatisfy { $0.isFinite && abs($0) <= 1 }, "Pitch output clipped or contained invalid PCM")
-        precondition(player.currentTime < 0.8, "Half-speed pitch audition consumed the source too quickly")
+        let expectedFrequency = 750 * pow(2, Double(pitch) / 1200)
+        var frequencies: [Double] = []
+        for channel in samples {
+            let middle = channel[16384..<32768]
+            let crossings = zip(middle, middle.dropFirst()).filter { $0 <= 0 && $1 > 0 }.count
+            let frequency = Double(crossings) * 48000 / Double(middle.count)
+            precondition(abs(frequency - expectedFrequency) < 25,
+                         "\(url.lastPathComponent): expected \(expectedFrequency) Hz at rate \(rate), got \(frequency)")
+            precondition(channel.allSatisfy { $0.isFinite && abs($0) <= 1 }, "Pitch output clipped or contained invalid PCM")
+            frequencies.append(frequency)
+        }
+        let expectedTime = Double(samples[0].count) / 48000 * Double(rate)
+        precondition(abs(player.currentTime - expectedTime) < 0.2, "Pitch audition lost its independent playback rate")
         player.pause()
         precondition(!player.isPlaying)
         player.currentTime = 1.5
         player.stop()
         precondition(player.currentTime == 0 && !player.isPlaying)
-        print("PASS: native offline-rendered pitch frequency, independent rate, clipping, seek and stop")
+        print("PASS: \(url.lastPathComponent) native pitch=\(pitch), rate=\(rate), channel_frequencies=\(frequencies) Hz, finite output, seek and stop")
     }
 }

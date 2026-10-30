@@ -86,6 +86,14 @@ retain AVAudioPlayer playback with the Pitch picker disabled. Changing pitch
 never changes source files, selected ranges, copied originals or PCM24 exports.
 Native pickers/buttons retain Tab/arrow/VoiceOver operation.
 
+Stereo pitch uses the native unit with spectral coherence (peak locking)
+disabled. On macOS 26.5.2 the default peak locking left a perfectly
+opposite-phase stereo tone unshifted; disabling it restored the requested pitch
+in both channels. Mono retains the default processing. Non-coherent stereo can
+sound more phasey or reverberant than Apple's default; real-library listening
+acceptance remains necessary. The graph still streams the original channels
+through the same rate control and final peak limiter.
+
 The panel displays integrated **LUFS** and **dBFS sample peak** from the existing
 whole-file analysis before preview effects/volume. It explicitly shows analyzing
 or unknown states; unavailable/silent numeric values appear as a dash. Sample
@@ -119,18 +127,18 @@ frequency, independent rate, finite/clamped output, seek and stop. Add
 `--native-pitch` to require DSP rather than accept an explicit skip. On the
 2026-10-21 host, every queried required Audio Unit was absent; AVAudioPlayerNode
 initialization raised an Objective-C exception even in offline mode. Product
-construction now checks availability before initialization. Controlled transport
-and spectrum checks pass; native pitch DSP, device output, compressed-format
-pitch behavior, loop transitions and keyboard/VoiceOver layout remain unverified.
-A 2026-10-30 run on macOS 26.5.2 (25F84) reached native DSP and reproduced an
-existing failure in the opposite-phase stereo fixture: a 750 Hz tone stayed at
-750 Hz with +12 semitones, instead of 1,500 Hz. Isolated mono and same-phase
-stereo probes shifted correctly; disabling the Audio Unit's spectral coherence
-also shifted the opposite-phase probe. The product retains its default DSP
-configuration, and `make check` currently fails this native pitch assertion.
-This remains a pitch acceptance limitation under issue
-[#23](https://github.com/43curious/wavesearch/issues/23), independently of the
-passing spectrum and external-example checks.
+construction now checks availability before initialization.
+On macOS 26.5.2 (25F84), native offline checks now pass for mono, same-phase
+stereo and opposite-phase stereo after configuring stereo peak locking as
+described above. The generated 750 Hz tones render at 1,500 Hz with +12 semitones
+and half speed, and the opposite-phase tone also renders at 375 Hz with −12
+semitones and double speed. Both channels must produce the requested frequency,
+remain finite/bounded, retain the independent source rate and support seek/stop;
+source bytes must remain unchanged. This establishes native synthetic DSP
+coverage for [issue #23](https://github.com/43curious/wavesearch/issues/23),
+separately from spectrum and controlled transport checks. Real-library sound
+quality, compressed-format pitch behavior, audible loop transitions and actual
+VoiceOver speech still require acceptance.
 A first generated two-second stereo WAV request for its first second produced
 94 columns in about 6.7 ms on this host. This is a synthetic, single-request
 spectrum timing, not physical first-audio or cold/removable-drive latency. The
