@@ -43,6 +43,7 @@ nonisolated enum PortableSelects {
         switch ifBackendError() {
         case "InvalidSelectsName": message = String(localized: "Use a shorter, non-empty tag or collection name.")
         case "InvalidSelectsRange": message = String(localized: "Choose a valid preview range.")
+        case "SelectsReferenceMissing": message = String(localized: "This saved reference no longer exists. Refresh the list and try again.")
         case "SelectsLimit": message = String(localized: "This exceeds the supported document or annotation limit.")
         case "UnsupportedSelectsVersion": message = String(localized: "This JSON uses an unsupported WaveSearch selects version.")
         case "InvalidNumber", "UnexpectedToken", "MissingField", "UnknownField", "SyntaxError": message = String(localized: "This is not a valid WaveSearch selects document.")

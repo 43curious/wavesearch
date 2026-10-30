@@ -1732,6 +1732,11 @@ pub fn selectsRelink(allocator: std.mem.Allocator, id: []const u8, file_id: i32)
     defer mutex.unlock();
     try (selects.Catalog{ .handle = try handleLocked() }).relink(arena.allocator(), id, file_id);
 }
+pub fn selectsRemoveReference(id: []const u8) !void {
+    lock();
+    defer mutex.unlock();
+    try (selects.Catalog{ .handle = try handleLocked() }).removeReference(id);
+}
 pub fn selectsList(allocator: std.mem.Allocator, kind: selects.Kind, name: []const u8, folder: ?i32, after_id: i32, limit: usize) ![]Candidate {
     lock();
     defer mutex.unlock();

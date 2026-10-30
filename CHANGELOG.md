@@ -12,6 +12,10 @@ changelog/agent documentation added afterward.
 
 ### Added
 
+- Saved references, including unresolved imports, can be explicitly removed
+  with confirmation. Their tags, ranges and favourite status are discarded while
+  indexed sounds, analysis and source audio remain available.
+
 - Audio mutation campaigns now call the compressed metadata reader with ID3v2,
   FLAC and Ogg Vorbis/Opus seeds, including Unicode, duplicate fields, skipped
   artwork and continued packets. Intact seeds run before budgeted mutations;

@@ -436,3 +436,9 @@
 "Spectrum unavailable" = "Spectrum unavailable";
 "%@ semitones" = "%@ semitones";
 "From %@ to %@; 0 to %@ Hz; sampled original audio." = "From %@ to %@; 0 to %@ Hz; sampled original audio.";
+"Remove Saved Reference…" = "Remove Saved Reference…";
+"Remove Saved Reference?" = "Remove Saved Reference?";
+"Remove Saved Reference" = "Remove Saved Reference";
+"Removed saved reference. Audio files stay in place." = "Removed saved reference. Audio files stay in place.";
+"This saved reference no longer exists. Refresh the list and try again." = "This saved reference no longer exists. Refresh the list and try again.";
+"Remove all tags, collection ranges and favourite status for %@? The indexed sound and audio file stay in place. Importing an older JSON export can restore these annotations." = "Remove all tags, collection ranges and favourite status for %@? The indexed sound and audio file stay in place. Importing an older JSON export can restore these annotations.";

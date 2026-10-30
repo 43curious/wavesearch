@@ -348,6 +348,16 @@ pub const Catalog = struct {
         try self.exec("COMMIT;");
     }
 
+    /// Remove annotations for one reference; the indexed file and media survive.
+    pub fn removeReference(self: Catalog, id: []const u8) !void {
+        try validateID(id);
+        const stmt = try self.prepare("DELETE FROM user_sources WHERE id=?");
+        defer _ = c.sqlite3_finalize(stmt);
+        try text(stmt, 1, id);
+        try done(stmt);
+        if (c.sqlite3_changes(self.handle) == 0) return error.SelectsReferenceMissing;
+    }
+
     /// Explicit user-selected link. Merge onto an existing annotated file first.
     pub fn relink(self: Catalog, allocator: std.mem.Allocator, id: []const u8, file_id: i32) !void {
         try self.exec("BEGIN IMMEDIATE;");
@@ -451,10 +461,7 @@ fn validateRange(start: i64, end: i64) !void {
 }
 fn validateSource(source: Source) !void {
     try validatePath(source.path);
-    if (source.id) |id| {
-        if (id.len != 32) return error.InvalidSelectsID;
-        for (id) |ch| if (!(std.ascii.isDigit(ch) or (ch >= 'a' and ch <= 'f'))) return error.InvalidSelectsID;
-    }
+    if (source.id) |id| try validateID(id);
     if (source.sha256) |digest| {
         if (digest.len != 64 or source.file_size < 0) return error.InvalidSelectsIdentity;
         for (digest) |ch| if (!(std.ascii.isDigit(ch) or (ch >= 'a' and ch <= 'f'))) return error.InvalidSelectsIdentity;
@@ -468,6 +475,11 @@ fn validateSource(source: Source) !void {
         if (member.start_ms) |start| if (start < 0) return error.InvalidSelectsRange;
         try validateRange(member.start_ms orelse -1, member.end_ms orelse -1);
     }
+}
+
+fn validateID(id: []const u8) !void {
+    if (id.len != 32) return error.InvalidSelectsID;
+    for (id) |ch| if (!(std.ascii.isDigit(ch) or (ch >= 'a' and ch <= 'f'))) return error.InvalidSelectsID;
 }
 fn column(stmt: *c.sqlite3_stmt, index: c_int) []const u8 {
     const ptr = c.sqlite3_column_text(stmt, index) orelse return "";

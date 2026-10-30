@@ -19,6 +19,7 @@ struct SelectsView: View {
     @State private var tag = ""
     @State private var collection = ""
     @State private var savesRange = false
+    @State private var referenceToRemove: SelectsSource?
 
     private var tags: [SelectsName] { SelectsName.unique(store.selectsDocument.sources.flatMap(\.tags)) }
     private var collections: [SelectsName] { SelectsName.unique(store.selectsDocument.sources.flatMap { $0.collections.map(\.name) }) }
@@ -85,6 +86,7 @@ struct SelectsView: View {
                                     .help("Use the selected sound for this reference and merge its annotations")
                             }
                         }
+                        Button("Remove Saved Reference…", role: .destructive) { referenceToRemove = source }
                     }
                     Text(source.path).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
                     ForEach(source.tags.map { SelectsName(name: $0) }) { entry in
@@ -123,6 +125,15 @@ struct SelectsView: View {
         .padding(20)
         .frame(minWidth: 760, idealWidth: 840, minHeight: 540)
         .task { await store.refreshSelects() }
+        .alert("Remove Saved Reference?", isPresented: Binding(
+            get: { referenceToRemove != nil },
+            set: { if !$0 { referenceToRemove = nil } }
+        ), presenting: referenceToRemove) { source in
+            Button("Remove Saved Reference", role: .destructive) { store.removeSelectsReference(source) }
+            Button("Cancel", role: .cancel) {}
+        } message: { source in
+            Text("Remove all tags, collection ranges and favourite status for \(URL(fileURLWithPath: source.path).lastPathComponent)? The indexed sound and audio file stay in place. Importing an older JSON export can restore these annotations.")
+        }
     }
 
     private func selected(_ source: SelectsSource) -> SoundFile? {

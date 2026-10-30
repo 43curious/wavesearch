@@ -53,7 +53,7 @@ pub export fn ws_capabilities() u64 {
     const c = @import("c");
     return c.WS_CAP_QUERY_CANCELLATION | c.WS_CAP_WAVEFORM_V1 |
         c.WS_CAP_EXTERNAL_SEMANTIC | c.WS_CAP_CLAP |
-        c.WS_CAP_EXACT_DUPLICATES | c.WS_CAP_FINGERPRINT_REPACK | c.WS_CAP_FILE_LOOKUP | c.WS_CAP_FILE_METADATA | c.WS_CAP_UCS_CATEGORIES | c.WS_CAP_PORTABLE_SELECTS | c.WS_CAP_SPECTRUM;
+        c.WS_CAP_EXACT_DUPLICATES | c.WS_CAP_FINGERPRINT_REPACK | c.WS_CAP_FILE_LOOKUP | c.WS_CAP_FILE_METADATA | c.WS_CAP_UCS_CATEGORIES | c.WS_CAP_PORTABLE_SELECTS | c.WS_CAP_SPECTRUM | c.WS_CAP_SELECTS_REMOVE;
 }
 
 fn lockMutations() void {
@@ -368,6 +368,17 @@ pub export fn ws_selects_relink_v1(id: ?[*:0]const u8, file_id: c_int) c_int {
         return -1;
     }
     db.selectsRelink(allocator, std.mem.span(id.?), file_id) catch |err| {
+        setLastError(err);
+        return -1;
+    };
+    return 0;
+}
+pub export fn ws_selects_remove_reference_v1(id: ?[*:0]const u8) c_int {
+    if (id == null) {
+        setLastErrorMessage("InvalidSelectsID");
+        return -1;
+    }
+    db.selectsRemoveReference(std.mem.span(id.?)) catch |err| {
         setLastError(err);
         return -1;
     };

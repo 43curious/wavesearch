@@ -205,6 +205,14 @@ annotations. Both return 0/-1. A reference ID is a 32-character lowercase hex
 string, not a catalog file ID. The source/query schema and identity/conflict
 rules are described in [portable selects](PORTABLE_SELECTS.md).
 
+`WS_CAP_SELECTS_REMOVE` advertises `ws_selects_remove_reference_v1(source_id)`.
+It accepts a 32-character lowercase hexadecimal reference ID and returns 0 on
+success or -1 for invalid/absent IDs or a catalog error. One atomic deletion
+cascades through that reference's tags and ranges without deleting the indexed
+file, analysis, media or legacy-seeding state. It performs catalog I/O only;
+admit and drain it like other annotation edits. Reimporting an older document
+can restore the deleted annotations; there are no deletion tombstones.
+
 List queries require an owned query request and support cancellation (-2),
 folder=-1 (all), after_id=0 (first page), and up to 1,000 WSResult entries.
 Results are ordered by increasing file ID; pass the last ID for the next page.

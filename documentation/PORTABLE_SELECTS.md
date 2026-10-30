@@ -82,6 +82,13 @@ an empty tag list in an imported document never deletes local annotations.
 Explicit editor actions remove the selected annotation. Conflicting ranges
 remain separate; collection names are not silently renamed.
 
+**Remove Saved Reference…** is available on every entry, including unresolved
+ones. After confirmation it discards that reference's favourite status, tags and
+saved collection ranges. The indexed file, analysis and source audio survive;
+other references are unchanged. Legacy favourite seeding does not resurrect a
+removed reference. Importing an older export can restore its annotations because
+imports remain additive; removal does not create portable deletion tombstones.
+
 The native result reports imported, merged, unresolved and ID-conflict counts.
 Malformed/unsupported input and capacity failures roll back the entire import.
 Limits are 16 MiB input and bounded snapshot accounting, 100,000 sources,
@@ -98,6 +105,7 @@ inside the catalog; exports contain source references, not audio or bookmarks.
 reports, one-time legacy seeding, single-file edits, explicit relinking and
 cancellable paginated catalog queries. Existing structs/signatures remain fixed.
 See [the C contract](C_API.md) and [operations](../OPERATIONS.md).
+`WS_CAP_SELECTS_REMOVE` additionally advertises explicit reference removal by ID.
 
 Focused disposable-catalog checks cover Unicode/range round trips, unambiguous
 relocation, missing references, conflict retention/idempotency, explicit merging,

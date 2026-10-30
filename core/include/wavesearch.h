@@ -18,6 +18,7 @@
 #define WS_CAP_UCS_CATEGORIES    (UINT64_C(1) << 8)
 #define WS_CAP_SPECTRUM          (UINT64_C(1) << 10)
 #define WS_CAP_PORTABLE_SELECTS  (UINT64_C(1) << 9)
+#define WS_CAP_SELECTS_REMOVE    (UINT64_C(1) << 11)
 #define WS_CAP_FILE_LOOKUP       (UINT64_C(1) << 6)
 // Allocation-free, thread-safe, valid before init and after deinit. Capabilities
 // describe compiled APIs, not model installation, provider loading or DB state.
@@ -95,6 +96,10 @@ int ws_selects_edit_v1(int file_id, uint32_t kind, const char *name,
                       int64_t start_ms, int64_t end_ms, int enabled);
 // Explicitly bind a missing reference to an indexed file, merging annotations.
 int ws_selects_relink_v1(const char *source_id, int file_id);
+// WS_CAP_SELECTS_REMOVE: remove one saved reference and all its annotations.
+// Never removes indexed files, analysis or source media. 0 success, -1 error
+// (including an invalid/absent reference ID); no source file I/O.
+int ws_selects_remove_reference_v1(const char *source_id);
 // ID-ordered keyset pages of existing files. Missing refs remain in JSON.
 // folder=-1 all, after_id=0 first page, max<=1000; query handle required.
 int ws_selects_list_v1(WSQueryRequest *request, uint32_t kind, const char *name,

@@ -498,6 +498,13 @@ final class AppStore: ObservableObject {
         }
     }
 
+    func removeSelectsReference(_ source: SelectsSource) {
+        performSelects {
+            guard source.id.withCString({ ws_selects_remove_reference_v1($0) }) == 0 else { throw PortableSelects.failure() }
+            return String(localized: "Removed saved reference. Audio files stay in place.")
+        }
+    }
+
     func browseSelects(kind: UInt32, name: String = "") {
         guard canUseLibrary else { return }
         query = ""

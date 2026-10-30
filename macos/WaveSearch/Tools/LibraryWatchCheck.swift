@@ -201,7 +201,22 @@ struct LibraryWatchCheck {
         await until { metadata.metadata(for: changedFile) != nil }
         precondition(metadata.metadata(for: changedFile)?.sampleRate == 16000 && inspections.calls == 1,
                      "A refreshed catalog must resume serving technical metadata")
+        store.browseSelects(kind: UInt32(WS_SELECTS_FAVOURITE))
+        await store.waitForSearch()
+        precondition(store.results.map(\.id) == [file.id])
+        store.removeSelectsReference(saved)
+        await store.waitForSelects()
+        await store.waitForSearch()
+        precondition(store.selectsDocument.sources.isEmpty && store.favouritePaths.isEmpty && store.results.isEmpty,
+                     "Removing a reference must refresh annotations, favourites and active browse results")
+        precondition(preferences.stringArray(forKey: "ws_favourites_v1") == [])
+        let retainedAudio = try Data(contentsOf: new)
+        precondition(retainedAudio == bytes, "Removing annotations must preserve source media")
+        store.search("")
+        await store.waitForSearch()
+        precondition(store.results.map(\.id) == [file.id], "The indexed sound must remain searchable")
         await store.shutdown()
+        print("PASS: saved reference removal preserves indexed audio and refreshes annotation browsing")
         print("PASS: portable favourites, Unicode tags and saved ranges round trip and follow verified IDs")
         print("PASS: indexed metadata avoids native inspection and rejects changed sources until refresh")
         print("PASS: real core rename preserves native favourites, selected ID, range and playhead")

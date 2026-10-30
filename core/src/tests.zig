@@ -135,6 +135,61 @@ test "portable selects round trip moves missing references ranges and conflict m
     try std.testing.expectEqual(@as(u32, 0), (try db.integrityCheck(true)).errors_found);
 }
 
+test "removing saved references clears only their annotations and retains legacy seeding" {
+    const selects = @import("selects.zig");
+    var fixture = try Fixture.init();
+    defer fixture.deinit();
+    try writeWav(fixture.tmp.dir, "kept.wav", 8000, 3);
+    try openFixture(&fixture);
+    try search.indexFolder(allocator, 1, fixture.root);
+    const original = (try db.inspectFile("kept.wav")).?;
+    const path = try fixture.path("kept.wav");
+    defer allocator.free(path);
+    const seed = try std.json.Stringify.valueAlloc(allocator, &[_][]const u8{ path, "/missing/café.wav", "/missing/retained.wav" }, .{});
+    defer allocator.free(seed);
+    try db.selectsSeed(allocator, seed);
+    try db.selectsEdit(@intCast(original.id), .tag, "雨 café", -1, -1, true);
+    try db.selectsEdit(@intCast(original.id), .collection, "Proyecto", 100, 500, true);
+    const before = try db.selectsExport(allocator);
+    defer allocator.free(before);
+    var parsed = try std.json.parseFromSlice(selects.Document, allocator, before, .{});
+    defer parsed.deinit();
+    try std.testing.expect(main_c.ws_capabilities() & abi_c.WS_CAP_SELECTS_REMOVE != 0);
+    try std.testing.expectEqual(@as(c_int, -1), main_c.ws_selects_remove_reference_v1(null));
+    try std.testing.expectEqual(@as(c_int, -1), main_c.ws_selects_remove_reference_v1("bad"));
+    try std.testing.expectEqual(@as(c_int, -1), main_c.ws_selects_remove_reference_v1("00000000000000000000000000000000"));
+    const unchanged = try db.selectsExport(allocator);
+    defer allocator.free(unchanged);
+    try std.testing.expectEqualStrings(before, unchanged);
+    for (parsed.value.sources) |source| {
+        if (std.mem.endsWith(u8, source.path, "retained.wav")) continue;
+        const id = try allocator.dupeSentinel(u8, source.id.?, 0);
+        defer allocator.free(id);
+        try std.testing.expectEqual(@as(c_int, 0), main_c.ws_selects_remove_reference_v1(id));
+        try std.testing.expectEqual(@as(c_int, -1), main_c.ws_selects_remove_reference_v1(id));
+    }
+    try std.testing.expectEqual(original.id, (try db.inspectFile("kept.wav")).?.id);
+    try std.testing.expectEqual(@as(c_int, 1), try db.countForFolder(1));
+    var metadata = std.mem.zeroes(main_c.WSFileMetadata);
+    metadata.struct_size = @sizeOf(main_c.WSFileMetadata);
+    try std.testing.expectEqual(@as(c_int, 1), main_c.ws_file_metadata_v1(@intCast(original.id), &metadata));
+    const empty = try db.selectsList(allocator, .collection, "Proyecto", null, 0, 10);
+    defer allocator.free(empty);
+    try std.testing.expectEqual(@as(usize, 0), empty.len);
+    // Reopening/seeding must not resurrect deliberately discarded favourites.
+    db.close();
+    try openFixture(&fixture);
+    try db.selectsSeed(allocator, seed);
+    const after = try db.selectsExport(allocator);
+    defer allocator.free(after);
+    var remaining = try std.json.parseFromSlice(selects.Document, allocator, after, .{});
+    defer remaining.deinit();
+    try std.testing.expectEqual(@as(usize, 1), remaining.value.sources.len);
+    try std.testing.expectEqualStrings("/missing/retained.wav", remaining.value.sources[0].path);
+    try std.testing.expect(remaining.value.sources[0].favourite);
+    try std.testing.expectEqual(@as(u32, 0), (try db.integrityCheck(true)).errors_found);
+}
+
 test "schema 17 selects migration seeds legacy favourites once and checks the C contract" {
     var fixture = try Fixture.init();
     defer fixture.deinit();
