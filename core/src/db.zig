@@ -834,7 +834,7 @@ pub const IndexStage = struct {
         try execOn(live.handle, "BEGIN DEFERRED;");
         errdefer execOn(live.handle, "ROLLBACK;") catch {};
         const revision = try catalogRevisionOn(live.handle, live.serial);
-        const old = try prepareOn(live.handle, "SELECT f.relative_path,f.file_size,f.mtime_ns,f.content_hash,f.id,f.identity_kind,f.hash_algorithm,m.sha256,(a.file_id IS NOT NULL AND a.extraction_version=4) FROM files f LEFT JOIN file_move_identities m ON m.file_id=f.id LEFT JOIN file_audio_metadata a ON a.file_id=f.id WHERE f.folder_id=? ORDER BY f.relative_path");
+        const old = try prepareOn(live.handle, "SELECT f.relative_path,f.file_size,f.mtime_ns,f.content_hash,f.id,f.identity_kind,f.hash_algorithm,m.sha256,(a.file_id IS NOT NULL AND a.extraction_version=5) FROM files f LEFT JOIN file_move_identities m ON m.file_id=f.id LEFT JOIN file_audio_metadata a ON a.file_id=f.id WHERE f.folder_id=? ORDER BY f.relative_path");
         defer _ = c.sqlite3_finalize(old);
         try bindInt(old, 1, folder_id);
         var old_count: usize = 0;
@@ -1222,7 +1222,7 @@ fn applyFolderIndexRows(folder_id: i32, files: []const ScannedFile, stage: ?*Ind
     defer _ = c.sqlite3_finalize(update_category);
     const update_description = try prepareOn(h, "UPDATE files SET description=? WHERE id=? AND description!=?");
     defer _ = c.sqlite3_finalize(update_description);
-    const update_metadata = try prepareOn(h, "INSERT INTO file_audio_metadata(file_id,channels,sample_rate,bit_depth,encoding,limited,extraction_version) VALUES(?,?,?,?,?,?,4) ON CONFLICT(file_id) DO UPDATE SET channels=excluded.channels,sample_rate=excluded.sample_rate,bit_depth=excluded.bit_depth,encoding=excluded.encoding,limited=excluded.limited,extraction_version=4");
+    const update_metadata = try prepareOn(h, "INSERT INTO file_audio_metadata(file_id,channels,sample_rate,bit_depth,encoding,limited,extraction_version) VALUES(?,?,?,?,?,?,5) ON CONFLICT(file_id) DO UPDATE SET channels=excluded.channels,sample_rate=excluded.sample_rate,bit_depth=excluded.bit_depth,encoding=excluded.encoding,limited=excluded.limited,extraction_version=5");
     defer _ = c.sqlite3_finalize(update_metadata);
     const update_identity = try prepareOn(h, "UPDATE files SET identity_kind=?1,hash_algorithm=?2 WHERE id=?3 AND (identity_kind!=?1 OR hash_algorithm!=?2)");
     defer _ = c.sqlite3_finalize(update_identity);

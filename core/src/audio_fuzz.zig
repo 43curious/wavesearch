@@ -8,7 +8,7 @@ const compressed_metadata = @import("compressed_metadata.zig");
 
 const max_input = 8192;
 const heap_budget = 4 * 1024 * 1024;
-const seed_count = 27;
+const seed_count = 29;
 
 pub fn main(init: std.process.Init) !void {
     var args = std.process.Args.Iterator.init(init.minimal.args);
@@ -158,7 +158,7 @@ fn chunk(out: []u8, pos: *usize, id: *const [4]u8, payload: []const u8, endian: 
 
 fn makeSeed(out: []u8, kind: usize) usize {
     @memset(out, 0);
-    if (kind >= 25) {
+    if (kind == 25 or kind == 26) {
         @memcpy(out[0..4], "RIFF");
         @memcpy(out[8..12], "WAVE");
         var pos: usize = 12;
@@ -263,6 +263,18 @@ fn oggPage(out: []u8, pos: *usize, sequence: u32, flags: u8, payload: []const u8
 /// Small valid tags reach text decoding before mutations attack sizes, flags,
 /// UTF encodings, duplicate fields, artwork and Ogg packet continuation.
 fn makeMetadataSeed(out: []u8, kind: usize) usize {
+    if (kind == 27 or kind == 28) {
+        const version: u8 = if (kind == 27) 3 else 4;
+        @memcpy(out[0..3], "ID3");
+        out[3] = version;
+        var pos: usize = 10;
+        id3Frame(out, &pos, version, "APIC", "\x00\xffartwork");
+        const start = pos;
+        id3Frame(out, &pos, version, "TIT2", if (version == 3) "\x7f\x00caf\xe9" else "\xff\x00\x00\x00\x00\x05\x00caf\xe9");
+        out[start + 9] = if (version == 3) 0x20 else 0x43;
+        synchsafe(out[6..10], pos - 10);
+        return pos;
+    }
     if (kind == 24) {
         @memcpy(out[0..3], "TAG");
         @memcpy(out[3..7], "caf\xe9");
@@ -331,7 +343,7 @@ fn checkMetadataSeed(io: std.Io, path: []const u8, size: usize, backing: []u8, k
     var all: std.ArrayList(u8) = .empty;
     var description: std.ArrayList(u8) = .empty;
     const reader = audio_file.Reader{ .handle = &file, .io = io, .size = size };
-    const limited = if (kind >= 25)
+    const limited = if (kind == 25 or kind == 26)
         try @import("wav_metadata.zig").read(fixed.allocator(), &all, &description, reader, max_input, null)
     else
         try compressed_metadata.read(fixed.allocator(), &all, &description, reader, .mp3, max_input);

@@ -3561,6 +3561,105 @@ test "legacy MP3 footer descriptions are searchable without scanning payload or 
     try std.testing.expectEqual(@as(usize, 1), try search.search(allocator, "café rivière", null, &rows, rows.len));
 }
 
+test "ID3 format prefixes reject hostile lengths and unsupported frames preserve later text" {
+    var fixture = try Fixture.init();
+    defer fixture.deinit();
+    const cases = [_]struct { version: u8, flags: u8, body: []const u8, malformed: bool = true }{
+        .{ .version = 3, .flags = 0x20, .body = "\x07" },
+        .{ .version = 4, .flags = 0x40, .body = "\xff" },
+        .{ .version = 4, .flags = 0x01, .body = "\x00\x00\x00" },
+        .{ .version = 4, .flags = 0x01, .body = "\xff\x00\x00\x00\x00x" },
+        .{ .version = 4, .flags = 0x01, .body = "\x7f\x7f\x7f\x7f\x00x" },
+        .{ .version = 4, .flags = 0x08, .body = "compressed", .malformed = false },
+        .{ .version = 4, .flags = 0x04, .body = "encrypted", .malformed = false },
+        .{ .version = 3, .flags = 0x80, .body = "compressed", .malformed = false },
+    };
+    for (cases) |case| {
+        var id3: std.ArrayList(u8) = .empty;
+        defer id3.deinit(allocator);
+        try id3.appendSlice(allocator, "ID3\x00\x00\x00\x00\x00\x00\x00");
+        id3.items[3] = case.version;
+        try appendID3Frame(&id3, "TIT2", case.body);
+        id3.items[19] = case.flags;
+        try appendID3Frame(&id3, "TIT2", "\x00recovered");
+        const size = id3.items.len - 10;
+        for (0..4) |i| id3.items[6 + i] = @intCast((size >> @as(u6, @intCast((3 - i) * 7))) & 127);
+        try fixture.tmp.dir.writeFile(io, .{ .sub_path = "flags.mp3", .data = id3.items });
+        var file = try fixture.tmp.dir.openFile(io, "flags.mp3", .{});
+        defer file.close(io);
+        var read_calls: usize = 5;
+        const reader = @import("audio_file.zig").Reader{ .handle = &file, .io = io, .size = id3.items.len, .read_limit = &read_calls };
+        var storage: [4096]u8 = undefined;
+        var fixed = std.heap.FixedBufferAllocator.init(&storage);
+        var all: std.ArrayList(u8) = .empty;
+        var description: std.ArrayList(u8) = .empty;
+        const result = @import("compressed_metadata.zig").read(fixed.allocator(), &all, &description, reader, .mp3, 64);
+        if (case.malformed) {
+            try std.testing.expectError(error.MalformedMetadata, result);
+        } else {
+            try std.testing.expect(try result);
+            try std.testing.expectEqualStrings("recovered", description.items);
+        }
+    }
+}
+
+test "grouped ID3 text and data length indicators preserve Unicode and later frame offsets" {
+    var fixture = try Fixture.init();
+    defer fixture.deinit();
+    const cases = [_]struct { version: u8, flags: u8, tag_flags: u8, name: []const u8 }{
+        .{ .version = 3, .flags = 0x20, .tag_flags = 0, .name = "v3.mp3" },
+        .{ .version = 4, .flags = 0x01, .tag_flags = 0, .name = "dli.mp3" },
+        .{ .version = 4, .flags = 0x43, .tag_flags = 0, .name = "frame.mp3" },
+        .{ .version = 4, .flags = 0x41, .tag_flags = 0x80, .name = "tag.mp3" },
+    };
+    for (cases) |case| {
+        var id3: std.ArrayList(u8) = .empty;
+        defer id3.deinit(allocator);
+        try id3.appendSlice(allocator, "ID3\x00\x00\x00\x00\x00\x00\x00");
+        id3.items[3] = case.version;
+        id3.items[5] = case.tag_flags;
+        var payload: std.ArrayList(u8) = .empty;
+        defer payload.deinit(allocator);
+        const data = if (case.version == 3) "\x00SM_Description\x00caf\xe9 lluvia" else "\x03SM_Description\x00café lluvia 東京";
+        const grouped = case.flags & (if (case.version == 3) @as(u8, 0x20) else 0x40) != 0;
+        if (grouped) {
+            try payload.append(allocator, if (case.version == 3) @as(u8, 0x7f) else 0xff);
+            // Physical unsynchronisation inserts a zero before the DLI's first zero.
+            if (case.version == 4) try payload.append(allocator, 0);
+        }
+        if (case.version == 4) try payload.appendSlice(allocator, &.{ 0, 0, 0, @intCast(data.len) });
+        try payload.appendSlice(allocator, data);
+        const frame_start = id3.items.len;
+        // Sizes below 128 have the same big-endian/synchsafe representation.
+        try appendID3Frame(&id3, "TXXX", payload.items);
+        id3.items[frame_start + 9] = case.flags;
+        try appendID3Frame(&id3, "COMM", "\x00eng\x00afterframe");
+        const size = id3.items.len - 10;
+        for (0..4) |i| id3.items[6 + i] = @intCast((size >> @as(u6, @intCast((3 - i) * 7))) & 127);
+        try fixture.tmp.dir.writeFile(io, .{ .sub_path = case.name, .data = id3.items });
+        var file = try fixture.tmp.dir.openFile(io, case.name, .{});
+        defer file.close(io);
+        const reader = @import("audio_file.zig").Reader{ .handle = &file, .io = io, .size = id3.items.len };
+        var all: std.ArrayList(u8) = .empty;
+        defer all.deinit(allocator);
+        var description: std.ArrayList(u8) = .empty;
+        defer description.deinit(allocator);
+        try std.testing.expect(!try @import("compressed_metadata.zig").read(allocator, &all, &description, reader, .mp3, 256 * 1024));
+        try std.testing.expectEqualStrings(if (case.version == 3) "café lluvia afterframe" else "café lluvia 東京 afterframe", description.items);
+    }
+    try openFixture(&fixture);
+    try search.indexFolderWithOptions(allocator, 1, fixture.root, .{ .fast = true });
+    var rows: [8]main_c.WSResult = undefined;
+    try std.testing.expectEqual(@as(usize, 4), try search.search(allocator, "café lluvia", null, &rows, rows.len));
+    const original = (try db.inspectFile("frame.mp3")).?;
+    db.close();
+    try rawExec(fixture.db_path, "UPDATE file_audio_metadata SET extraction_version=4; UPDATE files SET search_text=name,description='';");
+    try openFixture(&fixture);
+    try search.indexFolderWithOptions(allocator, 1, fixture.root, .{ .fast = true });
+    try std.testing.expectEqual(original.id, (try db.inspectFile("frame.mp3")).?.id);
+    try std.testing.expectEqual(@as(usize, 4), try search.search(allocator, "café lluvia", null, &rows, rows.len));
+}
+
 test "compressed metadata skips large artwork and indexes Unicode duplicate and vendor values" {
     var fixture = try Fixture.init();
     defer fixture.deinit();

@@ -110,17 +110,30 @@ const State = struct {
             pos += header_size;
             if (len == 0 or len > end - pos) return error.TruncatedMetadata;
             const flags = if (version == 2) 0 else frame[9];
-            const unsupported = if (version == 3) flags & 0xe0 != 0 else flags & 0xfd != 0;
+            const unsupported = if (version == 3) flags & 0xdf != 0 else flags & 0xbc != 0;
             const comment = std.mem.eql(u8, id, "COMM") or std.mem.eql(u8, id, "COM");
             if (id[0] == 'T' or comment) {
                 if (unsupported) {
                     self.limited = true;
                 } else if (try self.bytes(pos, @intCast(len))) |raw| {
                     defer self.allocator.free(raw);
-                    var used = raw.len;
-                    if (version == 4 and (flags & 2 != 0 or header[5] & 0x80 != 0)) used = deunsync(raw);
-                    if (used < 1 + @as(usize, if (comment) 3 else 0)) return error.MalformedMetadata;
-                    const decoded = try decode(self.allocator, raw[0], raw[if (comment) @as(usize, 4) else 1..used]);
+                    const used = if (version == 4 and (flags & 2 != 0 or header[5] & 0x80 != 0)) deunsync(raw) else raw.len;
+                    var body: []const u8 = raw[0..used];
+                    // Format fields precede text and share frame unsynchronisation.
+                    // DLI describes payload bytes before text decoding, never allocation size.
+                    const grouped = flags & (if (version == 3) @as(u8, 0x20) else 0x40) != 0;
+                    if (grouped) {
+                        if (body.len == 0) return error.MalformedMetadata;
+                        body = body[1..];
+                    }
+                    if (version == 4 and flags & 1 != 0) {
+                        if (body.len < 4) return error.MalformedMetadata;
+                        const declared = try synchsafe(body[0..4]);
+                        body = body[4..];
+                        if (declared != body.len) return error.MalformedMetadata;
+                    }
+                    if (body.len < 1 + @as(usize, if (comment) 3 else 0)) return error.MalformedMetadata;
+                    const decoded = try decode(self.allocator, body[0], body[if (comment) @as(usize, 4) else 1..]);
                     defer self.allocator.free(decoded);
                     const custom = std.mem.eql(u8, id, "TXXX") or std.mem.eql(u8, id, "TXX");
                     if (custom or comment) {

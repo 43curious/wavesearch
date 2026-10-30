@@ -149,8 +149,16 @@ MP3 ID3v2.2/2.3/2.4 text frames and comments support ISO-8859-1, UTF-16 with BOM
 UTF-16BE and UTF-8. FLAC Vorbis-comment blocks and Ogg Vorbis/Opus comment packets
 use UTF-8. Duplicate fields contribute all values. These are bounded metadata
 extractors, not audio decoders or complete container validators (Ogg CRCs are
-not verified). M4A atoms, compressed/encrypted/grouped frames, and whole-tag
-v2.2/v2.3 unsynchronisation are not extracted. Unsupported ID3 representations
+not verified). M4A atoms, compressed/encrypted frames, and whole-tag v2.2/v2.3
+unsynchronisation are not extracted. ID3v2.3/2.4 grouping identifiers are skipped
+before decoding text. For v2.4, optional synchsafe data-length indicators must
+match the actual encoded text payload after format prefixes and unsynchronisation
+are removed, before character transcoding. Frame/tag-level v2.4 unsynchronisation
+applies before those prefixes are interpreted, while traversal retains each
+physical frame length. Declared
+DLI values never become allocation sizes. Missing/invalid prefixes or mismatched
+lengths are malformed; unsupported format flags remain limited and do not stop
+later supported frames from being read. Unsupported ID3 representations
 set the existing metadata-limit flag; missing tags leave fields unknown.
 
 MP3 files without an ID3v2 header also support the fixed 128-byte ID3v1/1.1
@@ -208,7 +216,8 @@ Extraction version 3 refreshes pre-ID3v1 records once on their next scan without
 changing the database schema or discarding existing analysis. Later unchanged
 scans resume metadata reuse. Extraction version 4 similarly refreshes older XML
 records once to recover UTF-16 descriptions. Existing source IDs and analysis
-remain available.
+remain available. Extraction version 5 refreshes previously skipped grouped/DLI
+ID3 text on the next scan, retaining the same identity and analysis rules.
 
 Fixtures cover 6 MiB artwork preceding text, duplicate/missing/malformed fields,
 Unicode/UTF-16, Ogg page continuation, cancellation, vendor keys, recognized and

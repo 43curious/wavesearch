@@ -61,7 +61,7 @@ the default campaign checks its 30-second budget between cases. The current inpu
 before execution to `core/zig-out/audio-fuzz-current.bin` for crash replay.
 Intact seeds always run before budgeted truncations and hostile size/payload
 mutations. They include PCM/Float formats, BOM-identified UTF-16LE/BE WAV XML,
-ID3v2.2/2.3/2.4 Unicode text,
+ID3v2.2/2.3/2.4 Unicode text (including grouped/DLI/unsynchronised frames),
 FLAC comments and Ogg Vorbis/Opus comments across continued pages. Compressed
 metadata uses a 4,096-read ceiling; both searchable and descriptive output must
 remain bounded valid UTF-8. Intact tags must extract their expected description

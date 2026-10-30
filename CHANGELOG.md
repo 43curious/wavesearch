@@ -12,6 +12,10 @@ changelog/agent documentation added afterward.
 
 ### Added
 
+- Grouped ID3v2.3/2.4 text and v2.4 data-length indicators now preserve searchable
+  descriptions, including frame/tag unsynchronisation. Invalid prefixes and
+  declared lengths stay bounded; existing metadata refreshes once on scan.
+
 - BOM-identified UTF-16LE/BE WAV XML descriptions now preserve multilingual text,
   entities and supplementary characters without indexing markup or resolving
   external entities. Bounded decoding rejects incomplete code units; older
