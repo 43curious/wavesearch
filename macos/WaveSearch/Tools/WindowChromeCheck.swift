@@ -2,6 +2,41 @@ import SwiftUI
 import AppKit
 import Carbon
 
+/// AppKit row bridges and SwiftUI AX nodes can implement the public Objective-C
+/// accessors without declaring NSAccessibilityProtocol conformance. KVC invokes
+/// those selectors with correct scalar boxing; older AppKit nodes use attributes.
+private struct WindowAccessibilityElement {
+    let object: NSObject
+
+    func attribute<T>(_ key: String, legacy: NSAccessibility.Attribute? = nil) -> T? {
+        let value: Any?
+        if object.responds(to: NSSelectorFromString(key)) { value = object.value(forKey: key) }
+        else if let legacy { value = object.accessibilityAttributeValue(legacy) }
+        else { return nil }
+        guard let value else { return nil }
+        return value as? T
+    }
+
+    func accessibilityLabel() -> String? { attribute("accessibilityLabel", legacy: .description) }
+    func accessibilityTitle() -> String? { attribute("accessibilityTitle", legacy: .title) }
+    func accessibilityIdentifier() -> String? { attribute("accessibilityIdentifier", legacy: .identifier) }
+    func accessibilityValue() -> Any? { attribute("accessibilityValue", legacy: .value) }
+    func accessibilityValueDescription() -> String? { attribute("accessibilityValueDescription", legacy: .valueDescription) }
+    func accessibilityRole() -> NSAccessibility.Role? {
+        let role: String? = attribute("accessibilityRole", legacy: .role)
+        return role.map(NSAccessibility.Role.init(rawValue:))
+    }
+    func accessibilitySelectedRows() -> [Any]? { attribute("accessibilitySelectedRows", legacy: .selectedRows) }
+    func accessibilitySelectedChildren() -> [Any]? { attribute("accessibilitySelectedChildren", legacy: .selectedChildren) }
+    func accessibilityCustomActions() -> [NSAccessibilityCustomAction]? { attribute("accessibilityCustomActions") }
+    func isAccessibilityEnabled() -> Bool { attribute("isAccessibilityEnabled", legacy: .enabled) ?? false }
+    func accessibilityPerformPress() -> Bool { attribute("accessibilityPerformPress") ?? false }
+    func setAccessibilityFocused(_ focused: Bool) {
+        precondition(object.responds(to: NSSelectorFromString("setAccessibilityFocused:")), "Element cannot receive accessibility focus")
+        object.setValue(focused, forKey: "accessibilityFocused")
+    }
+}
+
 // Run with: bash scripts/test-window-chrome.sh (requires a macOS desktop session).
 @main
 struct WindowChromeCheck: App {
@@ -120,6 +155,14 @@ struct WindowChromeCheck: App {
         // The shortcut test may have recreated the main window.
         let main = NSApp.windows.first { $0.identifier?.rawValue == "main" && $0.isVisible } ?? window
         main.makeKeyAndOrderFront(nil)
+        // Library admission disables the workspace and can move native focus
+        // into the sidebar. Begin the Escape workflow in the search field.
+        NotificationCenter.default.post(name: GlobalSearchShortcut.focusNotification, object: nil)
+        let focusDeadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while !(main.firstResponder is NSTextView), ContinuousClock.now < focusDeadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        precondition(main.firstResponder is NSTextView, "Search must receive native focus before Escape")
         func key(_ code: UInt16, _ text: String, modifiers: NSEvent.ModifierFlags = []) async {
             let flags: NSEvent.ModifierFlags = (123...126).contains(code) ? modifiers.union([.function, .numericPad]) : modifiers
             NSApp.sendEvent(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags,
@@ -150,8 +193,9 @@ struct WindowChromeCheck: App {
         precondition(row.accessibilityCustomActions()?.contains { $0.name == "Play Preview" } == true,
                      "Result actions must be available to VoiceOver")
         let waveform = elements.first { $0.accessibilityLabel() == "Waveform" }!
-        precondition((waveform.accessibilityValue() as? String)?.contains("In 0:00.20, out 0:00.60") == true,
-                     "Waveform must expose the actual shared range")
+        let waveformValue = (waveform.accessibilityValue() as? String) ?? waveform.accessibilityValueDescription()
+        precondition(waveformValue?.contains("In 0:00.20, out 0:00.60") == true,
+                     "Waveform must expose the actual shared range: \(String(describing: waveformValue))")
         let slider = elements.first { $0.accessibilityLabel() == "Preview position" && $0.accessibilityRole() == .slider }!
         precondition(slider.isAccessibilityEnabled())
         let selectedID = store.selectedFile?.id
@@ -200,14 +244,18 @@ struct WindowChromeCheck: App {
         print("PASS: native arrow navigation, i/o range, Return, Space and text-input focus")
     }
 
-    private func accessibilityElements(_ root: any NSAccessibilityProtocol) -> [any NSAccessibilityProtocol] {
-        var elements: [any NSAccessibilityProtocol] = []
+    private func accessibilityElements(_ root: NSObject) -> [WindowAccessibilityElement] {
+        var elements: [WindowAccessibilityElement] = []
         var pending = [root]
         var visited: Set<ObjectIdentifier> = []
         while let element = pending.popLast() {
             guard visited.insert(ObjectIdentifier(element)).inserted else { continue }
-            elements.append(element)
-            pending.append(contentsOf: (element.accessibilityChildren() ?? []).compactMap { $0 as? any NSAccessibilityProtocol })
+            let accessible = WindowAccessibilityElement(object: element)
+            elements.append(accessible)
+            let children: [NSObject] = accessible.attribute("accessibilityChildren", legacy: .children) ?? []
+            let rows: [NSObject] = accessible.attribute("accessibilityRows", legacy: .rows) ?? []
+            pending.append(contentsOf: children)
+            pending.append(contentsOf: rows)
         }
         return elements
     }

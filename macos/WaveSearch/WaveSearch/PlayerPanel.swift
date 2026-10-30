@@ -801,6 +801,7 @@ struct PlayerPanel: View {
                 ), in: 0...max(player.duration, 0.01), step: 0.01) {
                     Text("Preview position")
                 }
+                .accessibilityLabel("Preview position")
                 .accessibilityValue(positionDescription)
                 .help("Seek with Left and Right, then use In and Out to mark a range")
                 .disabled(!isCurrent || player.isPreparing || player.duration <= 0)

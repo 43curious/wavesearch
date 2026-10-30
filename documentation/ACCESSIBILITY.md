@@ -68,13 +68,33 @@ for the out mark, and opening shortcut help by key and menu. It retains existing
 arrow/mark/playback/text-entry checks. Run GUI checks sequentially with a logged-in
 desktop via `make check`; see [CI](CI.md) for the headless split.
 
-During implementation, core checks, direct Swift app/window-check compilation,
-refinement-policy checks and focused keyboard-copy checks could run. The host
-could not run Xcode project builds or the native window check, and the full
-lifecycle suite encountered unavailable native playback/pasteboard services.
-Consequently keyboard focus, accessibility-tree assertions and actual VoiceOver
-speech have not passed desktop acceptance. A file URL on the clipboard does not
-prove that a DAW or NLE imports it; see [editor import validation](WAVEFORM_AND_AUDIO_PREVIEW.md).
+Keyboard fixtures must explicitly focus search after indexing/library changes
+before exercising Escape into results. Work admission disables the workspace
+and can move native focus into the sidebar; sending Escape there does not test
+the search-to-results transition. Wait for the actual field editor to receive
+focus rather than assuming the previous SwiftUI focus state survived.
+
+The in-process accessibility reader follows both children and rows. AppKit's
+`NSOutlineRow`/cell bridges and SwiftUI accessibility nodes may implement the
+public Objective-C accessors without declaring `NSAccessibilityProtocol`
+conformance. Casting every node to that protocol silently discards row content.
+The fixture reads those accessors through KVC, which also boxes scalar values,
+and uses legacy attributes for older AppKit bridges. It retains the actual
+selected-row, named-action and waveform/control assertions.
+String values can be exposed through either `AXValue` or `AXValueDescription`.
+The window fixture pins English/en-US because its expected labels and range
+timestamps are literal English; the localization script separately covers both
+native language bundles. The preview-position slider has an explicit
+accessibility label: its visible SwiftUI label alone did not name the native
+slider cell on macOS 26.5.2.
+
+The native window check now passes on macOS 26.5.2, including result
+selection/actions, waveform ranges, slider focus/keyboard seeking, the out-point
+action, shortcut help, arrows, i/o, Return/Space and text-input focus. These are
+native accessibility-tree and injected-key checks; actual VoiceOver speech and
+end-to-end manual keyboard-only use still need acceptance. A file URL on the
+clipboard does not prove that a DAW or NLE imports it; see
+[editor import validation](WAVEFORM_AND_AUDIO_PREVIEW.md).
 
 Complete these checks on a normal desktop before treating
 [issue #28](https://github.com/43curious/wavesearch/issues/28) as fully accepted:

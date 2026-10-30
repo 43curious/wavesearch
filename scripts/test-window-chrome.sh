@@ -13,7 +13,8 @@ done
 swiftc -parse-as-library -swift-version 5 -default-isolation MainActor \
     -I "$KIT/Headers" "$KIT/libwavesearch.a" -framework IOKit \
     "${SOURCES[@]}" macos/WaveSearch/Tools/WindowChromeCheck.swift -o "$BUILD/check"
-bash scripts/run-gui-check.sh "$BUILD/check" | tee "$BUILD/output"
+# Assertions inspect English labels/times; localization has its own bilingual check.
+bash scripts/run-gui-check.sh "$BUILD/check" -AppleLanguages '(en)' -AppleLocale en_US | tee "$BUILD/output"
 # A window close must not quit the test app before reopening assertions run.
 grep -q 'PASS: native shortcut conflict' "$BUILD/output"
 grep -q 'PASS: sidebar toolbar/menu shortcut' "$BUILD/output"

@@ -142,6 +142,9 @@ changelog/agent documentation added afterward.
 
 ### Fixed
 
+- The preview-position slider has an explicit accessible name. Native keyboard
+  checks establish search focus after indexing, inspect AppKit/SwiftUI AX nodes
+  without dropping row bridges, and pin the English labels/timestamps they assert.
 - Stereo pitch disables native spectral peak locking, which left opposite-phase
   audio unshifted. Mono keeps its default processing; native checks verify both
   channels, ±12 semitones, independent half/double speed and unchanged sources.
