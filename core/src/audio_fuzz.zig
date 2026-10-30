@@ -4,9 +4,11 @@ const audio = @import("audio.zig");
 const clap = @import("clap_audio.zig");
 const audio_file = @import("audio_file.zig");
 const search = @import("search.zig");
+const compressed_metadata = @import("compressed_metadata.zig");
 
 const max_input = 8192;
 const heap_budget = 4 * 1024 * 1024;
+const seed_count = 24;
 
 pub fn main(init: std.process.Init) !void {
     var args = std.process.Args.Iterator.init(init.minimal.args);
@@ -39,20 +41,28 @@ pub fn main(init: std.process.Init) !void {
     const started = std.Io.Clock.awake.now(io);
     const budget_ns = @as(i96, seconds) * std.time.ns_per_s;
     var cases: usize = 0;
-    // Always run intact seeds, every truncation, and hostile size/payload edits.
+    // Always reach every parser with an intact seed, even on a slow CI worker.
     // The latest input is saved BEFORE execution, including in panic builds.
+    for (0..seed_count) |kind| {
+        var input: [max_input]u8 = undefined;
+        const n = makeSeed(&input, kind);
+        try savedExercise(io, artifact, input[0..n], backing);
+        cases += 1;
+        if (kind < 16 and kind != 9 and kind != 15) {
+            var fixed = std.heap.FixedBufferAllocator.init(backing);
+            _ = try clap.preprocessWavBytes(fixed.allocator(), input[0..n]);
+        }
+        if (kind >= 16) try checkMetadataSeed(io, artifact, n, backing);
+    }
+    // Truncations and hostile size/payload edits share the campaign budget.
     campaign: {
-        for (0..16) |kind| {
+        for (0..seed_count) |kind| {
             var input: [max_input]u8 = undefined;
             const n = makeSeed(&input, kind);
-            for (0..n + 1) |end| {
+            for (0..n) |end| {
                 if (started.durationTo(std.Io.Clock.awake.now(io)).toNanoseconds() >= budget_ns) break :campaign;
                 try savedExercise(io, artifact, input[0..end], backing);
                 cases += 1;
-                if (end == n and kind != 9 and kind != 15) {
-                    var fixed = std.heap.FixedBufferAllocator.init(backing);
-                    _ = try clap.preprocessWavBytes(fixed.allocator(), input[0..n]);
-                }
             }
             var hostile = input;
             for (0..n / 4) |word| {
@@ -66,7 +76,7 @@ pub fn main(init: std.process.Init) !void {
         for (0..iterations) |_| {
             if (started.durationTo(std.Io.Clock.awake.now(io)).toNanoseconds() >= budget_ns) break :campaign;
             var input: [max_input]u8 = undefined;
-            var n = makeSeed(&input, random.uintLessThan(usize, 16));
+            var n = makeSeed(&input, random.uintLessThan(usize, seed_count));
             for (0..random.intRangeAtMost(usize, 1, 8)) |_| {
                 switch (random.uintLessThan(u8, 4)) {
                     0 => input[random.uintLessThan(usize, n)] = random.int(u8),
@@ -116,6 +126,19 @@ fn exercise(io: std.Io, path: []const u8, bytes: []const u8, backing: []u8) !voi
     text = .empty;
     audio.appendMetadataTextFromFileSparse(allocator, &text, reader, max_input) catch {};
     if (text.items.len > max_input * 2) return error.MetadataOutputLimit;
+    fixed.reset();
+    text = .empty;
+    var description: std.ArrayList(u8) = .empty;
+    // Exercise the indexing reader directly: WAV wrappers do not dispatch to
+    // compressed tags. Include both output fields in the fixed heap budget.
+    var reads: usize = 4096;
+    var bounded_reader = reader;
+    bounded_reader.read_limit = &reads;
+    _ = compressed_metadata.read(allocator, &text, &description, bounded_reader, max_input) catch false;
+    for ([_][]const u8{ text.items, description.items }) |value| {
+        if (value.len > max_input * 2) return error.MetadataOutputLimit;
+        if (!std.unicode.utf8ValidateSlice(value)) return error.InvalidMetadataUTF8;
+    }
     // Arbitrary hostile text also exercises number parsing and bounded token output.
     const query = search.parseSearchQuery(bytes);
     if (query.text.len > search.MAX_QUERY_LEN) return error.QueryOutputLimit;
@@ -135,6 +158,7 @@ fn chunk(out: []u8, pos: *usize, id: *const [4]u8, payload: []const u8, endian: 
 
 fn makeSeed(out: []u8, kind: usize) usize {
     @memset(out, 0);
+    if (kind >= 16) return makeMetadataSeed(out, kind);
     var pos: usize = 12;
     const endian: std.builtin.Endian = if (kind == 8 or kind >= 10) .big else .little;
     if (kind >= 10) {
@@ -188,6 +212,106 @@ fn makeSeed(out: []u8, kind: usize) usize {
     }
     std.mem.writeInt(u32, out[4..8], @intCast(pos - 8), endian);
     return pos;
+}
+
+fn synchsafe(out: *[4]u8, value: usize) void {
+    for (0..4) |i| out[i] = @intCast((value >> @intCast((3 - i) * 7)) & 0x7f);
+}
+
+fn id3Frame(out: []u8, pos: *usize, version: u8, id: []const u8, payload: []const u8) void {
+    @memcpy(out[pos.*..][0..id.len], id);
+    if (version == 2) {
+        std.mem.writeInt(u24, out[pos.* + 3 ..][0..3], @intCast(payload.len), .big);
+    } else if (version == 4) {
+        synchsafe(out[pos.* + 4 ..][0..4], payload.len);
+    } else {
+        std.mem.writeInt(u32, out[pos.* + 4 ..][0..4], @intCast(payload.len), .big);
+    }
+    pos.* += if (version == 2) @as(usize, 6) else 10;
+    @memcpy(out[pos.*..][0..payload.len], payload);
+    pos.* += payload.len;
+}
+
+fn oggPage(out: []u8, pos: *usize, sequence: u32, flags: u8, payload: []const u8, finishes: bool) void {
+    const start = pos.*;
+    @memcpy(out[start..][0..4], "OggS");
+    out[start + 5] = flags;
+    std.mem.writeInt(u32, out[start + 14 ..][0..4], 1, .little);
+    std.mem.writeInt(u32, out[start + 18 ..][0..4], sequence, .little);
+    const segments = payload.len / 255 + @intFromBool(finishes);
+    out[start + 26] = @intCast(segments);
+    @memset(out[start + 27 ..][0 .. payload.len / 255], 255);
+    if (finishes) out[start + 27 + segments - 1] = @intCast(payload.len % 255);
+    pos.* += 27 + segments;
+    @memcpy(out[pos.*..][0..payload.len], payload);
+    pos.* += payload.len;
+}
+
+/// Small valid tags reach text decoding before mutations attack sizes, flags,
+/// UTF encodings, duplicate fields, artwork and Ogg packet continuation.
+fn makeMetadataSeed(out: []u8, kind: usize) usize {
+    if (kind <= 18) {
+        const version: u8 = @intCast(kind - 14);
+        @memcpy(out[0..3], "ID3");
+        out[3] = version;
+        var pos: usize = 10;
+        const title: []const u8 = switch (version) {
+            2 => "\x01\xff\xfec\x00a\x00f\x00\xe9\x00", // UTF-16LE with BOM
+            3 => "\x00caf\xe9", // Latin-1
+            else => "\x03café", // UTF-8
+        };
+        id3Frame(out, &pos, version, if (version == 2) "PIC" else "APIC", "\x00\xffartwork");
+        id3Frame(out, &pos, version, if (version == 2) "TT2" else "TIT2", title);
+        id3Frame(out, &pos, version, if (version == 2) "TT2" else "TIT2", title);
+        id3Frame(out, &pos, version, if (version == 2) "COM" else "COMM", "\x00eng\x00golpe");
+        synchsafe(out[6..10], pos - 10);
+        return pos;
+    }
+    var packet: [1024]u8 = @splat(0);
+    const opus = kind == 21 or kind == 23;
+    const continued = kind >= 22;
+    const prefix: []const u8 = if (kind == 19) "" else if (opus) "OpusTags" else "\x03vorbis";
+    @memcpy(packet[0..prefix.len], prefix);
+    var n = prefix.len;
+    const vendor_len: usize = if (continued) 270 else 3;
+    std.mem.writeInt(u32, packet[n..][0..4], @intCast(vendor_len), .little);
+    n += 4;
+    @memset(packet[n..][0..vendor_len], 'v');
+    n += vendor_len;
+    const fields = [_][]const u8{ "TITLE=café", "TITLE=golpe 日本語", "ASWG_FXNAME=lluvia", "METADATA_BLOCK_PICTURE=\x00\xffartwork" };
+    std.mem.writeInt(u32, packet[n..][0..4], fields.len, .little);
+    n += 4;
+    for (fields) |field| {
+        std.mem.writeInt(u32, packet[n..][0..4], @intCast(field.len), .little);
+        n += 4;
+        @memcpy(packet[n..][0..field.len], field);
+        n += field.len;
+    }
+    if (kind == 19) {
+        @memcpy(out[0..4], "fLaC");
+        out[4] = 0x84; // Final metadata block: Vorbis comments.
+        std.mem.writeInt(u24, out[5..8], @intCast(n), .big);
+        @memcpy(out[8..][0..n], packet[0..n]);
+        return n + 8;
+    }
+    var pos: usize = 0;
+    oggPage(out, &pos, 0, 2, if (opus) "OpusHead" else "\x01vorbis", true);
+    if (continued) {
+        oggPage(out, &pos, 1, 0, packet[0..255], false);
+        oggPage(out, &pos, 2, 1, packet[255..n], true);
+    } else oggPage(out, &pos, 1, 0, packet[0..n], true);
+    return pos;
+}
+
+fn checkMetadataSeed(io: std.Io, path: []const u8, size: usize, backing: []u8) !void {
+    var fixed = std.heap.FixedBufferAllocator.init(backing);
+    var file = try std.Io.Dir.cwd().openFile(io, path, .{});
+    defer file.close(io);
+    var all: std.ArrayList(u8) = .empty;
+    var description: std.ArrayList(u8) = .empty;
+    const limited = try compressed_metadata.read(fixed.allocator(), &all, &description, .{ .handle = &file, .io = io, .size = size }, max_input);
+    if (limited or std.mem.indexOf(u8, description.items, "café") == null) return error.MetadataSeedNotExtracted;
+    if (std.mem.indexOf(u8, all.items, "artwork") != null) return error.ArtworkIndexed;
 }
 
 fn durationProperties(seed: u64, iterations: usize) !void {

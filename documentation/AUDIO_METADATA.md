@@ -85,8 +85,9 @@ Core fixtures cover metadata before/after 20 MiB PCM, unknown/odd chunks,
 multilingual values, XML entities/CDATA/private fields, excluded markup/binary
 noise, bounded nesting/payloads, cancellation, unknown formats, source changes,
 schema-15 migration, C output/layout compatibility and description ranking.
-The existing 3,081-case bounded audio mutation campaign exercises both metadata
-readers. Existing lexical and hybrid quality fixtures remain at nDCG@10 1.0;
+The bounded audio mutation campaign exercises prefix/sparse WAV and compressed
+metadata readers, including ID3 Unicode and continued Ogg comment packets.
+Existing lexical and hybrid quality fixtures remain at nDCG@10 1.0;
 these are controlled synthetic judgments, not real-library acceptance.
 
 The focused 20 MiB WAV fixture reads 866 bytes for sparse metadata, versus

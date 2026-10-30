@@ -12,6 +12,11 @@ changelog/agent documentation added afterward.
 
 ### Added
 
+- Audio mutation campaigns now call the compressed metadata reader with ID3v2,
+  FLAC and Ogg Vorbis/Opus seeds, including Unicode, duplicate fields, skipped
+  artwork and continued packets. Intact seeds run before budgeted mutations;
+  extracted text, allocation and read limits remain bounded and replayable.
+
 - Preview-only ±12-semitone pitch with independent rate, native streaming and
   peak limiting; unsupported formats/components retain basic playback with pitch
   disabled. The panel exposes original whole-file LUFS/sample peak and an opt-in,
