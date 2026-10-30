@@ -34,6 +34,12 @@ Each job reads the exact release from [`.zig-version`](../.zig-version), looks u
 its platform archive in the [official Zig release index](https://ziglang.org/download/index.json),
 verifies SHA-256 before extraction and checks the executable's version. Updating
 the pin requires an available official release with the repository's build API.
+Setup publishes the verified executable's absolute path as `ZIG` through
+`GITHUB_ENV`, as well as adding its directory to `GITHUB_PATH`. Make, the native
+build script and the release script therefore retain that compiler when they
+extend `PATH`. Script checks exercise this with a local archive and shadow
+compiler, and reject corrupt archives/wrong versions before publishing either
+environment setting. These fixtures require no network access.
 The runner provides Bash, make, curl, Python 3, shasum and tar with xz support;
 macOS additionally needs the selected Xcode, Swift, lipo and ranlib. Runner Xcode
 availability is documented in the [official image inventory](https://github.com/actions/runner-images/blob/main/images/macos/macos-26-arm64-Readme.md).

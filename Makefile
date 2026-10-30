@@ -50,6 +50,7 @@ check-format: check-toolchain
 
 check-scripts:
 	@for script in build.sh scripts/*.sh; do bash -n "$$script" || exit; done
+	python3 scripts/test-ci-toolchain.py
 	python3 scripts/test-release-workflow.py
 
 check-core: check-format check-scripts

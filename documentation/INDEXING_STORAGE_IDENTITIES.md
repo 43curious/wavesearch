@@ -32,6 +32,26 @@ is cooperative; final path/descriptor stats reject changed or replaced sources.
 The legacy waveform PCM-array helper remains, but acoustic file extraction does
 not use it. Borrowed PCM adds no second whole-timeline array to the analyzer.
 
+## Small worker stacks
+
+Both file and interleaved-PCM example searches are checked on 512 KiB worker
+allocations. On Linux/glibc, pthread TLS occupies part of that allocation. The
+Zig 0.17 safe test executable includes a 256 KiB thread-local alternate signal
+stack, so a worker has substantially less than 512 KiB for its call frames.
+
+Fingerprint candidate selectors each carry 27 probes. Block sort's 512-record
+scratch cache made `fingerprintCandidateIdsWithStats` reserve 283,704 bytes on
+x86_64 Linux, overflowing the worker allocation once TLS/callers were included.
+Heap sort preserves the same document-frequency/hash ordering with constant
+scratch space; the measured function frame falls to 54,328 bytes. These sizes
+describe this compiler/build, not an ABI guarantee. The separate final example
+result sort also uses heap sort because its records contain full paths.
+
+The original fault and the corrected file/PCM regression were executed on an
+Ubuntu 24.04 x86_64 guest using QEMU CPU emulation on macOS. Cross-compilation
+alone, or executing an Intel macOS build, does not exercise Linux pthread TLS.
+Keep the small-stack regression when changing selector layout or sorting.
+
 ## Lossless storage and recovery
 
 WFP1 groups sorted hashes and encodes hash/frame deltas with bounded unsigned

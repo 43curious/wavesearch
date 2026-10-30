@@ -2108,7 +2108,14 @@ test "fingerprint indexing identifies resampled level-shifted and trimmed WAV va
         sample.* = @floatCast(0.45 * @sin(2.0 * std.math.pi * (180.0 * t + 330.0 * t * t)) + (if (@mod(t, 0.2) < 0.008) 0.3 * @sin(2.0 * std.math.pi * 2100.0 * t) else 0));
     }
     for (&abi_results) |*result| result.struct_size = @sizeOf(main_c.WSExampleResult);
-    try std.testing.expect(main_c.ws_search_by_example_pcm(pcm.ptr, pcm.len, 1, 48_000, 1, &abi_results, abi_results.len) >= 4);
+    abi_count = -1;
+    const pcm_worker = try std.Thread.spawn(.{ .stack_size = 512 * 1024 }, struct {
+        fn run(samples: []const f32, results: *[4]main_c.WSExampleResult, count: *c_int) void {
+            count.* = main_c.ws_search_by_example_pcm(samples.ptr, samples.len, 1, 48_000, 1, results, results.len);
+        }
+    }.run, .{ pcm, &abi_results, &abi_count });
+    pcm_worker.join();
+    try std.testing.expect(abi_count >= 4);
     var abi_group = std.mem.zeroes(main_c.WSAcousticGroup);
     abi_group.struct_size = @sizeOf(main_c.WSAcousticGroup);
     try std.testing.expectEqual(@as(c_int, 0), main_c.ws_acoustic_group(source_id, &abi_group));

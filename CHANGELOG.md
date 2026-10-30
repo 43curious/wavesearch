@@ -142,6 +142,13 @@ changelog/agent documentation added afterward.
 
 ### Fixed
 
+- Linux file/PCM example search now fits small worker stacks: fingerprint
+  selector ranking uses heap sort instead of a large block-sort scratch cache.
+  Both C search paths retain 512 KiB worker regression coverage, including Linux
+  pthread TLS overhead.
+- CI exports the checksum/version-verified Zig executable by absolute path so
+  native build scripts cannot replace it through PATH changes. Local archive
+  fixtures cover compiler shadowing, corrupt downloads and version mismatches.
 - The preview-position slider has an explicit accessible name. Native keyboard
   checks establish search focus after indexing, inspect AppKit/SwiftUI AX nodes
   without dropping row bridges, and pin the English labels/timestamps they assert.

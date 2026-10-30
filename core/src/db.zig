@@ -3437,7 +3437,9 @@ pub fn fingerprintCandidateIdsWithStats(allocator: std.mem.Allocator, algorithm_
         selectors[selector_count] = selector;
         selector_count += 1;
     }
-    std.mem.sort(Selector, selectors[0..selector_count], {}, struct {
+    // Each selector carries 27 probes. Block sort's 512-record scratch cache
+    // can exhaust a small host stack once Linux pthread TLS is accounted for.
+    std.sort.heap(Selector, selectors[0..selector_count], {}, struct {
         fn less(_: void, a: Selector, b: Selector) bool {
             return if (a.df == b.df) a.hash < b.hash else a.df < b.df;
         }

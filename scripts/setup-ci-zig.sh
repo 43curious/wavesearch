@@ -4,6 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 : "${RUNNER_TEMP:?GitHub Actions RUNNER_TEMP is required}"
 : "${GITHUB_PATH:?GitHub Actions GITHUB_PATH is required}"
+: "${GITHUB_ENV:?GitHub Actions GITHUB_ENV is required}"
 version="$(cat .zig-version)"
 case "$(uname -s)/$(uname -m)" in
     Linux/x86_64) platform=x86_64-linux ;;
@@ -26,4 +27,6 @@ echo "$checksum  $RUNNER_TEMP/zig.tar.xz" | shasum -a 256 --check
 mkdir -p "$RUNNER_TEMP/wavesearch-zig"
 tar -xJf "$RUNNER_TEMP/zig.tar.xz" --strip-components=1 -C "$RUNNER_TEMP/wavesearch-zig"
 test "$("$RUNNER_TEMP/wavesearch-zig/zig" version)" = "$version"
+# Keep the verified executable even when native build scripts extend PATH.
+echo "ZIG=$RUNNER_TEMP/wavesearch-zig/zig" >> "$GITHUB_ENV"
 echo "$RUNNER_TEMP/wavesearch-zig" >> "$GITHUB_PATH"

@@ -74,8 +74,9 @@ against the implementation before relying on them.
 - Treat filesystem events as invalidation hints for complete snapshots. Transfer
   individual file identity only with unambiguous complete-byte proof. Stop/drain
   native watches before library teardown and keep missing-volume scans safe.
-- Native host workers can have small stacks. Avoid large stack scratch buffers
-  when sorting core records that contain full paths.
+- Native host workers can have small stacks. Use heap sort for large records
+  containing paths or inline probe arrays, and allow for Linux pthread TLS. See the
+  [stack budget](documentation/INDEXING_STORAGE_IDENTITIES.md#small-worker-stacks).
 - Keep indexed metadata unknown/limited states explicit. Validate catalog header
   metadata against physical source identity before skipping host inspection;
   XML extraction must never load external resources or expand DTD entities.
