@@ -3733,6 +3733,69 @@ fn metadataWav(dir: std.Io.Dir, name: []const u8, xml: []const u8, data_size: us
     try dir.writeFile(io, .{ .sub_path = name, .data = bytes.items });
 }
 
+test "UTF-16 XML rejects incomplete code units and invalid surrogate pairs within bounded reads" {
+    var fixture = try Fixture.init();
+    defer fixture.deinit();
+    for ([_][]const u8{ "\xff\xfe<", "\xfe\xff\xd8\x00", "\xff\xfe\x00\xdc", "\xff\xfe\x00\xd8A\x00", "\xff\xfe\x00\x00<\x00\x00\x00" }) |payload| {
+        var bytes: std.ArrayList(u8) = .empty;
+        defer bytes.deinit(allocator);
+        try bytes.appendSlice(allocator, "RIFF\x00\x00\x00\x00WAVE");
+        try appendMetadataChunk(&bytes, "iXML", payload);
+        std.mem.writeInt(u32, bytes.items[4..8], @intCast(bytes.items.len - 8), .little);
+        try fixture.tmp.dir.writeFile(io, .{ .sub_path = "limited.wav", .data = bytes.items });
+        var file = try fixture.tmp.dir.openFile(io, "limited.wav", .{});
+        defer file.close(io);
+        var read_calls: usize = 3; // RIFF, chunk header, one budgeted payload.
+        const reader = @import("audio_file.zig").Reader{ .handle = &file, .io = io, .size = bytes.items.len, .read_limit = &read_calls };
+        var all: std.ArrayList(u8) = .empty;
+        defer all.deinit(allocator);
+        var description: std.ArrayList(u8) = .empty;
+        defer description.deinit(allocator);
+        try std.testing.expect(try @import("wav_metadata.zig").read(allocator, &all, &description, reader, payload.len, null));
+        try std.testing.expectEqual(@as(usize, 0), all.items.len);
+        try std.testing.expectEqual(@as(usize, 0), description.items.len);
+    }
+}
+
+test "UTF-16 WAV XML indexes Unicode descriptions without exposing markup or external entities" {
+    var fixture = try Fixture.init();
+    defer fixture.deinit();
+    const xml = "<?xml version='1.0' encoding='UTF-16'?><!DOCTYPE x [<!ENTITY hidden SYSTEM 'file:///not-opened'>]><BWFXML attr='attributejunk'><NOTE>explosi&#xF3;n café <![CDATA[東京 🌊]]> &hidden;</NOTE><PRIVATE>privatevalue</PRIVATE></BWFXML>";
+    const units = try std.unicode.utf8ToUtf16LeAlloc(allocator, xml);
+    defer allocator.free(units);
+    for ([_]std.builtin.Endian{ .little, .big }) |endian| {
+        const bytes = try allocator.alloc(u8, 2 + units.len * 2);
+        defer allocator.free(bytes);
+        std.mem.writeInt(u16, bytes[0..2], 0xfeff, endian);
+        for (units, 0..) |unit, i| std.mem.writeInt(u16, bytes[2 + i * 2 ..][0..2], std.mem.littleToNative(u16, unit), endian);
+        const name = if (endian == .little) "little.wav" else "big.wav";
+        try metadataWav(fixture.tmp.dir, name, bytes, 16000);
+        var file = try fixture.tmp.dir.openFile(io, name, .{});
+        defer file.close(io);
+        const reader = @import("audio_file.zig").Reader{ .handle = &file, .io = io, .size = (try file.stat(io)).size };
+        var all: std.ArrayList(u8) = .empty;
+        defer all.deinit(allocator);
+        var description: std.ArrayList(u8) = .empty;
+        defer description.deinit(allocator);
+        try std.testing.expect(!try @import("wav_metadata.zig").read(allocator, &all, &description, reader, 256 * 1024, null));
+        try std.testing.expect(std.mem.indexOf(u8, description.items, "explosión café 東京 🌊") != null);
+        try std.testing.expect(std.mem.indexOf(u8, all.items, "privatevalue") != null);
+        for ([_][]const u8{ "attributejunk", "not opened", "hidden", "bwFXML" }) |noise|
+            try std.testing.expect(std.mem.indexOf(u8, all.items, noise) == null);
+    }
+    try openFixture(&fixture);
+    try search.indexFolderWithOptions(allocator, 1, fixture.root, .{ .fast = true });
+    var rows: [4]main_c.WSResult = undefined;
+    try std.testing.expectEqual(@as(usize, 2), try search.search(allocator, "explosión 東京", null, &rows, rows.len));
+    const original = (try db.inspectFile("little.wav")).?;
+    db.close();
+    try rawExec(fixture.db_path, "UPDATE file_audio_metadata SET extraction_version=3; UPDATE files SET search_text=name,description='';");
+    try openFixture(&fixture);
+    try search.indexFolderWithOptions(allocator, 1, fixture.root, .{ .fast = true });
+    try std.testing.expectEqual(original.id, (try db.inspectFile("little.wav")).?.id);
+    try std.testing.expectEqual(@as(usize, 2), try search.search(allocator, "explosión 東京", null, &rows, rows.len));
+}
+
 test "structured sparse metadata preserves Unicode entities and private values without markup noise" {
     var fixture = try Fixture.init();
     defer fixture.deinit();

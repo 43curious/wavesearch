@@ -8,7 +8,7 @@ const compressed_metadata = @import("compressed_metadata.zig");
 
 const max_input = 8192;
 const heap_budget = 4 * 1024 * 1024;
-const seed_count = 25;
+const seed_count = 27;
 
 pub fn main(init: std.process.Init) !void {
     var args = std.process.Args.Iterator.init(init.minimal.args);
@@ -52,7 +52,7 @@ pub fn main(init: std.process.Init) !void {
             var fixed = std.heap.FixedBufferAllocator.init(backing);
             _ = try clap.preprocessWavBytes(fixed.allocator(), input[0..n]);
         }
-        if (kind >= 16) try checkMetadataSeed(io, artifact, n, backing);
+        if (kind >= 16) try checkMetadataSeed(io, artifact, n, backing, kind);
     }
     // Truncations and hostile size/payload edits share the campaign budget.
     campaign: {
@@ -158,6 +158,19 @@ fn chunk(out: []u8, pos: *usize, id: *const [4]u8, payload: []const u8, endian: 
 
 fn makeSeed(out: []u8, kind: usize) usize {
     @memset(out, 0);
+    if (kind >= 25) {
+        @memcpy(out[0..4], "RIFF");
+        @memcpy(out[8..12], "WAVE");
+        var pos: usize = 12;
+        const units = std.unicode.utf8ToUtf16LeStringLiteral("<?xml version='1.0' encoding='UTF-16'?><BWFXML><NOTE>café 東京 🌊</NOTE></BWFXML>");
+        var payload: [512]u8 = undefined;
+        const endian: std.builtin.Endian = if (kind == 25) .little else .big;
+        std.mem.writeInt(u16, payload[0..2], 0xfeff, endian);
+        for (units, 0..) |unit, i| std.mem.writeInt(u16, payload[2 + i * 2 ..][0..2], std.mem.littleToNative(u16, unit), endian);
+        chunk(out, &pos, "iXML", payload[0 .. 2 + units.len * 2], .little);
+        std.mem.writeInt(u32, out[4..8], @intCast(pos - 8), .little);
+        return pos;
+    }
     if (kind >= 16) return makeMetadataSeed(out, kind);
     var pos: usize = 12;
     const endian: std.builtin.Endian = if (kind == 8 or kind >= 10) .big else .little;
@@ -311,13 +324,17 @@ fn makeMetadataSeed(out: []u8, kind: usize) usize {
     return pos;
 }
 
-fn checkMetadataSeed(io: std.Io, path: []const u8, size: usize, backing: []u8) !void {
+fn checkMetadataSeed(io: std.Io, path: []const u8, size: usize, backing: []u8, kind: usize) !void {
     var fixed = std.heap.FixedBufferAllocator.init(backing);
     var file = try std.Io.Dir.cwd().openFile(io, path, .{});
     defer file.close(io);
     var all: std.ArrayList(u8) = .empty;
     var description: std.ArrayList(u8) = .empty;
-    const limited = try compressed_metadata.read(fixed.allocator(), &all, &description, .{ .handle = &file, .io = io, .size = size }, .mp3, max_input);
+    const reader = audio_file.Reader{ .handle = &file, .io = io, .size = size };
+    const limited = if (kind >= 25)
+        try @import("wav_metadata.zig").read(fixed.allocator(), &all, &description, reader, max_input, null)
+    else
+        try compressed_metadata.read(fixed.allocator(), &all, &description, reader, .mp3, max_input);
     if (limited or std.mem.indexOf(u8, description.items, "café") == null) return error.MetadataSeedNotExtracted;
     if (std.mem.indexOf(u8, all.items, "artwork") != null) return error.ArtworkIndexed;
 }

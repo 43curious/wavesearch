@@ -26,7 +26,15 @@ CDATA. Tag names, attributes, comments, declarations and external entity content
 are excluded. Unknown/private XML element values remain searchable. There is no
 DTD expansion or external-resource access, and nesting is capped at 32 levels.
 This is a bounded text extractor, not a validating XML implementation. Invalid
-UTF-8 bytes separate words; other declared XML encodings are not transcoded.
+UTF-8 bytes separate words. BOM-identified UTF-16LE/BE XML is decoded before
+markup extraction, including surrogate pairs; malformed/odd code units make that
+payload limited without indexing its markup. UTF-32 and other declared encodings
+are not transcoded. Byte order follows [XML's BOM rules](https://www.w3.org/TR/xml/#sec-guessing);
+this remains a text extractor rather than an encoding-declaration validator.
+UTF-16 conversion checks cancellation periodically and uses scratch space
+proportional to the already budgeted payload (UTF-8 output is at most 1.5 times
+its UTF-16 byte length). Payload/read ceilings and DTD/entity restrictions stay
+in force.
 
 BWF description, LIST `INAM`/`ICMT`/`ISBJ`/`IKEY`, and XML
 `DESCRIPTION`/`BWF_DESCRIPTION`/`NOTE`/`NOTES`/`COMMENT`/`TITLE`/`SUBJECT`/`KEYWORDS`
@@ -198,7 +206,9 @@ Migration opens no sources, retains analysis/IDs, and supports schema-16 backups
 Category rows count missing sources until their library is reconciled.
 Extraction version 3 refreshes pre-ID3v1 records once on their next scan without
 changing the database schema or discarding existing analysis. Later unchanged
-scans resume metadata reuse.
+scans resume metadata reuse. Extraction version 4 similarly refreshes older XML
+records once to recover UTF-16 descriptions. Existing source IDs and analysis
+remain available.
 
 Fixtures cover 6 MiB artwork preceding text, duplicate/missing/malformed fields,
 Unicode/UTF-16, Ogg page continuation, cancellation, vendor keys, recognized and

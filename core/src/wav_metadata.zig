@@ -57,7 +57,7 @@ pub fn read(allocator: std.mem.Allocator, all: *std.ArrayList(u8), description: 
                     }
                 } else if (std.mem.eql(u8, id, "LIST")) {
                     limited = (try list(allocator, all, description, bytes, endian)) or limited;
-                } else limited = (try xml(allocator, all, description, bytes)) or limited;
+                } else limited = (try encodedXml(allocator, all, description, bytes, cancel orelse reader.cancel)) or limited;
                 remaining -= wanted;
             }
         }
@@ -114,6 +114,38 @@ fn descriptive(name: []const u8) bool {
     const local = if (std.mem.lastIndexOfScalar(u8, name, ':')) |i| name[i + 1 ..] else name;
     for ([_][]const u8{ "DESCRIPTION", "BWF_DESCRIPTION", "NOTE", "NOTES", "COMMENT", "TITLE", "SUBJECT", "KEYWORDS", "FXNAME", "ASWG_FXNAME", "SM_DESCRIPTION" }) |key| if (std.ascii.eqlIgnoreCase(local, key)) return true;
     return false;
+}
+
+// UTF-16 byte order comes only from a BOM. Decode one budgeted payload before
+// parsing markup so NUL bytes cannot turn element names into searchable text.
+fn encodedXml(allocator: std.mem.Allocator, all: *std.ArrayList(u8), description: *std.ArrayList(u8), bytes: []const u8, cancel: ?*const std.atomic.Value(bool)) !bool {
+    // A UTF-32LE BOM shares UTF-16LE's prefix; do not misinterpret its code units.
+    if (std.mem.startsWith(u8, bytes, "\xff\xfe\x00\x00") or std.mem.startsWith(u8, bytes, "\x00\x00\xfe\xff")) return true;
+    const endian: std.builtin.Endian = if (std.mem.startsWith(u8, bytes, "\xff\xfe")) .little else if (std.mem.startsWith(u8, bytes, "\xfe\xff")) .big else return xml(allocator, all, description, bytes);
+    if (bytes.len % 2 != 0) return true;
+    var decoded: std.ArrayList(u8) = .empty;
+    defer decoded.deinit(allocator);
+    var pos: usize = 2;
+    var count: usize = 0;
+    while (pos < bytes.len) : (count += 1) {
+        if (count % 1024 == 0) {
+            try query.check();
+            if (cancel) |token| if (token.load(.acquire)) return error.Cancelled;
+        }
+        const first = std.mem.readInt(u16, bytes[pos..][0..2], endian);
+        pos += 2;
+        var scalar: u21 = first;
+        if (std.unicode.utf16IsHighSurrogate(first)) {
+            if (bytes.len - pos < 2) return true;
+            const pair = [2]u16{ first, std.mem.readInt(u16, bytes[pos..][0..2], endian) };
+            scalar = std.unicode.utf16DecodeSurrogatePair(&pair) catch return true;
+            pos += 2;
+        }
+        var encoded: [4]u8 = undefined;
+        const len = std.unicode.utf8Encode(scalar, &encoded) catch return true;
+        try decoded.appendSlice(allocator, encoded[0..len]);
+    }
+    return xml(allocator, all, description, decoded.items);
 }
 
 // A bounded character-data extractor, not an XML validator. No DTD/entity

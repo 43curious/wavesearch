@@ -12,6 +12,11 @@ changelog/agent documentation added afterward.
 
 ### Added
 
+- BOM-identified UTF-16LE/BE WAV XML descriptions now preserve multilingual text,
+  entities and supplementary characters without indexing markup or resolving
+  external entities. Bounded decoding rejects incomplete code units; older
+  metadata refreshes once on scan while retaining file IDs and analysis.
+
 - Saved references, including unresolved imports, can be explicitly removed
   with confirmation. Their tags, ranges and favourite status are discarded while
   indexed sounds, analysis and source audio remain available.
