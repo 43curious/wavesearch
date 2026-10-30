@@ -140,6 +140,8 @@ pub fn build(b: *std.Build) void {
     run_semantic_bench.addPassthruArgs();
     const semantic_bench_step = b.step("semantic-bench", "Compare SQLite exact retrieval and SQ8 plus exact reranking");
     semantic_bench_step.dependOn(&run_semantic_bench.step);
+    // Compile the opt-in benchmark without generating a corpus during checks.
+    test_step.dependOn(&semantic_bench_exe.step);
 
     const optimization_mod = b.createModule(.{
         .root_source_file = b.path("src/optimization_bench.zig"),
@@ -192,7 +194,7 @@ pub fn build(b: *std.Build) void {
     // Compile the optional harness in ordinary checks; never load/download models.
     test_step.dependOn(&coverage_exe.step);
     const check_compile = b.step("check-compile", "Compile core check executables without running them");
-    for ([_]*std.Build.Step.Compile{ tests, fuzz_exe, waveform_abi_exe, coverage_exe }) |artifact| {
+    for ([_]*std.Build.Step.Compile{ tests, fuzz_exe, waveform_abi_exe, coverage_exe, semantic_bench_exe }) |artifact| {
         check_compile.dependOn(&artifact.step);
     }
 

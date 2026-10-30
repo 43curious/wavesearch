@@ -19,6 +19,11 @@ changelog/agent documentation added afterward.
   albums when ID3v2 is absent. Existing catalogs refresh metadata once on scan;
   newer tags remain authoritative and track bytes stay out of search text.
 
+- Extended the opt-in semantic benchmark with lexical/hybrid core search,
+  hydration, startup and transactional-update timings. Recorded 500k–2M synthetic
+  latency, exact recall, memory, disk and build costs; normal checks compile the
+  harness. Real-library, inference/UI and cold-storage acceptance remain open.
+
 - Audio mutation campaigns now call the compressed metadata reader with ID3v2,
   FLAC and Ogg Vorbis/Opus seeds, including Unicode, duplicate fields, skipped
   artwork and continued packets. Intact seeds run before budgeted mutations;

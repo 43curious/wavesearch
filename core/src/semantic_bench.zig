@@ -1,10 +1,13 @@
 //! End-to-end SQLite retrieval, not an in-memory dot-product microbenchmark.
 //! create PATH COUNT uniform|clustered|dense [corpus.f32]
 //! compare|exact|quantized|auto PATH QUERIES [K=20] [FOLDER=-1] [queries.f32|-] [MIN_MS=0] [MAX_MS=0]
+//! pipeline uses the same arguments as auto; update PATH COUNT updates synthetic embeddings.
 //! Optional files contain consecutive normalized 512-D little-endian Float32 rows.
 const std = @import("std");
 const db = @import("db.zig");
 const vector = @import("vector.zig");
+const search = @import("search.zig");
+const types = @import("types.zig");
 const perf = @import("perf.zig");
 const c = db.c;
 const allocator = std.heap.c_allocator;
@@ -27,7 +30,9 @@ pub fn main(init: std.process.Init) !void {
         if (args.next() != null) return error.InvalidArguments;
         try create(io, path, count, distribution, input);
     } else {
-        const mode = if (std.mem.eql(u8, command, "compare")) null else std.meta.stringToEnum(db.VectorRetrievalMode, command) orelse return error.InvalidMode;
+        const pipeline = std.mem.eql(u8, command, "pipeline");
+        const update = std.mem.eql(u8, command, "update");
+        const mode = if (std.mem.eql(u8, command, "compare")) null else if (pipeline or update) db.VectorRetrievalMode.auto else std.meta.stringToEnum(db.VectorRetrievalMode, command) orelse return error.InvalidMode;
         const k = try std.fmt.parseInt(usize, args.next() orelse "20", 10);
         const folder = try std.fmt.parseInt(i32, args.next() orelse "-1", 10);
         const query_arg = args.next();
@@ -35,7 +40,7 @@ pub fn main(init: std.process.Init) !void {
         const min_ms = try std.fmt.parseInt(i32, args.next() orelse "0", 10);
         const max_ms = try std.fmt.parseInt(i32, args.next() orelse "0", 10);
         if (args.next() != null or k == 0 or k > db.SQ8_MAX_SEED / 4 or count > 10_000 or min_ms < 0 or max_ms < 0 or (max_ms != 0 and max_ms < min_ms)) return error.InvalidArguments;
-        try evaluate(io, path, count, k, .{ .folder_id = if (folder < 0) null else folder, .min_duration_ms = min_ms, .max_duration_ms = max_ms }, mode, queries);
+        try evaluate(io, path, count, k, .{ .folder_id = if (folder < 0) null else folder, .min_duration_ms = min_ms, .max_duration_ms = max_ms }, mode, queries, pipeline, update);
     }
 }
 
@@ -139,7 +144,8 @@ fn create(io: std.Io, path: []const u8, count: usize, distribution: Distribution
     });
 }
 
-fn evaluate(io: std.Io, path: []const u8, runs: usize, k: usize, filter: vector.Filter, mode: ?db.VectorRetrievalMode, query_path: ?[]const u8) !void {
+fn evaluate(io: std.Io, path: []const u8, runs: usize, k: usize, filter: vector.Filter, mode: ?db.VectorRetrievalMode, query_path: ?[]const u8, pipeline: bool, update: bool) !void {
+    const validation_start = std.Io.Clock.awake.now(io);
     // Require the benchmark marker before db.open can migrate anything.
     const metadata = blk: {
         const handle = try openRaw(path, c.SQLITE_OPEN_READONLY);
@@ -155,12 +161,25 @@ fn evaluate(io: std.Io, path: []const u8, runs: usize, k: usize, filter: vector.
     if (count == 0 or (imported and query_path == null)) return error.MissingHeldOutQueries;
     const input = if (query_path) |p| try std.Io.Dir.cwd().openFile(io, p, .{}) else null;
     defer if (input) |f| f.close(io);
+    const validation_ns = validation_start.durationTo(std.Io.Clock.awake.now(io)).toNanoseconds();
+    const open_start = std.Io.Clock.awake.now(io);
     try db.open(allocator, path);
     defer db.close();
+    std.debug.print("startup_ms benchmark_validation={d:.3} db_open={d:.3} imported={}\n", .{
+        perf.milliseconds(validation_ns), perf.milliseconds(open_start.durationTo(std.Io.Clock.awake.now(io)).toNanoseconds()), imported,
+    });
+    if (update) {
+        if (imported or runs > count) return error.InvalidUpdateCorpus;
+        return updateEmbeddings(io, count, runs, distribution);
+    }
+    if (pipeline) return evaluatePipeline(io, count, runs, k, filter, distribution, input);
     const exact_times = try allocator.alloc(u64, runs);
     defer allocator.free(exact_times);
     const compact_times = try allocator.alloc(u64, runs);
     defer allocator.free(compact_times);
+    const hydration_times = try allocator.alloc(u64, runs);
+    defer allocator.free(hydration_times);
+    var first_hydration: u64 = 0;
     var recall_sum: f64 = 0;
     var minimum_recall: f64 = 1;
     var first_exact: u64 = 0;
@@ -202,11 +221,31 @@ fn evaluate(io: std.Io, path: []const u8, runs: usize, k: usize, filter: vector.
             const index: usize = if (selected == .exact) 0 else 1;
             payload_bytes[index] = @max(payload_bytes[index], payload);
         }
+        // Measure result metadata loading independently from vector retrieval.
+        const result = compact orelse exact.?;
+        const ids = try allocator.alloc(i32, result.matches.len);
+        defer allocator.free(ids);
+        for (result.matches, ids) |match, *id| id.* = match.file_id;
+        const hydrate_start = std.Io.Clock.awake.now(io);
+        const rows = try db.candidatesForSemanticIds(allocator, ids, result.model_id, result.connection_serial);
+        defer allocator.free(rows);
+        const hydration_ns: u64 = @intCast(hydrate_start.durationTo(std.Io.Clock.awake.now(io)).toNanoseconds());
+        if (rows.len != ids.len) return error.MissingHydratedResult;
+        for (rows) |row| {
+            var matched = false;
+            for (result.matches) |match| {
+                if (match.file_id == row.file_id and match.source_content_hash == row.content_hash) matched = true;
+            }
+            if (!matched) return error.StaleHydratedResult;
+        }
+        if (run == 0) first_hydration = hydration_ns else hydration_times[run - 1] = hydration_ns;
         if (mode == null and run > 0) {
             var found: usize = 0;
-            for (exact.?.matches) |expected| {
+            if (exact.?.matches.len != compact.?.matches.len) return error.InexactResultCount;
+            for (exact.?.matches, 0..) |expected, rank| {
                 for (compact.?.matches) |actual| {
                     if (actual.file_id == expected.file_id) {
+                        if (actual.file_id != compact.?.matches[rank].file_id) return error.InexactRerankOrder;
                         // Reranking must publish the exact Float32 score, not SQ8.
                         if (actual.score != expected.score) return error.InexactRerankScore;
                         found += 1;
@@ -224,6 +263,7 @@ fn evaluate(io: std.Io, path: []const u8, runs: usize, k: usize, filter: vector.
     });
     if (mode == null or mode.? == .exact) report("exact", first_exact, exact_times);
     if (mode == null or mode.? != .exact) report("selected", first_compact, compact_times);
+    report("hydration", first_hydration, hydration_times);
     // Logical code/vector blob bytes, not physical disk or SQLite page traffic.
     std.debug.print("max_vector_payload_bytes exact={d} selected={d}\n", .{ payload_bytes[0], payload_bytes[1] });
     if (mode == null) {
@@ -235,4 +275,71 @@ fn evaluate(io: std.Io, path: []const u8, runs: usize, k: usize, filter: vector.
 fn report(label: []const u8, first: u64, times: []u64) void {
     std.mem.sort(u64, times, {}, std.sort.asc(u64));
     std.debug.print("{s}_ms first={d:.3} p50={d:.3} p95={d:.3}\n", .{ label, perf.milliseconds(first), perf.milliseconds(perf.percentile(times, 50)), perf.milliseconds(perf.percentile(times, 95)) });
+}
+
+// Isolated stage timings are diagnostic; hybrid measures the production fusion
+// entry point separately, including its own candidate depth and hydration.
+fn evaluatePipeline(io: std.Io, count: usize, runs: usize, k: usize, filter: vector.Filter, distribution: Distribution, input: ?std.Io.File) !void {
+    const lexical_times = try allocator.alloc(u64, runs);
+    defer allocator.free(lexical_times);
+    const hybrid_times = try allocator.alloc(u64, runs);
+    defer allocator.free(hybrid_times);
+    const results = try allocator.alloc(types.WSResult, k);
+    defer allocator.free(results);
+    var first_lexical: u64 = 0;
+    var first_hybrid: u64 = 0;
+    var values: [dimension]f32 = undefined;
+    const terms = [_][]const u8{ "impact", "whoosh", "rain", "footsteps", "engine", "ambience", "bird", "water" };
+    for (0..runs + 1) |run| {
+        if (input) |f| try readVector(f, io, if (run == 0) 0 else run - 1, &values) else try generate(count + run, distribution, &values);
+        var query_buffer: [128]u8 = undefined;
+        const query = if (filter.min_duration_ms > 0)
+            try std.fmt.bufPrint(&query_buffer, "{s} >{d}ms", .{ terms[run % terms.len], filter.min_duration_ms - 1 })
+        else
+            terms[run % terms.len];
+        // Use the query parser's public duration syntax for both search paths.
+        const full_query = if (filter.max_duration_ms > 0 and filter.max_duration_ms < std.math.maxInt(i32))
+            try std.fmt.allocPrint(allocator, "{s} <{d}ms", .{ query, filter.max_duration_ms + 1 })
+        else
+            try allocator.dupe(u8, query);
+        defer allocator.free(full_query);
+        for (0..2) |turn| {
+            const hybrid = (turn + run) % 2 != 0;
+            const start = std.Io.Clock.awake.now(io);
+            _ = if (hybrid)
+                try search.searchWithEmbedding(allocator, full_query, &values, filter.folder_id, results.ptr, k)
+            else
+                try search.search(allocator, full_query, filter.folder_id, results.ptr, k);
+            const ns: u64 = @intCast(start.durationTo(std.Io.Clock.awake.now(io)).toNanoseconds());
+            if (hybrid) {
+                if (run == 0) first_hybrid = ns else hybrid_times[run - 1] = ns;
+            } else {
+                if (run == 0) first_lexical = ns else lexical_times[run - 1] = ns;
+            }
+        }
+    }
+    std.debug.print("pipeline count={d} distribution={s} queries={d} k={d} candidate_k={d} folder={d} min_ms={d} max_ms={d} peak_rss_bytes={d} inference=excluded ui=excluded\n", .{
+        count, @tagName(distribution), runs, k, @min(@as(usize, 256), @max(k * 4, @as(usize, 32))), filter.folder_id orelse -1, filter.min_duration_ms, filter.max_duration_ms, perf.peakRssBytes(),
+    });
+    report("lexical", first_lexical, lexical_times);
+    report("hybrid", first_hybrid, hybrid_times);
+}
+
+fn updateEmbeddings(io: std.Io, count: usize, runs: usize, distribution: Distribution) !void {
+    const times = try allocator.alloc(u64, runs);
+    defer allocator.free(times);
+    var values: [dimension]f32 = undefined;
+    var total: u64 = 0;
+    for (0..runs) |row| {
+        // Keep updates disjoint from the held-out query seeds (at most 10,000).
+        try generate(count + 20_000 + row, distribution, &values);
+        const start = std.Io.Clock.awake.now(io);
+        // Production per-file transaction includes canonical vector, SQ8 and counters.
+        try db.upsertSemanticEmbedding(allocator, @intCast(row + 1), @intCast(row + 1), &values);
+        times[row] = @intCast(start.durationTo(std.Io.Clock.awake.now(io)).toNanoseconds());
+        total += times[row];
+    }
+    const first = times[0];
+    std.debug.print("update count={d} updates={d} total_ms={d:.3} peak_rss_bytes={d}\n", .{ count, runs, perf.milliseconds(total), perf.peakRssBytes() });
+    report("update", first, times);
 }

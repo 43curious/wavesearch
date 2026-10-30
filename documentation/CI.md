@@ -13,8 +13,8 @@ The checkout action is pinned to a commit.
 | `macos-26` | The same native core checks, then `make check-macos-headless`: universal core XCFramework, Debug Swift app build, refinement-policy, model-free installer, deterministic library-watching and app lifecycle checks. Swift checks link the native library rebuilt by `check-core` using `WS_CORE_LIBRARY`/`WS_CORE_HEADERS`. |
 
 Linux tests execute on Linux; `make check-linux` separately cross-compiles the
-library, Zig tests, audio-fuzz executable, C ABI executable and coverage harness
-without running them. The macOS job selects Xcode 26.6 through
+library, Zig tests, audio-fuzz executable, C ABI executable, semantic benchmark
+and coverage harness without running them. The macOS job selects Xcode 26.6 through
 `DEVELOPER_DIR`, fails if it is unavailable, and logs Xcode/Swift versions. The
 app uses ad-hoc signing and needs no signing certificate or Apple credentials.
 
@@ -49,6 +49,10 @@ catalogs. Vendored SQLite and ONNX headers come from checkout. Normal checks
 never invoke live model/runtime downloads or real-audio fixture downloads;
 model-dependent acceptance tests remain opt-in. Fixture catalogs and test audio
 are disposable. No release artifacts are signed for distribution or published.
+
+Core checks compile the semantic scale benchmark without generating its corpus
+or running latency gates. Large synthetic runs remain explicit developer work;
+see [semantic measurements](SEMANTIC_RETRIEVAL_BENCHMARK.md).
 
 Core tests also run a deterministic, model-free audio mutation campaign over
 WAV/AIFF preprocessing, duration, WAV and compressed metadata readers, and query

@@ -7,6 +7,15 @@ bytes/payload/compaction costs, and synthetic-versus-real acceptance limits.
 Benchmarks are explicit developer operations. Normal builds and tests never
 generate large corpora or download fixtures.
 
+## Semantic scale (500k–2M vectors)
+
+The [semantic scale follow-up](documentation/SEMANTIC_RETRIEVAL_BENCHMARK.md#large-corpus-follow-up-2026-10-30)
+records current synthetic retrieval, lexical/hybrid core search, startup, hydration,
+RSS, disk, build and transactional update measurements. It keeps real inference,
+UI publication and controlled cold/removable storage as separate acceptance gates.
+The opt-in script accepts a fourth distribution argument (`all`, `uniform`,
+`clustered` or `dense`) and honors `ZIG`; normal checks only compile the harness.
+
 ## Audio metadata (schema 16)
 
 The [schema-16 metadata follow-up](documentation/AUDIO_METADATA.md#validation-and-measurements)
