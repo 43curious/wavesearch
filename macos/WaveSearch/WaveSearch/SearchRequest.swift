@@ -74,17 +74,24 @@ nonisolated final class SearchRequest: @unchecked Sendable {
             // decoding AND the native call. Worker draining precedes core close.
             let scoped = url.startAccessingSecurityScopedResource()
             defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-            var raw = [WSExampleResult](repeating: WSExampleResult(), count: 200)
-            for index in raw.indices { raw[index].struct_size = UInt32(MemoryLayout<WSExampleResult>.size) }
-            let count: Int32
-            if ["wav", "aif", "aiff", "aifc"].contains(url.pathExtension.lowercased()) {
-                count = url.path.withCString { path in
-                    raw.withUnsafeMutableBufferPointer {
-                        ws_search_by_example_v2(request.handle, path, request.folderID, $0.baseAddress, Int32($0.count))
-                    }
+            do {
+                // A dropped directory or named pipe is also a file URL. Reject
+                // these off-main before a decoder can open a blocking stream.
+                guard url.isFileURL,
+                      try url.resolvingSymlinksInPath().resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true else {
+                    throw ExampleAudio.DecodeError.unsupported
                 }
-            } else {
-                do {
+                try request.checkCancellation()
+                var raw = [WSExampleResult](repeating: WSExampleResult(), count: 200)
+                for index in raw.indices { raw[index].struct_size = UInt32(MemoryLayout<WSExampleResult>.size) }
+                let count: Int32
+                if ["wav", "aif", "aiff", "aifc"].contains(url.pathExtension.lowercased()) {
+                    count = url.path.withCString { path in
+                        raw.withUnsafeMutableBufferPointer {
+                            ws_search_by_example_v2(request.handle, path, request.folderID, $0.baseAddress, Int32($0.count))
+                        }
+                    }
+                } else {
                     let pcm = try ExampleAudio.decode(url, checkCancellation: request.checkCancellation)
                     try request.checkCancellation()
                     count = pcm.samples.withUnsafeBufferPointer { samples in
@@ -94,14 +101,14 @@ nonisolated final class SearchRequest: @unchecked Sendable {
                                                        $0.baseAddress, Int32($0.count))
                         }
                     }
-                } catch is CancellationError {
-                    return SearchOutcome(cancelled: true)
-                } catch {
-                    return SearchOutcome(error: String(localized: "Cannot use \(url.lastPathComponent): \(error.localizedDescription)"))
                 }
+                guard count >= 0 else { return failure(count) }
+                return SearchOutcome(files: raw.prefix(Int(count)).map { file($0.result, group: $0.acoustic_group_id) })
+            } catch is CancellationError {
+                return SearchOutcome(cancelled: true)
+            } catch {
+                return SearchOutcome(error: String(localized: "Cannot use \(url.lastPathComponent): \(error.localizedDescription)"))
             }
-            guard count >= 0 else { return failure(count) }
-            return SearchOutcome(files: raw.prefix(Int(count)).map { file($0.result, group: $0.acoustic_group_id) })
         }
         let browsing: Bool
         switch request.kind { case .browse, .browseMore, .selects: browsing = true; default: browsing = false }

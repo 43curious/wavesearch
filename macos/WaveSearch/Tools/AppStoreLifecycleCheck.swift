@@ -5,6 +5,7 @@ import CoreAudio
 import AppKit
 import Observation
 import WaveSearchKit
+import Darwin
 
 private nonisolated final class Signal: @unchecked Sendable {
     private let lock = NSLock()
@@ -820,15 +821,21 @@ struct AppStoreLifecycleCheck {
                 FileHandle.standardError.write(Data("FAIL: \(message)\n".utf8))
                 exit(2)
             }
-            print("SKIP: \(message); external-example checks use PCM WAV; use --native-codecs to require ALAC")
+            print("SKIP: \(message); external-example checks use PCM CAF; use --native-codecs to require ALAC")
         }
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("wavesearch-examples-\(UUID().uuidString)")
         let sounds = root.appendingPathComponent("library")
         try FileManager.default.createDirectory(at: sounds, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let wav = sounds.appendingPathComponent("effect.wav")
-        let external = root.appendingPathComponent(hasALAC ? "external.caf" : "external.wav")
+        // CAF always uses the host PCM search API, even without installed ALAC
+        // codecs. A WAV fallback would only repeat the core's file-search path.
+        let external = root.appendingPathComponent("external café 日本語.caf")
         let invalid = root.appendingPathComponent("broken.mp3")
+        let linked = root.appendingPathComponent("linked.caf")
+        let nonregular = ["directory.wav", "directory.caf", "pipe.wav", "pipe.caf"].map {
+            root.appendingPathComponent($0)
+        }
         let format = AVAudioFormat(standardFormatWithSampleRate: 48000, channels: 2)!
         // A varied signal gives the real fingerprint matcher useful landmarks.
         try await Task.detached {
@@ -868,6 +875,13 @@ struct AppStoreLifecycleCheck {
                 preconditionFailure("Decode ignored chunk cancellation")
             } catch is CancellationError {}
             try Data("not an MP3".utf8).write(to: invalid)
+            try FileManager.default.createSymbolicLink(at: linked, withDestinationURL: external)
+            for directory in nonregular.prefix(2) {
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+            }
+            for pipe in nonregular.suffix(2) {
+                precondition(pipe.path.withCString { mkfifo($0, 0o600) } == 0, "Could not create a named-pipe fixture")
+            }
         }.value
         await AudioAnalysisRepository.shared.resume()
         BlockingWorkRegistry.hostFiles.resume()
@@ -890,10 +904,20 @@ struct AppStoreLifecycleCheck {
         await store.waitForSearch()
         precondition(store.lastBackendError == nil && store.results.map(\.id) == expected,
                      store.lastBackendError ?? "External example lost acoustic parity without CLAP")
+        precondition(store.acceptSearchExamples([linked]))
+        await store.waitForSearch()
+        precondition(store.lastBackendError == nil && store.results.map(\.id) == expected,
+                     "A symlink to a regular audio example should retain native decoding")
         precondition(store.folders[0].fileCount == 1, "External example was imported into the catalog")
         precondition(!store.acceptSearchExamples([wav, external]))
         precondition(store.lastBackendError != nil)
         precondition(!store.acceptSearchExamples([URL(string: "https://example.com/audio.wav")!]))
+        for url in nonregular {
+            precondition(store.acceptSearchExamples([url]))
+            await store.waitForSearch()
+            precondition(store.lastBackendError?.contains(url.lastPathComponent) == true && !store.isSearching,
+                         "Non-regular examples must fail before opening either decoder")
+        }
         store.acceptSearchExamples([invalid])
         await store.waitForSearch()
         precondition(store.lastBackendError?.contains("broken.mp3") == true && !store.isSearching)
@@ -907,7 +931,7 @@ struct AppStoreLifecycleCheck {
         await store.waitForSearch()
         precondition(!store.isExampleSearch && store.lastBackendError == nil && store.results.map(\.id) == expected)
         await store.shutdown()
-        print("PASS: external \(hasALAC ? "WAV/ALAC" : "WAV") examples, model-free acoustic parity, stereo decode, cancellation, replacement, invalid drops")
+        print("PASS: external WAV/\(hasALAC ? "ALAC" : "PCM") CAF examples, model-free acoustic parity, Unicode/symlinks, stereo decode, cancellation, replacement, invalid/non-regular drops")
     }
 
     private static func liveLibrarySmokeTest() async throws {

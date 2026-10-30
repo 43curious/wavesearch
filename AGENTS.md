@@ -107,6 +107,8 @@ Use existing checks appropriate to the change; fix failures before finishing.
 - Swift changes: `make macos`, plus the relevant existing lifecycle, refinement,
   window, or Settings script. Window/Settings checks need a desktop session;
   run GUI checks sequentially so they do not compete for focus.
+  Import defining modules explicitly (for example, Combine for `@Published`);
+  all-source headless compilation can hide imports missing from Xcode's batches.
 - Headless macOS checks: `make check-core check-macos-headless`. Hosted CI skips
   window/Settings interaction; local `make check` still includes both.
   If Xcode project initialization fails, `make check-macos-runtime` rebuilds the

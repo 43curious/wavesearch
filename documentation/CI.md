@@ -99,8 +99,11 @@ Lifecycle checks always exercise the real preview controller through a controlle
 transport clock, including replacement, cancellation, range/rate/loop bounds and
 rejected playback starts. CoreAudio output runs additionally when a default output
 device exists. External-example checks use ALAC when CoreAudio advertises an
-encoder and decoder; otherwise they use PCM WAV and explicitly report the missing
-ALAC coverage. Advertised codecs that fail at runtime still fail the check.
+encoder and decoder; otherwise they use PCM CAF and explicitly report the missing
+ALAC coverage. CAF always exercises host decoding and the interleaved-PCM search
+API, separately from core WAV file search. Checks also cover Unicode paths,
+regular-file symlinks and decoder rejection of directory/named-pipe inputs.
+Advertised codecs that fail at runtime still fail the check.
 Drag checks always inspect the real file-URL writer payload and rendered/copy
 bytes. Pasteboard round trips run additionally when an independent plain-string
 write succeeds; otherwise they print a skip. Use

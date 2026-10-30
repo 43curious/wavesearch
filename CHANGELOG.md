@@ -141,6 +141,11 @@ changelog/agent documentation added afterward.
 
 ### Fixed
 
+- External audio examples reject directories and named pipes on the search
+  worker before opening a decoder. Lifecycle checks exercise native PCM search
+  with CAF even without ALAC codecs, plus Unicode paths and regular-file symlinks.
+- The CLAP installer and spectrogram explicitly import Combine so Xcode's
+  per-file build can resolve their observable controllers and published state.
 - Headless autoplay checks no longer assume an audio output device: the real
   controller always exercises a controlled transport clock, while native output
   and ALAC/pasteboard coverage report explicit skips or fail when required.

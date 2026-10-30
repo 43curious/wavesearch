@@ -122,6 +122,15 @@ initialization raised an Objective-C exception even in offline mode. Product
 construction now checks availability before initialization. Controlled transport
 and spectrum checks pass; native pitch DSP, device output, compressed-format
 pitch behavior, loop transitions and keyboard/VoiceOver layout remain unverified.
+A 2026-10-30 run on macOS 26.5.2 (25F84) reached native DSP and reproduced an
+existing failure in the opposite-phase stereo fixture: a 750 Hz tone stayed at
+750 Hz with +12 semitones, instead of 1,500 Hz. Isolated mono and same-phase
+stereo probes shifted correctly; disabling the Audio Unit's spectral coherence
+also shifted the opposite-phase probe. The product retains its default DSP
+configuration, and `make check` currently fails this native pitch assertion.
+This remains a pitch acceptance limitation under issue
+[#23](https://github.com/43curious/wavesearch/issues/23), independently of the
+passing spectrum and external-example checks.
 A first generated two-second stereo WAV request for its first second produced
 94 columns in about 6.7 ms on this host. This is a synthetic, single-request
 spectrum timing, not physical first-audio or cold/removable-drive latency. The
@@ -460,9 +469,12 @@ The native window check
 injects Up/Down, i/o, Return and Space events and verifies that search text entry
 does not trigger preview commands.
 
-External-example checks use native ALAC encoding/decoding when CoreAudio lists
-both codecs. Without them they retain WAV stereo decoding, cancellation, matching,
-replacement and invalid-drop coverage, with an explicit ALAC skip. Use
+External-example checks compare core WAV search with native CAF decoding and
+PCM search. CAF uses ALAC when CoreAudio lists both codecs and PCM otherwise,
+with an explicit ALAC skip. Both paths retain stereo decoding, cancellation,
+matching, replacement and invalid-drop coverage. Unicode paths and symlinks to
+regular audio files remain usable; directories and named pipes are rejected
+on the search worker before either decoder opens them. Use
 `bash scripts/test-app-lifecycle.sh --native-audio --native-codecs --native-pasteboard`
 on a working Mac for required native output, compressed-example and pasteboard
 acceptance. Drag checks always inspect the real writer's file-URL payload and
