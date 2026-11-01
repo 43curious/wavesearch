@@ -12,6 +12,10 @@ changelog/agent documentation added afterward.
 
 ### Added
 
+- A printable Apollo-style WaveSearch systems page explains catalog/preview
+  paths and editor import modes, with verified operating limits, an operator
+  checklist, editable HTML and the bundled font notices.
+
 - Grouped ID3v2.3/2.4 text and v2.4 data-length indicators now preserve searchable
   descriptions, including frame/tag unsynchronisation. Invalid prefixes and
   declared lengths stay bounded; existing metadata refreshes once on scan.

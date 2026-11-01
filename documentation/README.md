@@ -3,6 +3,10 @@
 This directory contains the implementation and operating documentation for the
 current WaveSearch application.
 
+- [Apollo-style WaveSearch systems page](handbook/wavesearch-systems.pdf) — a
+  printable A4 architecture and import-workflow explainer, with an
+  [editable source and verification notes](handbook/README.md).
+
 ## Performance and portability
 
 - [Indexed audio metadata](AUDIO_METADATA.md) — sparse WAV text extraction,
