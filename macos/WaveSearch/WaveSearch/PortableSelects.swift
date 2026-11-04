@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import WaveSearchKit
 
 nonisolated struct SelectsDocument: Codable, Sendable {
@@ -37,6 +38,14 @@ nonisolated struct SelectsFilter: Equatable, Sendable {
 /// Blocking catalog/document boundary; callers provide work admission and drain.
 nonisolated enum PortableSelects {
     static let limit = 16 * 1024 * 1024
+
+    enum ImportError: LocalizedError {
+        case notRegularFile
+
+        var errorDescription: String? {
+            String(localized: "Choose a JSON document stored as a regular file.")
+        }
+    }
 
     static func failure() -> NSError {
         let message: String
@@ -96,10 +105,23 @@ nonisolated enum PortableSelects {
     }
 
     static func readImport(_ url: URL) throws -> Data {
+        try Task.checkCancellation()
+        guard url.isFileURL else { throw CocoaError(.fileReadUnsupportedScheme) }
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-        let file = try FileHandle(forReadingFrom: url)
+        // A FIFO must not block open before we can inspect it. Validate the
+        // opened target, retaining support for symlinks without a path-check race.
+        let descriptor = try url.withUnsafeFileSystemRepresentation { path in
+            guard let path else { throw CocoaError(.fileReadInvalidFileName) }
+            return Darwin.open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC)
+        }
+        guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        let file = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
         defer { try? file.close() }
+        var info = Darwin.stat()
+        guard Darwin.fstat(descriptor, &info) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        guard info.st_mode & S_IFMT == S_IFREG else { throw ImportError.notRegularFile }
+        guard info.st_size <= limit else { throw CocoaError(.fileReadTooLarge) }
         var data = Data()
         while let part = try file.read(upToCount: min(64 * 1024, limit + 1 - data.count)), !part.isEmpty {
             try Task.checkCancellation()

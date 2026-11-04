@@ -449,4 +449,5 @@
 "Remove Saved Reference" = "Eliminar referencia guardada";
 "Removed saved reference. Audio files stay in place." = "Referencia guardada eliminada. Los archivos de audio permanecen en su ubicación.";
 "This saved reference no longer exists. Refresh the list and try again." = "Esta referencia guardada ya no existe. Actualiza la lista e inténtalo de nuevo.";
+"Choose a JSON document stored as a regular file." = "Elige un documento JSON guardado como archivo normal.";
 "Remove all tags, collection ranges and favourite status for %@? The indexed sound and audio file stay in place. Importing an older JSON export can restore these annotations." = "¿Eliminar todas las etiquetas, los rangos de colecciones y el estado de favorito de %@? El sonido indexado y el archivo de audio permanecen en su ubicación. Importar una exportación JSON anterior puede restaurar estas anotaciones.";

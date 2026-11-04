@@ -1,4 +1,6 @@
 import Foundation
+import Darwin
+import os
 import WaveSearchKit
 
 @MainActor
@@ -48,6 +50,7 @@ struct LibraryWatchCheck {
             try await nativeEvents()
             return
         }
+        try await Task.detached { try selectsDocumentFiles() }.value
         await coalescingAndRecovery()
         try await favouriteRelocation()
         await shutdownDrainsScanning()
@@ -58,6 +61,70 @@ struct LibraryWatchCheck {
         let deadline = ContinuousClock.now.advanced(by: .seconds(6))
         while !predicate(), ContinuousClock.now < deadline { try? await Task.sleep(for: .milliseconds(5)) }
         precondition(predicate(), "Library watch check timed out")
+    }
+
+    nonisolated private static func selectsDocumentFiles() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("wavesearch-selects-files-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let document = root.appendingPathComponent("Selección 雨.json")
+        let contents = Data(#"{"version":1,"sources":[]}"#.utf8)
+        try contents.write(to: document)
+        let linked = root.appendingPathComponent("linked.json")
+        try FileManager.default.createSymbolicLink(at: linked, withDestinationURL: document)
+        for url in [document, linked] {
+            let read = try PortableSelects.readImport(url)
+            precondition(read == contents, "Regular selects documents and symlinks must retain their bytes")
+            let decoded = try JSONDecoder().decode(SelectsDocument.self, from: read)
+            precondition(decoded.sources.isEmpty)
+        }
+        let pipe = root.appendingPathComponent("pipe.json")
+        precondition(pipe.path.withCString { mkfifo($0, 0o600) } == 0)
+        let linkedPipe = root.appendingPathComponent("linked-pipe.json")
+        try FileManager.default.createSymbolicLink(at: linkedPipe, withDestinationURL: pipe)
+        for url in [pipe, linkedPipe, root, URL(fileURLWithPath: "/dev/null")] {
+            let rejected = OSAllocatedUnfairLock(initialState: false)
+            let completed = DispatchSemaphore(value: 0)
+            DispatchQueue.global().async {
+                defer { completed.signal() }
+                do {
+                    _ = try PortableSelects.readImport(url)
+                } catch PortableSelects.ImportError.notRegularFile {
+                    rejected.withLock { $0 = true }
+                } catch {}
+            }
+            // A blocking FIFO open must fail this test rather than hang the suite.
+            precondition(completed.wait(timeout: .now() + 5) == .success, "Non-regular selects import blocked")
+            precondition(rejected.withLock { $0 }, "A non-regular document must be rejected before reading")
+        }
+        // Exercise the exact byte ceiling, then reject one extra byte. Padding
+        // retains a valid JSON document and avoids a large fixture in the repo.
+        do {
+            let output = try FileHandle(forWritingTo: document)
+            defer { try? output.close() }
+            try output.seekToEnd()
+            let padding = Data(repeating: 0x20, count: 64 * 1024)
+            var remaining = PortableSelects.limit - contents.count
+            while remaining > 0 {
+                let count = min(remaining, padding.count)
+                try output.write(contentsOf: padding.prefix(count))
+                remaining -= count
+            }
+        }
+        let atLimit = try PortableSelects.readImport(linked)
+        precondition(atLimit.count == PortableSelects.limit && atLimit.starts(with: contents))
+        do {
+            let output = try FileHandle(forWritingTo: document)
+            defer { try? output.close() }
+            try output.truncate(atOffset: UInt64(PortableSelects.limit + 1))
+        }
+        do {
+            _ = try PortableSelects.readImport(document)
+            preconditionFailure("Oversized selects document accepted")
+        } catch let error as CocoaError {
+            precondition(error.code == .fileReadTooLarge)
+        }
+        print("PASS: selects JSON regular files, Unicode/symlinks, nonblocking FIFO/device/directory rejection and 16 MiB boundary")
     }
 
     private static func coalescingAndRecovery() async {
@@ -155,8 +222,11 @@ struct LibraryWatchCheck {
         let membership = SelectsMembership(name: "Proyecto 東京", start_ms: 100, end_ms: 500)
         store.editSelects(file: file, kind: UInt32(WS_SELECTS_COLLECTION), name: membership.name, range: membership)
         await store.waitForSelects()
-        let portable = try await Task.detached { try PortableSelects.exportData() }.value
-        let summary = try await Task.detached { try PortableSelects.importData(portable) }.value
+        let portable = root.appendingPathComponent("Selección 雨.json")
+        let summary = try await Task.detached {
+            try PortableSelects.writeExport(portable)
+            return try PortableSelects.importData(PortableSelects.readImport(portable))
+        }.value
         precondition(summary.contains("merged 1") && summary.contains("unresolved 0"))
         store.browseSelects(kind: UInt32(WS_SELECTS_TAG), name: "雨 café")
         await store.waitForSearch()

@@ -11,6 +11,7 @@ struct LocalizationCheck {
         precondition(SearchShortcut.controlOptionSpace.title == (spanish ? "⌃⌥Espacio" : "⌃⌥Space"))
         precondition(RefinementBlocker.playback.message == (spanish ? "En pausa durante la reproducción" : "Paused for playback"))
         precondition(ExampleAudio.DecodeError.truncated.localizedDescription == (spanish ? "El audio ha terminado antes de su duración declarada." : "The audio ended before its declared length."))
+        precondition(PortableSelects.ImportError.notRegularFile.localizedDescription == (spanish ? "Elige un documento JSON guardado como archivo normal." : "Choose a JSON document stored as a regular file."))
         let invalid = LibraryBackupManifest(version: 0, folders: [], favourites: [])
         do {
             try invalid.validate()

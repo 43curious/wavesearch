@@ -181,6 +181,10 @@ changelog/agent documentation added afterward.
 
 ### Fixed
 
+- Selects JSON imports reject named pipes, devices and directories using the
+  opened file descriptor. Symlinks to regular files remain supported; oversized
+  files fail before reading, with the existing chunked size limit retained.
+
 - Linux file/PCM example search now fits small worker stacks: fingerprint
   selector ranking uses heap sort instead of a large block-sort scratch cache.
   Both C search paths retain 512 KiB worker regression coverage, including Linux

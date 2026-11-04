@@ -113,6 +113,17 @@ Range bounds are either both null or 0 <= start < end <= 2,147,483,647 ms.
 Over-limit unions fail visibly instead of dropping values. Annotations stay
 inside the catalog; exports contain source references, not audio or bookmarks.
 
+The macOS importer accepts regular files, including symlinks to regular files.
+It opens with nonblocking flags and validates the opened descriptor before
+reading, so named pipes cannot wait for a writer and path replacement cannot
+bypass the file-type check. Directories and devices are rejected with localized
+feedback. Known oversized files are rejected before allocation; chunked reads
+retain the 16 MiB ceiling if a file grows after opening. Ordinary filesystem
+reads still run off the main actor and drain before catalog shutdown.
+The app's privacy manifest declares metadata inspection of user-selected files
+under `3B52.1`; Apple's [API reason reference](https://developer.apple.com/documentation/bundleresources/app-privacy-configuration/nsprivacyaccessedapitypes/nsprivacyaccessedapitype)
+includes `fstat` in the file-timestamp category even when used for type/size.
+
 ## C API and validation
 
 `WS_CAP_PORTABLE_SELECTS` adds owned JSON snapshots/freeing, versioned merge
@@ -128,17 +139,13 @@ invalid-input rollback, schema-17 migration, legacy seeding, backup/restore,
 owned JSON lifetime, larger C output tails and cancellation/pagination. The
 native watcher check also edits/exports/imports annotations and confirms that
 verified moves preserve favourites, tags, saved ranges and the preview state.
+It checks Unicode JSON paths, regular-file symlinks, named-pipe/device/directory
+rejection and the exact input-size boundary without touching user documents.
 These fixtures do not establish interoperability with another application's
 selects format or physical audio availability on another computer.
 
-Validation on 2026-10-20 passed 128 core tests (two optional skips), the 3,081-case
-audio mutation checks, compiled C ABI checks, Linux cross-compilation, strict
-Swift app compilation, native annotation/watcher checks, installer fixtures and
-refinement policy checks. The existing native catalog backup/recovery fixture
-also passed when invoked through a temporary focused entry point. Full
-`make check` still aborts in this host's Xcode initialization (FSEvents/confstr).
-Subsequent diagnosis traced the recorded native autoplay assertion to absent
-audio output. The full lifecycle script now passes with controlled playback and
-explicit native-service skips; see
-[host capability validation](CI.md#local-reproduction). Desktop interaction,
-native Linux execution and cross-application JSON interoperability remain unverified.
+Run `make check` for the app build, headless checks and sequential desktop
+checks. These now run in this host's desktop session; older Xcode/audio-service
+failures are recorded in [host capability validation](CI.md#local-reproduction).
+Native Linux execution, selects-specific VoiceOver speech and cross-application
+JSON interoperability remain unverified.
