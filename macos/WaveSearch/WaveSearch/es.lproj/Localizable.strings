@@ -438,12 +438,12 @@
 "Analyzing loudness" = "Analizando sonoridad";
 "Loudness unknown" = "Sonoridad desconocida";
 "%@ LUFS · %@ dBFS sample peak" = "%@ LUFS · %@ dBFS de pico de muestra";
-"0–%@ Hz · −100–0 dBFS" = "0–%@ Hz · −100–0 dBFS";
+"Frequency (Hz) · −100–0 dBFS" = "Frecuencia (Hz) · −100–0 dBFS";
 "Sampled windows; brief events between windows may be missed. Original audio before preview effects." = "Ventanas de muestra; pueden omitirse eventos breves entre ventanas. Audio original antes de los efectos de escucha.";
 "Analyzing spectrum" = "Analizando espectro";
 "Spectrum unavailable" = "Espectro no disponible";
 "%@ semitones" = "%@ semitonos";
-"From %@ to %@; 0 to %@ Hz; sampled original audio." = "De %@ a %@; 0 a %@ Hz; muestras del audio original.";
+"From %@ to %@; linear frequency from 0 Hz at the bottom to %@ Hz at the top. White is louder, −100 to 0 dBFS. Sampled original audio." = "De %@ a %@; frecuencia lineal de 0 Hz abajo a %@ Hz arriba. El blanco indica mayor amplitud, de −100 a 0 dBFS. Muestras del audio original.";
 "Remove Saved Reference…" = "Eliminar referencia guardada…";
 "Remove Saved Reference?" = "¿Eliminar referencia guardada?";
 "Remove Saved Reference" = "Eliminar referencia guardada";

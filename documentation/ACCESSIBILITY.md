@@ -39,6 +39,11 @@ The waveform exposes analysis/preparation availability, playhead time and the
 current range. The volume slider has a label and percentage value; favourite
 controls expose their state.
 
+The opt-in spectrogram exposes its source range, linear frequency direction and
+amplitude scale as one accessibility element. Its visible frequency/time axes
+and midpoint guides accompany the sampled overview; it does not expose individual
+FFT bins as interactive controls.
+
 **Copy for Editor** (Command–Shift–C) prepares a file URL for pasting into an
 editor that accepts file URLs, using the same policy as dragging:
 
@@ -64,7 +69,8 @@ URLs separately.
 
 The window check includes native result selection/actions, search labeling,
 waveform range values, focused-slider keyboard seeking, an accessibility action
-for the out mark, and opening shortcut help by key and menu. It retains existing
+for the out mark, the native spectrogram toggle and its range/frequency summary,
+and opening shortcut help by key and menu. It retains existing
 arrow/mark/playback/text-entry checks. Run GUI checks sequentially with a logged-in
 desktop via `make check`; see [CI](CI.md) for the headless split.
 

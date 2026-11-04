@@ -438,12 +438,12 @@
 "Analyzing loudness" = "Analyzing loudness";
 "Loudness unknown" = "Loudness unknown";
 "%@ LUFS · %@ dBFS sample peak" = "%@ LUFS · %@ dBFS sample peak";
-"0–%@ Hz · −100–0 dBFS" = "0–%@ Hz · −100–0 dBFS";
+"Frequency (Hz) · −100–0 dBFS" = "Frequency (Hz) · −100–0 dBFS";
 "Sampled windows; brief events between windows may be missed. Original audio before preview effects." = "Sampled windows; brief events between windows may be missed. Original audio before preview effects.";
 "Analyzing spectrum" = "Analyzing spectrum";
 "Spectrum unavailable" = "Spectrum unavailable";
 "%@ semitones" = "%@ semitones";
-"From %@ to %@; 0 to %@ Hz; sampled original audio." = "From %@ to %@; 0 to %@ Hz; sampled original audio.";
+"From %@ to %@; linear frequency from 0 Hz at the bottom to %@ Hz at the top. White is louder, −100 to 0 dBFS. Sampled original audio." = "From %@ to %@; linear frequency from 0 Hz at the bottom to %@ Hz at the top. White is louder, −100 to 0 dBFS. Sampled original audio.";
 "Remove Saved Reference…" = "Remove Saved Reference…";
 "Remove Saved Reference?" = "Remove Saved Reference?";
 "Remove Saved Reference" = "Remove Saved Reference";

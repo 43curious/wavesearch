@@ -113,22 +113,51 @@ struct SpectrogramView: View {
         guard let data = model.data else {
             return model.isLoading ? String(localized: "Analyzing spectrum") : String(localized: "Spectrum unavailable")
         }
-        return String(localized: "From \(LocalizedText.position(data.startSeconds)) to \(LocalizedText.position(data.endSeconds)); 0 to \((data.sampleRate / 2).formatted()) Hz; sampled original audio.")
+        return String(localized: "From \(LocalizedText.position(data.startSeconds)) to \(LocalizedText.position(data.endSeconds)); linear frequency from 0 Hz at the bottom to \((data.sampleRate / 2).formatted()) Hz at the top. White is louder, −100 to 0 dBFS. Sampled original audio.")
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             if let data = model.data {
-                HStack {
-                    Text("0–\((data.sampleRate / 2).formatted(.number.precision(.fractionLength(0)))) Hz · −100–0 dBFS")
-                    Spacer()
-                    Text("\(LocalizedText.position(data.startSeconds)) – \(LocalizedText.position(data.endSeconds))")
+                Text("Frequency (Hz) · −100–0 dBFS")
+                    .font(.caption2)
+                HStack(alignment: .top, spacing: 6) {
+                    VStack(alignment: .trailing, spacing: 0) {
+                        Text((data.sampleRate / 2).formatted(.number.precision(.fractionLength(0))))
+                        Spacer(minLength: 0)
+                        Text((data.sampleRate / 4).formatted(.number.precision(.fractionLength(0))))
+                        Spacer(minLength: 0)
+                        Text(0.formatted())
+                    }
+                    .frame(height: 76)
+                    VStack(spacing: 2) {
+                        Image(decorative: data.image, scale: 1)
+                            .resizable()
+                            .interpolation(.none)
+                            .overlay {
+                                GeometryReader { geometry in
+                                    Path { path in
+                                        path.move(to: CGPoint(x: 0, y: geometry.size.height / 2))
+                                        path.addLine(to: CGPoint(x: geometry.size.width, y: geometry.size.height / 2))
+                                        path.move(to: CGPoint(x: geometry.size.width / 2, y: 0))
+                                        path.addLine(to: CGPoint(x: geometry.size.width / 2, y: geometry.size.height))
+                                    }
+                                    .stroke(.orange.opacity(0.6), lineWidth: 0.5)
+                                }
+                            }
+                            .frame(height: 76)
+                        ZStack {
+                            HStack {
+                                Text(LocalizedText.position(data.startSeconds))
+                                Spacer(minLength: 0)
+                                Text(LocalizedText.position(data.endSeconds))
+                            }
+                            Text(LocalizedText.position((data.startSeconds + data.endSeconds) / 2))
+                        }
+                    }
                 }
                 .font(.caption2)
-                Image(decorative: data.image, scale: 1)
-                    .resizable()
-                    .interpolation(.none)
-                    .accessibilityHidden(true)
+                .monospacedDigit()
                 Text("Sampled windows; brief events between windows may be missed. Original audio before preview effects.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
@@ -138,9 +167,10 @@ struct SpectrogramView: View {
                 Text("Spectrum unavailable")
             }
         }
-        .frame(maxWidth: .infinity, minHeight: 90, maxHeight: 120)
-        .accessibilityElement(children: .combine)
+        .frame(maxWidth: .infinity, minHeight: 90)
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel("Spectrogram")
         .accessibilityValue(description)
+        .accessibilityIdentifier("spectrogram-plot")
     }
 }

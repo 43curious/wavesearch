@@ -12,6 +12,10 @@ changelog/agent documentation added afterward.
 
 ### Added
 
+- Spectrogram frequency and source-time axes label their endpoints and midpoints
+  with aligned center guides. The English/Spanish accessibility summary explains
+  the linear frequency direction and amplitude scale.
+
 - Optional semantic installation checks the destination volume for 1.5 GB of
   staging space before downloads. Low space has English/Spanish retry feedback;
   valid installed bundles can still be verified, and failed repairs retain their

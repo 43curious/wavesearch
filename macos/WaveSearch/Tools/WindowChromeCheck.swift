@@ -209,6 +209,25 @@ struct WindowChromeCheck: App {
         precondition(out.accessibilityPerformPress(), "VoiceOver must be able to set an out point")
         precondition(player.selection?.upperBound == player.progress)
         player.setSelection(0.2...0.6)
+        let spectrumToggle = accessibilityElements(main).first { $0.accessibilityLabel() == "Spectrogram" }!
+        precondition(spectrumToggle.accessibilityPerformPress(), "Spectrogram must open through its native control")
+        let spectrumDeadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while player.spectrogram.isLoading || player.spectrogram.data == nil, ContinuousClock.now < spectrumDeadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        precondition(player.spectrogram.data?.startSeconds == 0.2 && player.spectrogram.data?.endSeconds == 0.6)
+        try await Task.sleep(for: .milliseconds(100))
+        let spectrum = accessibilityElements(main).first { $0.accessibilityIdentifier() == "spectrogram-plot" }!
+        let spectrumValue = (spectrum.accessibilityValue() as? String) ?? spectrum.accessibilityValueDescription()
+        precondition(spectrumValue?.contains("From 0:00.20 to 0:00.60; linear frequency from 0 Hz at the bottom to 4,000 Hz at the top") == true,
+                     "Spectrogram must describe the source range and frequency axis: \(String(describing: spectrumValue))")
+        if let path = ProcessInfo.processInfo.environment["WS_SPECTROGRAM_SCREENSHOT"], let content = main.contentView {
+            let bitmap = content.bitmapImageRepForCachingDisplay(in: content.bounds)!
+            content.cacheDisplay(in: content.bounds, to: bitmap)
+            try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: path))
+        }
+        precondition(spectrumToggle.accessibilityPerformPress())
+        print("PASS: native spectrogram toggle, selected-range analysis and accessible frequency/time scale")
         // Re-enter the results focus scope before bare audition commands.
         NotificationCenter.default.post(name: GlobalSearchShortcut.focusNotification, object: nil)
         try await Task.sleep(for: .milliseconds(100))

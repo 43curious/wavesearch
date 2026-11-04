@@ -106,6 +106,10 @@ no reads beyond the selected frame extent. Each column is a periodic Hann-window
 with a −100..0 dB display clamp. It takes the maximum channel magnitude instead
 of mixing opposite-phase channels to silence. Frequency is linear, DC at the
 bottom and Nyquist at the top; time proceeds left to right. White is louder.
+Visible axes label DC, half Nyquist and Nyquist, and the source range's start,
+midpoint and end. Center guides align the frequency and time midpoints; clocks
+and frequencies follow the interface locale. The accessibility summary describes
+the range, linear frequency direction and amplitude scale as one element.
 Sparse windows can miss events between windows; this is an inspection overview,
 not an exact continuous STFT. Higher sample rates also increase bin spacing.
 
