@@ -72,6 +72,7 @@
 "Cannot use %@: %@" = "Cannot use %@: %@";
 "Channels" = "Channels";
 "Check Integrity" = "Check Integrity";
+"Checking free disk space…" = "Checking free disk space…";
 "Checking index integrity…" = "Checking index integrity…";
 "Checking installation…" = "Checking installation…";
 "Choose Backup" = "Choose Backup";
@@ -323,6 +324,7 @@
 "Selected range" = "Selected range";
 "Selected sounds still generate exact waveforms and loudness analysis on demand." = "Selected sounds still generate exact waveforms and loudness analysis on demand.";
 "Selected: %@" = "Selected: %@";
+"Semantic search installation needs 1.5 GB of available disk space. Free some space and retry." = "Semantic search installation needs 1.5 GB of available disk space. Free some space and retry.";
 "Semantic" = "Semantic";
 "Semantic installation: %@" = "Semantic installation: %@";
 "Semantic provider could not be loaded" = "Semantic provider could not be loaded";

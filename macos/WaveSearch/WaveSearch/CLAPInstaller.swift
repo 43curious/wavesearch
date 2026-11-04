@@ -82,8 +82,18 @@ nonisolated private final class CLAPDownloadProgress: NSObject, URLSessionDownlo
 nonisolated struct CLAPInstaller: Sendable {
     typealias Report = @Sendable (CLAPInstallProgress) -> Void
     typealias Download = @Sendable (CLAPArtifact, URL, @escaping Report) async throws -> Void
+    // The Settings staging allowance, in decimal bytes; existing bundles are retained.
+    static let minimumFreeSpace: Int64 = 1_500_000_000
     let plan: CLAPInstallPlan
     var download: Download = { try await downloadLive($0, to: $1, report: $2) }
+    var availableCapacity: @Sendable (URL) -> Int64? = { directory in
+        var fresh = directory.resolvingSymlinksInPath()
+        fresh.removeAllCachedResourceValues()
+        guard let values = try? fresh.resourceValues(forKeys: [
+            .volumeAvailableCapacityForImportantUsageKey, .volumeAvailableCapacityKey
+        ]) else { return nil }
+        return values.volumeAvailableCapacityForImportantUsage ?? values.volumeAvailableCapacity.map { Int64($0) }
+    }
 
     private static func downloadLive(_ artifact: CLAPArtifact, to destination: URL, report: @escaping Report) async throws {
         let config = URLSessionConfiguration.ephemeral
@@ -160,6 +170,11 @@ nonisolated struct CLAPInstaller: Sendable {
         }
         let parent = root.deletingLastPathComponent()
         try fm.createDirectory(at: parent, withIntermediateDirectories: true)
+        report(.init(detail: String(localized: "Checking free disk space…")))
+        if let capacity = availableCapacity(parent), capacity >= 0, capacity < Self.minimumFreeSpace {
+            throw CLAPInstallFailure(message: String(localized: "Semantic search installation needs 1.5 GB of available disk space. Free some space and retry."))
+        }
+        try Task.checkCancellation()
         let stage = parent.appendingPathComponent(".wavesearch-clap-\(UUID().uuidString)")
         try fm.createDirectory(at: stage, withIntermediateDirectories: false)
         var discardStage = true

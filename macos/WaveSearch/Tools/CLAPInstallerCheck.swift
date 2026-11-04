@@ -1,5 +1,6 @@
 import Foundation
 import CryptoKit
+import os
 import WaveSearchKit
 
 private actor DownloadProbe {
@@ -42,7 +43,7 @@ struct CLAPInstallerCheck {
             try Task.checkCancellation()
             try payloads[artifact.path]!.write(to: target)
             report(.init(detail: "Fixture downloaded", bytes: Int64(payloads[artifact.path]!.count)))
-        })
+        }, availableCapacity: { _ in 1_500_000_000 })
         let root = base.appendingPathComponent("wavesearch-clap")
         let controller = CLAPInstallationController(root: root, installer: installer)
         controller.refresh(); await controller.wait()
@@ -67,13 +68,55 @@ struct CLAPInstallerCheck {
         precondition(oldBytes == Data("broken".utf8))
         print("PASS: install, existing validation, corrupt repair and retained previous bundle")
 
+        // Capacity is queried on the destination worker before any download/stage.
+        let capacity = OSAllocatedUnfairLock(initialState: (bytes: Optional<Int64>(1_499_999_999), calls: 0))
+        let spaceDownloads = DownloadProbe()
+        let spaceInstaller = CLAPInstaller(plan: plan, download: { artifact, target, _ in
+            await spaceDownloads.record()
+            try payloads[artifact.path]!.write(to: target)
+        }, availableCapacity: { parent in
+            precondition(!Thread.isMainThread, "Capacity inspection belongs off-main")
+            precondition(parent.resolvingSymlinksInPath().path == base.resolvingSymlinksInPath().path,
+                         "Inspect the destination volume, not a temporary download directory")
+            return capacity.withLock { value in value.calls += 1; return value.bytes }
+        })
+        let space = CLAPInstallationController(root: base.appendingPathComponent("space"), installer: spaceInstaller)
+        space.refresh(); await space.wait()
+        space.install { preconditionFailure("Insufficient space must not activate") }; await space.wait()
+        guard case .failed = space.phase else { preconditionFailure("Low capacity needs retry feedback") }
+        let blockedCalls = await spaceDownloads.calls
+        precondition(blockedCalls == 0 && !fm.fileExists(atPath: space.root.path))
+        let lowSpaceEntries = try fm.contentsOfDirectory(atPath: base.path)
+        precondition(lowSpaceEntries.allSatisfy { !$0.hasPrefix(".wavesearch-clap-") })
+        capacity.withLock { $0.bytes = 1_500_000_000 }
+        space.install {}; await space.wait()
+        precondition(space.phase == .installed, "The documented capacity boundary must allow installation")
+        let installedCalls = await spaceDownloads.calls
+        precondition(installedCalls == artifacts.count)
+        // Verifying valid installed bytes needs neither staging space nor a query.
+        capacity.withLock { $0.bytes = 0 }
+        let queriesBeforeVerify = capacity.withLock { $0.calls }
+        space.install {}; await space.wait()
+        precondition(space.phase == .installed && capacity.withLock { $0.calls } == queriesBeforeVerify)
+        try Data("retained during low-space repair".utf8).write(to: space.root.appendingPathComponent("model/audio.onnx"))
+        space.install { preconditionFailure("Low-space repair must not activate") }; await space.wait()
+        guard case .failed = space.phase else { preconditionFailure("Low-space repair needs retry feedback") }
+        let repairCalls = await spaceDownloads.calls
+        let oldModel = try Data(contentsOf: space.root.appendingPathComponent("model/audio.onnx"))
+        precondition(repairCalls == installedCalls && oldModel == Data("retained during low-space repair".utf8))
+        // Some volumes cannot report capacity. Keep the existing checked write path.
+        capacity.withLock { $0.bytes = nil }
+        space.install {}; await space.wait()
+        precondition(space.phase == .installed)
+        print("PASS: low-space rejection before download, capacity-boundary retry, valid verification and retained repair bytes")
+
         for failure in ["network", "corrupt", "partial"] {
             let target = base.appendingPathComponent(failure)
             let failing = CLAPInstaller(plan: plan, download: { _, destination, _ in
                 try Data("partial".utf8).write(to: destination)
                 if failure == "network" { throw URLError(.notConnectedToInternet) }
                 if failure == "partial" { throw CancellationError() }
-            })
+            }, availableCapacity: { _ in 1_500_000_000 })
             do {
                 try await Task.detached { try await failing.install(at: target) { _ in } }.value
                 preconditionFailure("Failure must not activate a partial installation")
@@ -84,7 +127,8 @@ struct CLAPInstallerCheck {
         }
         // An unsupported platform must reject before filesystem/network work.
         let unsupported = CLAPInstaller(plan: .init(artifacts: artifacts, runtimePath: runtimePath, supported: false),
-                                        download: { _, _, _ in preconditionFailure("Unsupported download") })
+                                        download: { _, _, _ in preconditionFailure("Unsupported download") },
+                                        availableCapacity: { _ in preconditionFailure("Unsupported capacity query") })
         let unavailable = CLAPInstallationController(root: base.appendingPathComponent("unsupported"), installer: unsupported)
         unavailable.refresh(); await unavailable.wait()
         precondition(unavailable.phase == .unsupported)
@@ -97,7 +141,7 @@ struct CLAPInstallerCheck {
             await retryProbe.record()
             if await retryProbe.calls == 1 { throw URLError(.timedOut) }
             try payloads[artifact.path]!.write(to: destination)
-        })
+        }, availableCapacity: { _ in 1_500_000_000 })
         let retried = CLAPInstallationController(root: base.appendingPathComponent("retry"), installer: retrying)
         retried.refresh(); await retried.wait()
         retried.install { preconditionFailure("Failed attempt must not activate") }; await retried.wait()
@@ -106,7 +150,8 @@ struct CLAPInstallerCheck {
         precondition(retried.phase == .installed)
         // A failed repair must leave the old bundle's bytes untouched.
         try Data("retain this".utf8).write(to: retried.root.appendingPathComponent("model/audio.onnx"))
-        let failedRepair = CLAPInstaller(plan: plan, download: { _, _, _ in throw URLError(.networkConnectionLost) })
+        let failedRepair = CLAPInstaller(plan: plan, download: { _, _, _ in throw URLError(.networkConnectionLost) },
+                                         availableCapacity: { _ in 1_500_000_000 })
         do {
             try await Task.detached { try await failedRepair.install(at: retried.root) { _ in } }.value
             preconditionFailure("Repair should fail")
@@ -120,7 +165,7 @@ struct CLAPInstallerCheck {
             try Data("partial".utf8).write(to: destination)
             await cancellationProbe.record()
             try await Task.sleep(for: .seconds(30))
-        })
+        }, availableCapacity: { _ in 1_500_000_000 })
         let cancelled = CLAPInstallationController(root: base.appendingPathComponent("cancelled"), installer: cancellable)
         cancelled.refresh(); await cancelled.wait()
         cancelled.install { preconditionFailure("Cancelled activation") }

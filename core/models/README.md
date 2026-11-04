@@ -20,6 +20,17 @@ has outgoing-network permission for this explicitly invoked flow. Allow 1.5 GB
 of free disk space for staging. The UI does not offer the pinned runtime on Intel
 Macs. Linux hosts retain the CLI path below.
 
+Before staging a download or repair, the native installer checks the destination
+volume for the advertised 1.5 GB (1,500,000,000-byte) free-space allowance. It
+requests Foundation's [important-use volume capacity](https://developer.apple.com/documentation/foundation/urlresourcevalues/volumeavailablecapacityforimportantusage),
+with ordinary available capacity as a fallback. A known lower value produces a
+localized retry message before any artifact download or staging directory.
+Existing valid installations are verified without this check. Unknown capacity
+uses the normal checked-write path; the preflight does not reserve space, so
+later write failures still clean staging and preserve the previous bundle.
+The app's `PrivacyInfo.xcprivacy` declares the disk-space preflight purpose
+using Apple's [E174.1 reason](https://developer.apple.com/documentation/bundleresources/app-privacy-configuration/nsprivacyaccessedapitypes/nsprivacyaccessedapitype).
+
 **Verify or repair installation** first hashes existing model files, checks the
 runtime, and skips downloads when valid. Native installs record the extracted
 library's SHA-256 in `runtime.sha256`; CLI installs without this receipt check
@@ -66,7 +77,8 @@ See `THIRD_PARTY_NOTICES.md` before installing.
 `bash scripts/test-clap-installer.sh` from the repository root uses tiny local
 fixtures and injected downloads; it never downloads models/runtime. It covers
 absent/corrupt/partial artifacts, network failure and retry, cancellation/drain,
-unsupported platforms, atomic repair with retained backups, CLI pin compatibility,
+unsupported platforms, low-space rejection/retry and unknown-capacity handling,
+atomic repair with retained backups, CLI pin compatibility,
 and lexical search after a real provider-load failure. It is included in
 `make check-macos-headless`. Like the lifecycle/policy/watcher scripts, it supports
 `WS_CORE_LIBRARY` and `WS_CORE_HEADERS` overrides.
@@ -74,10 +86,10 @@ and lexical search after a real provider-load failure. It is included in
 The fixture checks do not establish successful real-model download/inference,
 desktop interaction, or runtime loading in a signed hardened release. That last
 acceptance depends on the release configuration in
-[#11](https://github.com/43curious/wavesearch/issues/11). The current host's Xcode
-project build aborts during runtime initialization; direct Swift compilation
-and deterministic checks provide partial validation only. No library-validation
-bypass or hardened-runtime exception is added by this installer.
+[#11](https://github.com/43curious/wavesearch/issues/11). Use `make check` for the
+app build and desktop checks; headless/native validation scope is documented in
+[the CI reference](../../documentation/CI.md). No library-validation bypass or
+hardened-runtime exception is added by this installer.
 
 The separate [Developer ID release policy](../../documentation/RELEASING.md)
 disables library validation for the signed host process so it can load the

@@ -12,6 +12,11 @@ changelog/agent documentation added afterward.
 
 ### Added
 
+- Optional semantic installation checks the destination volume for 1.5 GB of
+  staging space before downloads. Low space has English/Spanish retry feedback;
+  valid installed bundles can still be verified, and failed repairs retain their
+  previous files. The app declares the disk-capacity API purpose.
+
 - Tags and collections can be renamed across saved references from the selects
   editor. Existing destination entries merge without losing distinct ranges;
   active browsing follows the new name. Atomic budget-checked edits include
