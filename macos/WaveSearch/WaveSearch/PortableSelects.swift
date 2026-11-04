@@ -75,6 +75,17 @@ nonisolated enum PortableSelects {
         guard result == 0 else { throw failure() }
     }
 
+    static func rename(kind: UInt32, from oldName: String, to newName: String) throws {
+        guard !oldName.utf8.contains(0), !newName.utf8.contains(0) else {
+            throw NSError(domain: "WaveSearch.Selects", code: 2,
+                          userInfo: [NSLocalizedDescriptionKey: String(localized: "Use a shorter, non-empty tag or collection name.")])
+        }
+        let result = oldName.withCString { old in
+            newName.withCString { ws_selects_rename_v1(kind, old, $0) }
+        }
+        guard result == 0 else { throw failure() }
+    }
+
     static func importData(_ data: Data) throws -> String {
         guard data.count <= limit else { throw CocoaError(.fileReadTooLarge) }
         var report = WSSelectsImportReport()

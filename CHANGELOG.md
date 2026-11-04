@@ -12,6 +12,11 @@ changelog/agent documentation added afterward.
 
 ### Added
 
+- Tags and collections can be renamed across saved references from the selects
+  editor. Existing destination entries merge without losing distinct ranges;
+  active browsing follows the new name. Atomic budget-checked edits include
+  unresolved references through an additive C API and English/Spanish controls.
+
 - A printable Apollo-style WaveSearch systems page explains catalog/preview
   paths and editor import modes, with verified operating limits, an operator
   checklist, editable HTML and the bundled font notices.

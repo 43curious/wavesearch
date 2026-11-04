@@ -215,6 +215,7 @@
 "Model card and terms" = "Ficha del modelo y condiciones";
 "Model files verified. Provider loading checks runtime compatibility." = "Archivos del modelo verificados. La carga del proveedor comprueba la compatibilidad del runtime.";
 "Name" = "Nombre";
+"New name" = "Nuevo nombre";
 "New tag" = "Nueva etiqueta";
 "Next / previous sound" = "Sonido siguiente / anterior";
 "No libraries connected." = "No hay bibliotecas conectadas.";
@@ -282,6 +283,11 @@
 "Remove Tag" = "Quitar etiqueta";
 "Remove from Collection" = "Quitar de la colección";
 "Remove from Favourites" = "Quitar de favoritos";
+"Rename %@ across all saved references. If the new name exists, entries are combined and all saved ranges are retained." = "Cambia el nombre de %@ en todas las referencias guardadas. Si el nuevo nombre ya existe, las entradas se combinan y se conservan todos los intervalos guardados.";
+"Rename Collection" = "Renombrar colección";
+"Rename Tag" = "Renombrar etiqueta";
+"Rename" = "Renombrar";
+"Renamed in the catalog." = "Nombre cambiado en el catálogo.";
 "Reset Colors" = "Restablecer colores";
 "Restore" = "Restaurar";
 "Restore Backup…" = "Restaurar copia de seguridad…";

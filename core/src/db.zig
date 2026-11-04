@@ -1725,6 +1725,11 @@ pub fn selectsEdit(file_id: i32, kind: selects.Kind, name: []const u8, start: i6
     defer mutex.unlock();
     try (selects.Catalog{ .handle = try handleLocked() }).edit(file_id, kind, name, start, end, enabled);
 }
+pub fn selectsRename(kind: selects.Kind, old_name: []const u8, new_name: []const u8) !void {
+    lock();
+    defer mutex.unlock();
+    try (selects.Catalog{ .handle = try handleLocked() }).rename(kind, old_name, new_name);
+}
 pub fn selectsRelink(allocator: std.mem.Allocator, id: []const u8, file_id: i32) !void {
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();

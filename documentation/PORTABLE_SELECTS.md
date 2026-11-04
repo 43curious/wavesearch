@@ -8,6 +8,20 @@ preview range, stored as integer milliseconds. Distinct ranges in one collection
 are retained separately. Names preserve Unicode and case exactly; ASCII-whitespace-only
 names are rejected, and differently cased names are distinct.
 
+**Rename** in the editor lists existing tags and collections, including those on
+unresolved references. A rename changes that name across the whole catalog,
+independent of the selected library. Renaming into an existing name combines
+entries: duplicate tags and identical collection ranges collapse, while distinct
+ranges and whole-file memberships survive. IDs, favourites and source bindings
+stay intact. The active annotation browse follows a successful rename. A failed
+rename transaction leaves the original annotations intact.
+
+Names remain byte-exact, including canonically equivalent Unicode spellings.
+The whole edit is transactional and validates the document-size budget after
+merging; a longer name can exceed that budget even without adding entries.
+Reimporting an older JSON export may restore an old name because import remains
+additive; renames do not create portable tombstones.
+
 **Browse** opens favourites, a tag or a collection in the normal results list,
 with ID-ordered keyset pagination and the selected library's scope. Typing a new
 search leaves annotation browsing. Existing text, UCS and acoustic search retain
@@ -106,6 +120,7 @@ reports, one-time legacy seeding, single-file edits, explicit relinking and
 cancellable paginated catalog queries. Existing structs/signatures remain fixed.
 See [the C contract](C_API.md) and [operations](../OPERATIONS.md).
 `WS_CAP_SELECTS_REMOVE` additionally advertises explicit reference removal by ID.
+`WS_CAP_SELECTS_RENAME` advertises global tag/collection renaming and merging.
 
 Focused disposable-catalog checks cover Unicode/range round trips, unambiguous
 relocation, missing references, conflict retention/idempotency, explicit merging,

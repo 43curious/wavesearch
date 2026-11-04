@@ -19,6 +19,7 @@
 #define WS_CAP_SPECTRUM          (UINT64_C(1) << 10)
 #define WS_CAP_PORTABLE_SELECTS  (UINT64_C(1) << 9)
 #define WS_CAP_SELECTS_REMOVE    (UINT64_C(1) << 11)
+#define WS_CAP_SELECTS_RENAME    (UINT64_C(1) << 12)
 #define WS_CAP_FILE_LOOKUP       (UINT64_C(1) << 6)
 // Allocation-free, thread-safe, valid before init and after deinit. Capabilities
 // describe compiled APIs, not model installation, provider loading or DB state.
@@ -94,6 +95,11 @@ int ws_selects_seed_favourites_v1(const char *json, uint64_t length);
 // enabled must be 0/1. All edits return 0 success, -1 error; no source file I/O.
 int ws_selects_edit_v1(int file_id, uint32_t kind, const char *name,
                       int64_t start_ms, int64_t end_ms, int enabled);
+// WS_CAP_SELECTS_RENAME: rename a tag/collection across all saved references.
+// Names are byte-exact, non-empty UTF-8 (1..128 bytes). Existing destination
+// names merge; distinct ranges survive. Same/absent names are successful no-ops.
+// 0 success, -1 error; atomic catalog-only edit, including unresolved references.
+int ws_selects_rename_v1(uint32_t kind, const char *old_name, const char *new_name);
 // Explicitly bind a missing reference to an indexed file, merging annotations.
 int ws_selects_relink_v1(const char *source_id, int file_id);
 // WS_CAP_SELECTS_REMOVE: remove one saved reference and all its annotations.

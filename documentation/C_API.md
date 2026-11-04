@@ -213,6 +213,17 @@ file, analysis, media or legacy-seeding state. It performs catalog I/O only;
 admit and drain it like other annotation edits. Reimporting an older document
 can restore the deleted annotations; there are no deletion tombstones.
 
+`WS_CAP_SELECTS_RENAME` advertises
+`ws_selects_rename_v1(kind, old_name, new_name)`. Kind must be tag or collection;
+both names are required NUL-terminated UTF-8 strings using the existing
+1..128-byte name rules. Equality is byte-exact. It renames across bound and
+unresolved references in all libraries, unions destination entries and preserves
+distinct range/whole-file memberships, IDs and favourites. Same-name or absent
+source names are successful no-ops. Return is 0 success or -1 error. A transaction
+includes document-capacity validation and rolls back all writes on failure.
+There is no source-media I/O. Hosts admit/drain this synchronous catalog call
+like other annotation writes; the ABI version and existing layouts stay fixed.
+
 List queries require an owned query request and support cancellation (-2),
 folder=-1 (all), after_id=0 (first page), and up to 1,000 WSResult entries.
 Results are ordered by increasing file ID; pass the last ID for the next page.

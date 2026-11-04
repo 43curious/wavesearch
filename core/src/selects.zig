@@ -215,6 +215,32 @@ pub const Catalog = struct {
         try self.exec("COMMIT;");
     }
 
+    /// Rename across bound and unresolved references, merging only exact duplicates.
+    pub fn rename(self: Catalog, kind: Kind, old_name: []const u8, new_name: []const u8) !void {
+        if (kind == .favourite) return error.InvalidSelectsKind;
+        try validateName(old_name);
+        try validateName(new_name);
+        if (std.mem.eql(u8, old_name, new_name)) return;
+        try self.exec("BEGIN IMMEDIATE;");
+        errdefer self.exec("ROLLBACK;") catch {};
+        const insert_name = try self.prepare(if (kind == .tag)
+            "INSERT OR IGNORE INTO user_tags(source_id,name) SELECT source_id,?2 FROM user_tags WHERE name=?1"
+        else
+            "INSERT OR IGNORE INTO user_collections(source_id,name,start_ms,end_ms) SELECT source_id,?2,start_ms,end_ms FROM user_collections WHERE name=?1");
+        defer _ = c.sqlite3_finalize(insert_name);
+        try text(insert_name, 1, old_name);
+        try text(insert_name, 2, new_name);
+        try done(insert_name);
+        const remove_name = try self.prepare(if (kind == .tag) "DELETE FROM user_tags WHERE name=?" else "DELETE FROM user_collections WHERE name=?");
+        defer _ = c.sqlite3_finalize(remove_name);
+        try text(remove_name, 1, old_name);
+        try done(remove_name);
+        // Longer names can exceed the document budget even when row counts fall.
+        try self.validateCapacity();
+        try query.check();
+        try self.exec("COMMIT;");
+    }
+
     fn resolve(self: Catalog, source: Source) !?i32 {
         const stmt = try self.prepare(if (source.sha256 != null)
             "SELECT f.id FROM file_move_identities m JOIN files f ON f.id=m.file_id WHERE m.sha256=?1 AND f.file_size=?2 LIMIT 2"

@@ -178,6 +178,21 @@ struct LibraryWatchCheck {
         let saved = store.selectsDocument.sources[0]
         precondition(saved.path == new.path && saved.favourite && saved.tags == ["雨 café"] && saved.collections == [membership],
                      "Verified moves must retain catalog annotations and saved ranges")
+        store.renameSelects(kind: UInt32(WS_SELECTS_TAG), from: "雨 café", to: "Rain 東京")
+        await store.waitForSelects()
+        await store.waitForSearch()
+        precondition(store.selectsFilter?.name == "Rain 東京" && store.results.map(\.id) == [file.id],
+                     "Active tag browsing must follow a committed rename")
+        store.renameSelects(kind: UInt32(WS_SELECTS_COLLECTION), from: membership.name, to: "Edit café")
+        await store.waitForSelects()
+        let renamed = store.selectsDocument.sources[0]
+        precondition(renamed.tags == ["Rain 東京"] && renamed.favourite)
+        precondition(renamed.collections == [SelectsMembership(name: "Edit café", start_ms: 100, end_ms: 500)],
+                     "Renaming a collection must retain saved ranges")
+        store.browseSelects(kind: UInt32(WS_SELECTS_COLLECTION), name: "Edit café")
+        await store.waitForSearch()
+        precondition(store.results.map(\.id) == [file.id])
+        print("PASS: tag and collection renames preserve ranges and retarget active browsing")
         let inspections = MetadataInspections()
         let metadata = AudioMetadataStore(inspect: { inspections.inspect($0) })
         let movedFile = store.selectedFile!

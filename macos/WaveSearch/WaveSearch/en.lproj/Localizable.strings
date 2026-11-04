@@ -215,6 +215,7 @@
 "Model card and terms" = "Model card and terms";
 "Model files verified. Provider loading checks runtime compatibility." = "Model files verified. Provider loading checks runtime compatibility.";
 "Name" = "Name";
+"New name" = "New name";
 "New tag" = "New tag";
 "Next / previous sound" = "Next / previous sound";
 "No libraries connected." = "No libraries connected.";
@@ -282,6 +283,11 @@
 "Remove Tag" = "Remove Tag";
 "Remove from Collection" = "Remove from Collection";
 "Remove from Favourites" = "Remove from Favourites";
+"Rename %@ across all saved references. If the new name exists, entries are combined and all saved ranges are retained." = "Rename %@ across all saved references. If the new name exists, entries are combined and all saved ranges are retained.";
+"Rename Collection" = "Rename Collection";
+"Rename Tag" = "Rename Tag";
+"Rename" = "Rename";
+"Renamed in the catalog." = "Renamed in the catalog.";
 "Reset Colors" = "Reset Colors";
 "Restore" = "Restore";
 "Restore Backup…" = "Restore Backup…";

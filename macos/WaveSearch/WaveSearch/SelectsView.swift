@@ -20,6 +20,9 @@ struct SelectsView: View {
     @State private var collection = ""
     @State private var savesRange = false
     @State private var referenceToRemove: SelectsSource?
+    @State private var renameTarget: SelectsFilter?
+    @State private var renamedName = ""
+    @FocusState private var renameFocused: Bool
 
     private var tags: [SelectsName] { SelectsName.unique(store.selectsDocument.sources.flatMap(\.tags)) }
     private var collections: [SelectsName] { SelectsName.unique(store.selectsDocument.sources.flatMap { $0.collections.map(\.name) }) }
@@ -46,6 +49,19 @@ struct SelectsView: View {
                         ForEach(collections) { entry in Button(entry.name) { browse(UInt32(WS_SELECTS_COLLECTION), entry.name) } }
                     }
                 }
+                Menu("Rename") {
+                    Section("Tags") {
+                        ForEach(tags) { entry in
+                            Button(entry.name) { beginRename(UInt32(WS_SELECTS_TAG), entry.name) }
+                        }
+                    }
+                    Section("Collections") {
+                        ForEach(collections) { entry in
+                            Button(entry.name) { beginRename(UInt32(WS_SELECTS_COLLECTION), entry.name) }
+                        }
+                    }
+                }
+                .disabled(tags.isEmpty && collections.isEmpty)
                 Spacer()
                 if store.isEditingSelects { ProgressView().controlSize(.small) }
             }
@@ -125,6 +141,33 @@ struct SelectsView: View {
         .padding(20)
         .frame(minWidth: 760, idealWidth: 840, minHeight: 540)
         .task { await store.refreshSelects() }
+        .sheet(isPresented: Binding(
+            get: { renameTarget != nil },
+            set: { if !$0 { renameTarget = nil } }
+        )) {
+            if let target = renameTarget {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text(renameTitle).font(.headline)
+                    Text("Rename \(target.name) across all saved references. If the new name exists, entries are combined and all saved ranges are retained.")
+                        .fixedSize(horizontal: false, vertical: true)
+                    TextField("New name", text: $renamedName).focused($renameFocused)
+                    HStack {
+                        Spacer()
+                        Button("Cancel") { renameTarget = nil }.keyboardShortcut(.cancelAction)
+                        Button("Rename") {
+                            store.renameSelects(kind: target.kind, from: target.name, to: renamedName)
+                            renameTarget = nil
+                        }
+                        .keyboardShortcut(.defaultAction)
+                        .disabled(!canEdit || renamedName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                  || renamedName.utf8.elementsEqual(target.name.utf8))
+                    }
+                }
+                .padding(20)
+                .frame(width: 480)
+                .onAppear { renameFocused = true }
+            }
+        }
         .alert("Remove Saved Reference?", isPresented: Binding(
             get: { referenceToRemove != nil },
             set: { if !$0 { referenceToRemove = nil } }
@@ -134,6 +177,15 @@ struct SelectsView: View {
         } message: { source in
             Text("Remove all tags, collection ranges and favourite status for \(URL(fileURLWithPath: source.path).lastPathComponent)? The indexed sound and audio file stay in place. Importing an older JSON export can restore these annotations.")
         }
+    }
+
+    private var renameTitle: String {
+        renameTarget?.kind == UInt32(WS_SELECTS_TAG) ? String(localized: "Rename Tag") : String(localized: "Rename Collection")
+    }
+
+    private func beginRename(_ kind: UInt32, _ name: String) {
+        renamedName = name
+        renameTarget = SelectsFilter(kind: kind, name: name)
     }
 
     private func selected(_ source: SelectsSource) -> SoundFile? {

@@ -53,7 +53,7 @@ pub export fn ws_capabilities() u64 {
     const c = @import("c");
     return c.WS_CAP_QUERY_CANCELLATION | c.WS_CAP_WAVEFORM_V1 |
         c.WS_CAP_EXTERNAL_SEMANTIC | c.WS_CAP_CLAP |
-        c.WS_CAP_EXACT_DUPLICATES | c.WS_CAP_FINGERPRINT_REPACK | c.WS_CAP_FILE_LOOKUP | c.WS_CAP_FILE_METADATA | c.WS_CAP_UCS_CATEGORIES | c.WS_CAP_PORTABLE_SELECTS | c.WS_CAP_SPECTRUM | c.WS_CAP_SELECTS_REMOVE;
+        c.WS_CAP_EXACT_DUPLICATES | c.WS_CAP_FINGERPRINT_REPACK | c.WS_CAP_FILE_LOOKUP | c.WS_CAP_FILE_METADATA | c.WS_CAP_UCS_CATEGORIES | c.WS_CAP_PORTABLE_SELECTS | c.WS_CAP_SPECTRUM | c.WS_CAP_SELECTS_REMOVE | c.WS_CAP_SELECTS_RENAME;
 }
 
 fn lockMutations() void {
@@ -357,6 +357,21 @@ pub export fn ws_selects_edit_v1(file_id: c_int, kind: u32, name: ?[*:0]const u8
         return -1;
     }
     db.selectsEdit(file_id, k, if (name) |ptr| std.mem.span(ptr) else "", start_ms, end_ms, enabled == 1) catch |err| {
+        setLastError(err);
+        return -1;
+    };
+    return 0;
+}
+pub export fn ws_selects_rename_v1(kind: u32, old_name: ?[*:0]const u8, new_name: ?[*:0]const u8) c_int {
+    const k = std.enums.fromInt(selects.Kind, kind) orelse {
+        setLastErrorMessage("InvalidSelectsKind");
+        return -1;
+    };
+    if (old_name == null or new_name == null) {
+        setLastErrorMessage("InvalidSelectsName");
+        return -1;
+    }
+    db.selectsRename(k, std.mem.span(old_name.?), std.mem.span(new_name.?)) catch |err| {
         setLastError(err);
         return -1;
     };

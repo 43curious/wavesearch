@@ -135,6 +135,98 @@ test "portable selects round trip moves missing references ranges and conflict m
     try std.testing.expectEqual(@as(u32, 0), (try db.integrityCheck(true)).errors_found);
 }
 
+test "renaming annotations merges exact duplicates and retains unresolved references and ranges" {
+    const selects = @import("selects.zig");
+    var fixture = try Fixture.init();
+    defer fixture.deinit();
+    try writeWav(fixture.tmp.dir, "sound.wav", 8000, 2);
+    try openFixture(&fixture);
+    try search.indexFolder(allocator, 1, fixture.root);
+    const file = (try db.inspectFile("sound.wav")).?;
+    const id: i32 = @intCast(file.id);
+    try db.selectsEdit(id, .favourite, "", -1, -1, true);
+    for ([_][]const u8{ "Old 雨", "New 東京", "café", "cafe\u{301}" }) |name| try db.selectsEdit(id, .tag, name, -1, -1, true);
+    try db.selectsEdit(id, .collection, "Old", -1, -1, true);
+    try db.selectsEdit(id, .collection, "Old", 100, 500, true);
+    try db.selectsEdit(id, .collection, "New", 100, 500, true);
+    try db.selectsEdit(id, .collection, "New", 200, 600, true);
+    _ = try db.selectsImport(allocator, "{\"version\":1,\"sources\":[{\"path\":\"/missing/rain.wav\",\"favourite\":true,\"tags\":[\"Old 雨\"],\"collections\":[{\"name\":\"Old\",\"start_ms\":10,\"end_ms\":20}]}]}");
+    const before = try db.selectsExport(allocator);
+    defer allocator.free(before);
+    var original = try std.json.parseFromSlice(selects.Document, allocator, before, .{});
+    defer original.deinit();
+    try std.testing.expect(main_c.ws_capabilities() & abi_c.WS_CAP_SELECTS_RENAME != 0);
+    try std.testing.expectEqual(@as(c_int, 0), main_c.ws_selects_rename_v1(abi_c.WS_SELECTS_TAG, "Old 雨", "New 東京"));
+    try std.testing.expectEqual(@as(c_int, 0), main_c.ws_selects_rename_v1(abi_c.WS_SELECTS_COLLECTION, "Old", "New"));
+    try db.selectsRename(.tag, "café", "Only NFC");
+    const after = try db.selectsExport(allocator);
+    defer allocator.free(after);
+    var document = try std.json.parseFromSlice(selects.Document, allocator, after, .{});
+    defer document.deinit();
+    try std.testing.expectEqual(@as(usize, 2), document.value.sources.len);
+    for (document.value.sources) |source| {
+        try std.testing.expect(source.favourite);
+        var retained_id = false;
+        for (original.value.sources) |old| if (std.mem.eql(u8, source.id.?, old.id.?)) {
+            retained_id = true;
+            try std.testing.expectEqualStrings(old.path, source.path);
+            try std.testing.expectEqual(old.file_id, source.file_id);
+            try std.testing.expectEqual(old.content_hash, source.content_hash);
+        };
+        try std.testing.expect(retained_id);
+        if (source.file_id != null) {
+            try std.testing.expectEqual(@as(usize, 3), source.tags.len);
+            try std.testing.expectEqualStrings("New 東京", source.tags[0]);
+            try std.testing.expectEqualStrings("Only NFC", source.tags[1]);
+            try std.testing.expectEqualStrings("cafe\u{301}", source.tags[2]);
+            try std.testing.expectEqual(@as(usize, 3), source.collections.len);
+            try std.testing.expectEqual(@as(?i64, null), source.collections[0].start_ms);
+            try std.testing.expectEqual(@as(?i64, 100), source.collections[1].start_ms);
+            try std.testing.expectEqual(@as(?i64, 500), source.collections[1].end_ms);
+            try std.testing.expectEqual(@as(?i64, 200), source.collections[2].start_ms);
+            try std.testing.expectEqual(@as(?i64, 600), source.collections[2].end_ms);
+        } else {
+            try std.testing.expectEqual(@as(usize, 1), source.tags.len);
+            try std.testing.expectEqualStrings("New 東京", source.tags[0]);
+            try std.testing.expectEqual(@as(?i64, 10), source.collections[0].start_ms);
+            try std.testing.expectEqual(@as(?i64, 20), source.collections[0].end_ms);
+        }
+        for (source.collections) |member| try std.testing.expectEqualStrings("New", member.name);
+    }
+    // Invalid edits and a failure between insertion/deletion must leave all data intact.
+    try std.testing.expectEqual(@as(c_int, -1), main_c.ws_selects_rename_v1(0, "New", "Other"));
+    try std.testing.expectEqual(@as(c_int, -1), main_c.ws_selects_rename_v1(99, "New", "Other"));
+    try std.testing.expectEqual(@as(c_int, -1), main_c.ws_selects_rename_v1(1, null, "Other"));
+    try std.testing.expectEqual(@as(c_int, -1), main_c.ws_selects_rename_v1(1, "New 東京", ""));
+    try std.testing.expectError(error.InvalidSelectsName, db.selectsRename(.tag, "New 東京", "a\x00b"));
+    try db.selectsRename(.tag, "New 東京", "New 東京");
+    try db.selectsRename(.tag, "absent", "unused");
+    try rawExec(fixture.db_path, "CREATE TRIGGER fail_rename BEFORE DELETE ON user_tags BEGIN SELECT RAISE(ABORT,'fixture'); END;");
+    try std.testing.expectError(error.SelectsReadFailed, db.selectsRename(.tag, "New 東京", "Rollback"));
+    try rawExec(fixture.db_path, "DROP TRIGGER fail_rename;");
+    const unchanged = try db.selectsExport(allocator);
+    defer allocator.free(unchanged);
+    try std.testing.expectEqualStrings(after, unchanged);
+    try std.testing.expectEqual(file.id, (try db.inspectFile("sound.wav")).?.id);
+    try std.testing.expectEqual(@as(u32, 0), (try db.integrityCheck(true)).errors_found);
+}
+
+test "longer annotation names roll back when the portable document budget would be exceeded" {
+    var fixture = try Fixture.init();
+    defer fixture.deinit();
+    try openFixture(&fixture);
+    // Each source fits export accounting, but replacing its one-byte tag by 128
+    // bytes would push the whole document over 16 MiB without adding any rows.
+    try rawExec(fixture.db_path, "WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<4096) INSERT INTO user_sources(id,path) SELECT printf('%032x',i),printf('%03488d',i) FROM n; INSERT INTO user_tags SELECT id,'a' FROM user_sources;");
+    const before = try db.selectsExport(allocator);
+    defer allocator.free(before);
+    const name: [128]u8 = @splat('x');
+    try std.testing.expectError(error.SelectsLimit, db.selectsRename(.tag, "a", &name));
+    const after = try db.selectsExport(allocator);
+    defer allocator.free(after);
+    try std.testing.expectEqualStrings(before, after);
+}
+
 test "removing saved references clears only their annotations and retains legacy seeding" {
     const selects = @import("selects.zig");
     var fixture = try Fixture.init();

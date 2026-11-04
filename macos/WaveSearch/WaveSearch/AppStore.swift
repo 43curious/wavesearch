@@ -458,7 +458,7 @@ final class AppStore: ObservableObject {
         }
     }
 
-    private func performSelects(_ operation: @escaping @Sendable () throws -> String) {
+    private func performSelects(onSuccess: @escaping @MainActor () -> Void = {}, _ operation: @escaping @Sendable () throws -> String) {
         guard canUseLibrary, !isEditingSelects else { return }
         isEditingSelects = true
         selectsRevision &+= 1
@@ -475,6 +475,7 @@ final class AppStore: ObservableObject {
             switch result {
             case .success(let (document, status)):
                 applySelects(document)
+                onSuccess()
                 selectsStatus = status
                 if selectsFilter != nil { refreshSearch() }
             case .failure(let error): selectsStatus = error.localizedDescription
@@ -488,6 +489,17 @@ final class AppStore: ObservableObject {
         performSelects {
             try PortableSelects.edit(file: Int32(file.id), kind: kind, name: name, range: range, enabled: enabled)
             return String(localized: "Saved in the catalog.")
+        }
+    }
+
+    func renameSelects(kind: UInt32, from oldName: String, to newName: String) {
+        performSelects(onSuccess: { [weak self] in
+            guard let self, let filter = self.selectsFilter, filter.kind == kind,
+                  filter.name.utf8.elementsEqual(oldName.utf8) else { return }
+            self.selectsFilter = SelectsFilter(kind: kind, name: newName)
+        }) {
+            try PortableSelects.rename(kind: kind, from: oldName, to: newName)
+            return String(localized: "Renamed in the catalog.")
         }
     }
 
