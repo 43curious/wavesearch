@@ -64,6 +64,15 @@ provide the selected artifact. Downloads use a pinned Hugging Face commit and
 ONNX Runtime 1.29.0, verify hardcoded SHA-256 values, stage on the destination
 filesystem, and atomically rename the completed installation.
 
+Native verification opens artifacts nonblocking and checks the opened target's
+type and size before hashing. Regular-file symlinks remain supported; pipes,
+devices and directories are rejected instead of waiting for stream data. A
+special file in an existing model bundle can therefore be repaired through the
+normal verified staging/atomic replacement path, retaining the old bundle.
+Chunked hashing still enforces byte limits if a file grows after opening.
+The privacy manifest declares app-container metadata access (`C617.1`) under
+Apple's [file metadata API reasons](https://developer.apple.com/documentation/bundleresources/app-privacy-configuration/nsprivacyaccessedapitypes/nsprivacyaccessedapitype).
+
 The current model/runtime disk sizes are approximately:
 
 - `audio.onnx`: 285,177,239 bytes (272 MiB)
@@ -78,7 +87,8 @@ See `THIRD_PARTY_NOTICES.md` before installing.
 fixtures and injected downloads; it never downloads models/runtime. It covers
 absent/corrupt/partial artifacts, network failure and retry, cancellation/drain,
 unsupported platforms, low-space rejection/retry and unknown-capacity handling,
-atomic repair with retained backups, CLI pin compatibility,
+regular symlinks, special-file rejection, atomic repair with retained backups,
+CLI pin compatibility,
 and lexical search after a real provider-load failure. It is included in
 `make check-macos-headless`. Like the lifecycle/policy/watcher scripts, it supports
 `WS_CORE_LIBRARY` and `WS_CORE_HEADERS` overrides.

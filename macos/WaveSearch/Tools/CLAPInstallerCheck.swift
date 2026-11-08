@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import CryptoKit
 import os
 import WaveSearchKit
@@ -10,7 +11,7 @@ private actor DownloadProbe {
 
 @main
 struct CLAPInstallerCheck {
-    static func sha(_ bytes: Data) -> String { SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined() }
+    nonisolated static func sha(_ bytes: Data) -> String { SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined() }
 
     @MainActor static func main() async throws {
         let fm = FileManager.default
@@ -182,6 +183,60 @@ struct CLAPInstallerCheck {
         precondition(script.contains("d4d4372c9894b975ec118589b4f4328103796e15"))
         try await lexicalFallback(base: base, runtime: root.appendingPathComponent(runtimePath))
         print("PASS: pinned CLI compatibility and lexical fallback after provider-load failure")
+        try await Task.detached { try await artifactFiles(base: base, installer: installer) }.value
+    }
+
+    nonisolated private static func artifactFiles(base: URL, installer: CLAPInstaller) async throws {
+        let fm = FileManager.default
+        let parent = base.appendingPathComponent("artifact-files")
+        try fm.createDirectory(at: parent, withIntermediateDirectories: true)
+        let regular = parent.appendingPathComponent("café.bin")
+        let bytes = Data("artifact bytes".utf8)
+        try bytes.write(to: regular)
+        let linked = parent.appendingPathComponent("linked.bin")
+        try fm.createSymbolicLink(at: linked, withDestinationURL: regular)
+        for url in [regular, linked] {
+            let (hash, count) = try CLAPInstaller.digest(url, maximumBytes: Int64(bytes.count))
+            precondition(hash == sha(bytes) && count == bytes.count)
+        }
+        do {
+            _ = try CLAPInstaller.digest(regular, maximumBytes: Int64(bytes.count - 1))
+            preconditionFailure("Oversized artifact accepted")
+        } catch let error as CLAPInstallFailure {
+            precondition(error.message == String(localized: "Artifact exceeds its pinned size limit: \(regular.lastPathComponent)"))
+        }
+        let pipe = parent.appendingPathComponent("pipe.bin")
+        precondition(pipe.path.withCString { mkfifo($0, 0o600) } == 0)
+        let linkedPipe = parent.appendingPathComponent("linked-pipe.bin")
+        try fm.createSymbolicLink(at: linkedPipe, withDestinationURL: pipe)
+        for url in [pipe, linkedPipe, parent, URL(fileURLWithPath: "/dev/null")] {
+            let rejected = OSAllocatedUnfairLock(initialState: false)
+            let completed = DispatchSemaphore(value: 0)
+            DispatchQueue.global().async {
+                defer { completed.signal() }
+                do { _ = try CLAPInstaller.digest(url, maximumBytes: 1024) }
+                catch let error as CLAPInstallFailure {
+                    rejected.withLock { $0 = error.message == String(localized: "Artifact is not a regular file: \(url.lastPathComponent)") }
+                } catch {}
+            }
+            precondition(completed.wait(timeout: .now() + 5) == .success, "Artifact verification blocked on a special file")
+            precondition(rejected.withLock { $0 })
+        }
+        let root = parent.appendingPathComponent("bundle")
+        try await installer.install(at: root) { _ in }
+        let model = root.appendingPathComponent("model/audio.onnx")
+        let original = try Data(contentsOf: model)
+        try fm.removeItem(at: model)
+        precondition(model.path.withCString { mkfifo($0, 0o600) } == 0)
+        try await installer.install(at: root) { _ in }
+        let repaired = try Data(contentsOf: model)
+        precondition(repaired == original)
+        let backups = try fm.contentsOfDirectory(at: parent, includingPropertiesForKeys: nil)
+            .filter { $0.lastPathComponent.hasPrefix("wavesearch-clap.previous-") }
+        precondition(backups.count == 1)
+        let retained = try backups[0].appendingPathComponent("model/audio.onnx").resourceValues(forKeys: [.isRegularFileKey])
+        precondition(retained.isRegularFile == false, "Repair must retain the previous special-file bundle")
+        print("PASS: artifact byte boundary, regular symlinks, nonblocking special-file rejection and atomic repair of a FIFO model")
     }
 
     nonisolated static func lexicalFallback(base: URL, runtime: URL) async throws {

@@ -186,6 +186,11 @@ changelog/agent documentation added afterward.
 
 ### Fixed
 
+- Semantic bundle verification rejects pipes, devices and directories before
+  hashing and checks known artifact sizes before reading. Runtime symlinks still
+  work; repairing a FIFO model uses verified atomic replacement and retains the
+  previous bundle instead of blocking verification or shutdown.
+
 - Selects failures now explain malformed/truncated JSON, duplicate fields,
   invalid source paths/identities and annotation errors in English and Spanish.
   Technical causes remain attached for diagnostics; rejected imports retain

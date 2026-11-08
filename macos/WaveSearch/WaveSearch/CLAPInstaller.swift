@@ -112,8 +112,24 @@ nonisolated struct CLAPInstaller: Sendable {
     }
 
     static func digest(_ url: URL, maximumBytes: Int64) throws -> (String, Int64) {
-        let file = try FileHandle(forReadingFrom: url)
+        try Task.checkCancellation()
+        let descriptor = try url.withUnsafeFileSystemRepresentation { path in
+            guard let path else { throw CocoaError(.fileReadInvalidFileName) }
+            return Darwin.open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC)
+        }
+        guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        let file = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
         defer { try? file.close() }
+        // Inspect the opened target: installed runtimes can be symlinks, while
+        // a FIFO must not wait for a writer during verification or shutdown.
+        var info = Darwin.stat()
+        guard Darwin.fstat(descriptor, &info) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        guard info.st_mode & S_IFMT == S_IFREG else {
+            throw CLAPInstallFailure(message: String(localized: "Artifact is not a regular file: \(url.lastPathComponent)"))
+        }
+        guard info.st_size <= maximumBytes else {
+            throw CLAPInstallFailure(message: String(localized: "Artifact exceeds its pinned size limit: \(url.lastPathComponent)"))
+        }
         var sha = SHA256()
         var count: Int64 = 0
         while let data = try file.read(upToCount: 1024 * 1024), !data.isEmpty {
