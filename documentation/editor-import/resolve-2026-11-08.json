@@ -1,0 +1,302 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-08",
+  "issue": 31,
+  "acceptance_kind": "native Resolve scripting API; GUI drag-and-drop not exercised",
+  "wavesearch_commit": "4a9c76f",
+  "editor": {
+    "name": "DaVinci Resolve Studio",
+    "version": "21.1.1.10",
+    "bundle_version": "21.1.1",
+    "bundle_build": "21.1.10010"
+  },
+  "host": {
+    "macos": "26.5.2",
+    "xcode": "26.6 (17F113)",
+    "zig": "0.17.0"
+  },
+  "fixture": {
+    "kind": "generated stereo bursts; no professional audio library",
+    "sample_rate": 48000,
+    "channels": 2,
+    "whole_source_frames": 192000,
+    "selected_source_range_frames": [
+      48000,
+      120000
+    ],
+    "source_sha256": {
+      "aiff": "e28838bcda5deeeca0039e543bf91a993737fc861014581a4f968812689dc834",
+      "m4a": "a3bf97dd25f78b85cf85939b5dfd1fc60deae0e6e4d566817ddd3ed3389fa0c2",
+      "wav": "ae3405f6623cddfa78e9a8450214e9b6fd504c4787da0ad55b03ff5fc27e982f"
+    }
+  },
+  "project": {
+    "timeline_fps": 24,
+    "sample_rate": 48000,
+    "audio_track_type": "stereo",
+    "editor_copy_policy": "linked supplied paths; no additional media copy observed"
+  },
+  "method": [
+    "Production audioImportURL generates the supplied URLs and finishes before Resolve import.",
+    "MediaPool.ImportMedia with file paths, then AppendToTimeline with mediaType=2.",
+    "Save, close and reopen the disposable project; verify all durations and resolved file identities.",
+    "Load Audio Only preset; render the reopened timeline as 48 kHz stereo PCM24 WAV.",
+    "Compare every rendered sample to original PCM16 scaled to PCM24, or frames 48000..120000 for trimmed cases.",
+    "Recheck original and supplied-payload SHA-256 values after rendering."
+  ],
+  "cases": [
+    {
+      "id": 1,
+      "source_format": "aiff",
+      "import_behavior": "keepInPlace",
+      "scope": "wholeFile",
+      "supplied_media": "original",
+      "duration_seconds": 4.0,
+      "source_start_seconds": 0.0,
+      "source_end_seconds": 4.0,
+      "audio": {
+        "Audio Bit Depth": "16",
+        "Audio Ch": "2",
+        "Audio Codec": "Linear PCM",
+        "Sample Rate": "48000"
+      },
+      "resolved_to_supplied_file": true,
+      "survived_project_reopen": true,
+      "render_max_error_lsb24": 0
+    },
+    {
+      "id": 2,
+      "source_format": "aiff",
+      "import_behavior": "keepInPlace",
+      "scope": "selectedRange",
+      "supplied_media": "original",
+      "duration_seconds": 4.0,
+      "source_start_seconds": 0.0,
+      "source_end_seconds": 4.0,
+      "audio": {
+        "Audio Bit Depth": "16",
+        "Audio Ch": "2",
+        "Audio Codec": "Linear PCM",
+        "Sample Rate": "48000"
+      },
+      "resolved_to_supplied_file": true,
+      "survived_project_reopen": true,
+      "render_max_error_lsb24": 0
+    },
+    {
+      "id": 3,
+      "source_format": "aiff",
+      "import_behavior": "copyToExports",
+      "scope": "wholeFile",
+      "supplied_media": "whole_export",
+      "duration_seconds": 4.0,
+      "source_start_seconds": 0.0,
+      "source_end_seconds": 4.0,
+      "audio": {
+        "Audio Bit Depth": "16",
+        "Audio Ch": "2",
+        "Audio Codec": "Linear PCM",
+        "Sample Rate": "48000"
+      },
+      "resolved_to_supplied_file": true,
+      "survived_project_reopen": true,
+      "render_max_error_lsb24": 0
+    },
+    {
+      "id": 4,
+      "source_format": "aiff",
+      "import_behavior": "copyToExports",
+      "scope": "selectedRange",
+      "supplied_media": "range_export",
+      "duration_seconds": 1.5,
+      "source_start_seconds": 0.0,
+      "source_end_seconds": 1.5,
+      "audio": {
+        "Audio Bit Depth": "24",
+        "Audio Ch": "2",
+        "Audio Codec": "Linear PCM",
+        "Sample Rate": "48000"
+      },
+      "resolved_to_supplied_file": true,
+      "survived_project_reopen": true,
+      "render_max_error_lsb24": 0
+    },
+    {
+      "id": 5,
+      "source_format": "m4a",
+      "import_behavior": "keepInPlace",
+      "scope": "wholeFile",
+      "supplied_media": "original",
+      "duration_seconds": 4.0,
+      "source_start_seconds": 0.0,
+      "source_end_seconds": 4.0,
+      "audio": {
+        "Audio Bit Depth": "16",
+        "Audio Ch": "2",
+        "Audio Codec": "Apple Lossless",
+        "Sample Rate": "48000"
+      },
+      "resolved_to_supplied_file": true,
+      "survived_project_reopen": true,
+      "render_max_error_lsb24": 0
+    },
+    {
+      "id": 6,
+      "source_format": "m4a",
+      "import_behavior": "keepInPlace",
+      "scope": "selectedRange",
+      "supplied_media": "original",
+      "duration_seconds": 4.0,
+      "source_start_seconds": 0.0,
+      "source_end_seconds": 4.0,
+      "audio": {
+        "Audio Bit Depth": "16",
+        "Audio Ch": "2",
+        "Audio Codec": "Apple Lossless",
+        "Sample Rate": "48000"
+      },
+      "resolved_to_supplied_file": true,
+      "survived_project_reopen": true,
+      "render_max_error_lsb24": 0
+    },
+    {
+      "id": 7,
+      "source_format": "m4a",
+      "import_behavior": "copyToExports",
+      "scope": "wholeFile",
+      "supplied_media": "whole_export",
+      "duration_seconds": 4.0,
+      "source_start_seconds": 0.0,
+      "source_end_seconds": 4.0,
+      "audio": {
+        "Audio Bit Depth": "16",
+        "Audio Ch": "2",
+        "Audio Codec": "Apple Lossless",
+        "Sample Rate": "48000"
+      },
+      "resolved_to_supplied_file": true,
+      "survived_project_reopen": true,
+      "render_max_error_lsb24": 0
+    },
+    {
+      "id": 8,
+      "source_format": "m4a",
+      "import_behavior": "copyToExports",
+      "scope": "selectedRange",
+      "supplied_media": "range_export",
+      "duration_seconds": 1.5,
+      "source_start_seconds": 0.0,
+      "source_end_seconds": 1.5,
+      "audio": {
+        "Audio Bit Depth": "24",
+        "Audio Ch": "2",
+        "Audio Codec": "Linear PCM",
+        "Sample Rate": "48000"
+      },
+      "resolved_to_supplied_file": true,
+      "survived_project_reopen": true,
+      "render_max_error_lsb24": 0
+    },
+    {
+      "id": 9,
+      "source_format": "wav",
+      "import_behavior": "keepInPlace",
+      "scope": "wholeFile",
+      "supplied_media": "original",
+      "duration_seconds": 4.0,
+      "source_start_seconds": 0.0,
+      "source_end_seconds": 4.0,
+      "audio": {
+        "Audio Bit Depth": "16",
+        "Audio Ch": "2",
+        "Audio Codec": "Linear PCM",
+        "Sample Rate": "48000"
+      },
+      "resolved_to_supplied_file": true,
+      "survived_project_reopen": true,
+      "render_max_error_lsb24": 0
+    },
+    {
+      "id": 10,
+      "source_format": "wav",
+      "import_behavior": "keepInPlace",
+      "scope": "selectedRange",
+      "supplied_media": "original",
+      "duration_seconds": 4.0,
+      "source_start_seconds": 0.0,
+      "source_end_seconds": 4.0,
+      "audio": {
+        "Audio Bit Depth": "16",
+        "Audio Ch": "2",
+        "Audio Codec": "Linear PCM",
+        "Sample Rate": "48000"
+      },
+      "resolved_to_supplied_file": true,
+      "survived_project_reopen": true,
+      "render_max_error_lsb24": 0
+    },
+    {
+      "id": 11,
+      "source_format": "wav",
+      "import_behavior": "copyToExports",
+      "scope": "wholeFile",
+      "supplied_media": "whole_export",
+      "duration_seconds": 4.0,
+      "source_start_seconds": 0.0,
+      "source_end_seconds": 4.0,
+      "audio": {
+        "Audio Bit Depth": "16",
+        "Audio Ch": "2",
+        "Audio Codec": "Linear PCM",
+        "Sample Rate": "48000"
+      },
+      "resolved_to_supplied_file": true,
+      "survived_project_reopen": true,
+      "render_max_error_lsb24": 0
+    },
+    {
+      "id": 12,
+      "source_format": "wav",
+      "import_behavior": "copyToExports",
+      "scope": "selectedRange",
+      "supplied_media": "range_export",
+      "duration_seconds": 1.5,
+      "source_start_seconds": 0.0,
+      "source_end_seconds": 1.5,
+      "audio": {
+        "Audio Bit Depth": "24",
+        "Audio Ch": "2",
+        "Audio Codec": "Linear PCM",
+        "Sample Rate": "48000"
+      },
+      "resolved_to_supplied_file": true,
+      "survived_project_reopen": true,
+      "render_max_error_lsb24": 0
+    }
+  ],
+  "render": {
+    "status": "Complete",
+    "preset": "Audio Only",
+    "codec": "pcm_s24le",
+    "sample_rate": 48000,
+    "channels": 2,
+    "frames": 1944000,
+    "seconds": 40.5,
+    "sha256": "53c06489bf3eeff766eea8ae87515a6b417486a23289b64f7dac080c08177838",
+    "exact_sample_match_all_cases": true,
+    "source_and_payload_checksums_verified": true
+  },
+  "limits": [
+    "No pointer drag or clipboard paste into Resolve was tested.",
+    "Producer helper exit was tested; an actual WaveSearch app quit was not tested.",
+    "No physical external/removable drive, permission prompt, unplug or offline-volume case was tested.",
+    "Logic, Pro Tools, REAPER and Premiere timeline imports remain unverified.",
+    "No audible playback or selection-preserving editor-native reference was tested."
+  ],
+  "cleanup": {
+    "disposable_project_removed": true,
+    "owned_persistent_exports_removed": 6,
+    "original_sources_retained_unchanged": true,
+    "raw_reports_and_native_render_retained_outside_repo": true
+  }
+}

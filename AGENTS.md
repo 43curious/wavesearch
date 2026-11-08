@@ -39,6 +39,7 @@ Read these references when touching the corresponding behavior:
 | Public C API, ownership, or host lifecycle | [C API contract](documentation/C_API.md) |
 | CI or build/check entry points | [Continuous integration](documentation/CI.md) |
 | Playback, waveforms, selected-range imports | [Audio preview](documentation/WAVEFORM_AND_AUDIO_PREVIEW.md); [algorithm](documentation/WAVEFORM_ALGORITHM.md); [cache](documentation/WAVEFORM_CACHE_V10.md) |
+| Native editor acceptance or import-fixture preparation | [Editor import acceptance](documentation/EDITOR_IMPORT_ACCEPTANCE.md) (opt-in helpers create persistent fixture exports) |
 | Search ranking, storage, or performance | [Search optimizations](documentation/SEARCH_OPTIMIZATION_RESULTS.md); [lexical vocabulary](documentation/LEXICAL_SEARCH.md); [benchmarks](BENCHMARKS.md) |
 | Audio metadata parsing or browsing headers | [Sparse metadata and cache identity](documentation/AUDIO_METADATA.md) |
 | Filesystem scans, watching, or file moves | [Reconciliation and move proofs](documentation/LIBRARY_RECONCILIATION.md); [Operations](OPERATIONS.md) |

@@ -12,6 +12,11 @@ changelog/agent documentation added afterward.
 
 ### Added
 
+- Opt-in editor payload preparation and exact rendered-sample checks accompany
+  a native Resolve 21.1.1 acceptance report: 12 WAV/AIFF/ALAC import-mode/range
+  cases retained their paths and durations after project reopening and rendered
+  correctly. Pointer drops, external drives and other editors remain unverified.
+
 - Spectrogram frequency and source-time axes label their endpoints and midpoints
   with aligned center guides. The English/Spanish accessibility summary explains
   the linear frequency direction and amplitude scale.

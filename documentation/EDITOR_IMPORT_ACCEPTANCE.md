@@ -1,27 +1,55 @@
 # Native editor import acceptance
 
 [Issue #31](https://github.com/43curious/wavesearch/issues/31) remains open for
-actual timeline acceptance. The file-URL/PCM24 lifecycle checks establish payload
-and byte correctness. They do not establish that an editor imported a clip.
+drag-and-drop, external-drive and cross-editor acceptance. The file-URL/PCM24
+lifecycle checks establish payload and byte correctness. The scripted Resolve
+run below additionally establishes native timeline import and decoded output.
 Use disposable catalogs/projects; real-library search acceptance remains
 [separately deferred](REAL_LIBRARY_ACCEPTANCE.md).
 
 ## Current evidence
 
-Inventory on 2026-10-21, read from installed application Info.plists:
+Inventory on 2026-11-08, read from installed application Info.plists:
 
 | Editor | Installed version/build | Native timeline result |
 | --- | --- | --- |
-| Logic Pro Creator Studio | 12.4 / 6707 | Unverified; desktop unavailable |
-| DaVinci Resolve | 21.1.1 / 21.1.10010 | Unverified; desktop unavailable |
+| Logic Pro Creator Studio | 13.0 / 7801 | Unverified; not run |
+| DaVinci Resolve Studio | 21.1.1 / 21.1.10010 | 12 scripted timeline cases and reopened-project render passed; pointer drops unverified |
 | Pro Tools | Not found in standard application locations | Unverified |
 | REAPER | Not found in standard application locations | Unverified |
 | Premiere Pro | Not found in standard application locations | Unverified |
 
-The window check exits 2 before interaction because this session has no
-accessible logged-in desktop/active display. No editor was launched or personal
-project changed. External drives, native compressed-codec import and persistence
-after quitting WaveSearch remain unverified.
+The macOS window and Settings checks now pass in this host's desktop session.
+The earlier October run lacked a desktop. The November Resolve run used a new,
+disposable project; no existing project was edited. Physical external drives,
+other editors, audible playback and an actual WaveSearch app quit remain unverified.
+
+### Scripted Resolve acceptance, 2026-11-08
+
+The [machine-readable report](editor-import/resolve-2026-11-08.json) records all
+12 combinations of WAV/AIFF/lossless ALAC, both import preferences and
+whole/selected scopes. A separate Swift producer called the production
+`audioImportURL` and exited before native import. Resolve's `MediaPool.ImportMedia`
+and `AppendToTimeline` (`mediaType: 2`) placed each payload on a stereo track in
+a 24 fps / 48 kHz project. Supplied and observed media paths identified the same
+files; Resolve did not make an additional copy. Compare filesystem identity
+rather than Unicode path spelling: this run preserved the same files despite
+NFC/NFD differences in the returned paths.
+
+Every whole-file case, including selected ranges under **Keep the files in
+place**, occupied 4 seconds. Each selected **Copy files to Exports** case occupied
+1.5 seconds with the correct source material. All 12 paths and durations survived
+saving, closing and reopening the project after the producer had exited.
+
+Resolve then rendered the reopened 40.5-second timeline as stereo PCM24 at
+48 kHz. All 1,944,000 frames matched the expected PCM16 source samples scaled
+to PCM24 exactly in both channels, including the two middle bursts in trimmed
+cases. Original and supplied-media SHA-256 values remained unchanged. This is
+native decoding/render acceptance; pointer delivery, clipboard paste, audible
+playback, actual app quit and physical external storage are separate checks.
+After recording the results, the disposable project and its owned fixture
+exports were removed. Original sources and raw reports/rendered audio were
+retained outside the repository.
 
 ## Prepare a reproducible run
 
@@ -41,10 +69,49 @@ versions and unverified cases for both import modes, whole/selected scopes and
 internal/external storage. Missing editors are still unverified, not passed.
 Only the requested fixture directory is written.
 
-The preparation run on this host generated WAV/AIFF and 80 unverified cases;
-independent `ffprobe` inspection confirmed both sources as stereo PCM16, 48 kHz,
-4.000 seconds. Native ALAC generation was unavailable. These are synthetic fixture
-checks, not a successful editor import or professional-library validation.
+The November preparation run generated WAV/AIFF/ALAC and 120 initially unverified
+cases. The earlier October run generated WAV/AIFF and 80 cases because ALAC
+conversion was unavailable then. Fixture generation alone is not an editor pass
+or professional-library validation.
+
+To prepare the actual production import URLs, build the core and run the opt-in
+helper once on those fixtures:
+
+```bash
+make core
+bash scripts/prepare-editor-import-payloads.sh /tmp/wavesearch-editor-run
+```
+
+It compiles the app's import code, verifies source/whole-copy bytes and range
+frame counts, and writes `payloads.json`. The helper creates persistent fixture
+media in WaveSearch's Exports directory; it does not install models or start the
+app. It refuses an existing `payloads.json`. This helper is outside normal checks
+because editor acceptance must be deliberate and completed exports persist.
+
+For a scripted Resolve reproduction, start from an empty project manager or an
+empty Untitled Project. Create a uniquely named `WaveSearchInterop-…` project;
+never switch away from existing work. Verify 24 fps and a 48 kHz project sample
+rate before adding media. Iterate `payloads.json` in order: use
+`pool.ImportMedia([case["path"]])` followed by
+`pool.AppendToTimeline([{"mediaPoolItem": clip, "mediaType": 2}])`. Assert each
+duration, channel count, sample rate and resolved file identity. Save, close and
+reopen that project, then repeat the assertions.
+
+Before rendering, load the built-in **Audio Only** preset. Set whole-timeline
+export with video disabled, audio enabled, `AudioFormat: "wav"`,
+`AudioCodec: "lpcm"`, `AudioBitDepth: 24`, `AudioSampleRate: 48000`, and an owned
+fixture output directory/name. Add/start the job and require **Complete**, then
+check its output (Python 3.12+ handles Resolve's extensible WAV header):
+
+```bash
+python3.14 scripts/check-editor-import-render.py \
+  --fixture /tmp/wavesearch-editor-run --render /path/to/native-render.wav
+```
+
+The checker compares every sample, source/payload checksums and the complete
+timeline length, writing `render-analysis.json`. A producer URL or persisted
+project metadata alone is insufficient for this render check. Preserve the raw
+run artifacts outside the repo; the checked-in report omits personal paths.
 
 ## Manual matrix
 
