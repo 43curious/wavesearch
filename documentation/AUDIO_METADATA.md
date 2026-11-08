@@ -22,8 +22,9 @@ The parser handles RIFF/RIFX WAV `bext`, `iXML`, `_PMX`, and `LIST/INFO` chunks
 before or after PCM. BWF text fields are read separately from binary
 time-reference/version/UMID data; coding history is searchable when present.
 `iXML`/XMP character data preserves valid UTF-8, including numeric entities and
-CDATA. Tag names, attributes, comments, declarations and external entity content
-are excluded. Unknown/private XML element values remain searchable. There is no
+CDATA. Tag names, namespace declarations, unrecognized attributes, comments,
+declarations and external entity content are excluded. Unknown/private XML
+element values remain searchable. There is no
 DTD expansion or external-resource access, and nesting is capped at 32 levels.
 This is a bounded text extractor, not a validating XML implementation. Invalid
 UTF-8 bytes separate words. BOM-identified UTF-16LE/BE XML is decoded before
@@ -40,6 +41,15 @@ BWF description, LIST `INAM`/`ICMT`/`ISBJ`/`IKEY`, and XML
 `DESCRIPTION`/`BWF_DESCRIPTION`/`NOTE`/`NOTES`/`COMMENT`/`TITLE`/`SUBJECT`/`KEYWORDS`
 also populate the separate descriptive field (including descendants and
 namespace-qualified tags). All extracted text remains in general search text.
+The same curated descriptive local names, plus `LOGCOMMENT`, are recognized in
+quoted attribute values, including self-closing RDF nodes and UTF-16 payloads.
+Namespace prefixes do not change that field recognition; namespace declarations
+and unrelated attributes remain excluded. Entity decoding follows the same
+bounded character-data rules, without external expansion. Malformed attribute
+syntax marks the result limited while later readable elements remain usable.
+This handles RDF's [property attribute form](https://www.w3.org/TR/REC-rdf-syntax/#section-Syntax-property-attributes)
+and Adobe's [Dynamic Media log comments](https://developer.adobe.com/xmp/docs/xmp-namespaces/xmp-dm/);
+it does not validate XML namespace bindings or the complete XMP data model.
 The third FTS column has BM25 weight 2 alongside general text/name weights 1.
 Exact filenames and filename prefixes retain the existing higher ranking classes.
 This is a modest field preference, not held-out real-library relevance evidence.
@@ -131,15 +141,11 @@ zig build optimization-bench -Doptimize=safe -- metadata-scan /tmp/ws-metadata.s
 
 The Swift watcher check also exercises real indexed metadata, proves zero native
 inspections for a catalog hit, forces fallback after a physical source change,
-and resumes catalog use after re-indexing. Validation passed 122 core tests (two
-optional skips), the mutation/C ABI checks, Linux compilation, watcher/metadata,
-installer and refinement-policy scripts, and strict Swift app compilation with
-warnings treated as errors. Full `make check` stops at this host's Xcode runtime
-abort. Subsequent diagnosis traced the recorded autoplay assertion to absent
-native audio output. The full lifecycle script now passes with controlled playback
-and explicit native-service skips; see
+and resumes catalog use after re-indexing. `make check` now passes the app build,
+core, headless and native window/Settings checks in this host's desktop session.
+Earlier Xcode/audio-service failures are recorded in
 [host capability validation](CI.md#local-reproduction).
-Desktop interaction and real-library browsing latency remain unverified; the
+Native Linux execution and real-library browsing latency remain unverified; the
 [real-library acceptance task](REAL_LIBRARY_ACCEPTANCE.md) is deferred until Jon
 provides a corpus.
 
@@ -218,6 +224,9 @@ scans resume metadata reuse. Extraction version 4 similarly refreshes older XML
 records once to recover UTF-16 descriptions. Existing source IDs and analysis
 remain available. Extraction version 5 refreshes previously skipped grouped/DLI
 ID3 text on the next scan, retaining the same identity and analysis rules.
+Extraction version 6 refreshes older rows once to recover descriptive XML
+attributes and `LOGCOMMENT` values. This also retains IDs and existing analysis,
+without changing the schema or source audio.
 
 Fixtures cover 6 MiB artwork preceding text, duplicate/missing/malformed fields,
 Unicode/UTF-16, Ogg page continuation, cancellation, vendor keys, recognized and

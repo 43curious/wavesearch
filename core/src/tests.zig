@@ -3951,7 +3951,7 @@ test "UTF-16 XML rejects incomplete code units and invalid surrogate pairs withi
 test "UTF-16 WAV XML indexes Unicode descriptions without exposing markup or external entities" {
     var fixture = try Fixture.init();
     defer fixture.deinit();
-    const xml = "<?xml version='1.0' encoding='UTF-16'?><!DOCTYPE x [<!ENTITY hidden SYSTEM 'file:///not-opened'>]><BWFXML attr='attributejunk'><NOTE>explosi&#xF3;n café <![CDATA[東京 🌊]]> &hidden;</NOTE><PRIVATE>privatevalue</PRIVATE></BWFXML>";
+    const xml = "<?xml version='1.0' encoding='UTF-16'?><!DOCTYPE x [<!ENTITY hidden SYSTEM 'file:///not-opened'>]><BWFXML attr='attributejunk' dm:logComment='attributeriver'><NOTE>explosi&#xF3;n café <![CDATA[東京 🌊]]> &hidden;</NOTE><PRIVATE>privatevalue</PRIVATE></BWFXML>";
     const units = try std.unicode.utf8ToUtf16LeAlloc(allocator, xml);
     defer allocator.free(units);
     for ([_]std.builtin.Endian{ .little, .big }) |endian| {
@@ -3970,6 +3970,7 @@ test "UTF-16 WAV XML indexes Unicode descriptions without exposing markup or ext
         defer description.deinit(allocator);
         try std.testing.expect(!try @import("wav_metadata.zig").read(allocator, &all, &description, reader, 256 * 1024, null));
         try std.testing.expect(std.mem.indexOf(u8, description.items, "explosión café 東京 🌊") != null);
+        try std.testing.expect(std.mem.indexOf(u8, description.items, "attributeriver") != null);
         try std.testing.expect(std.mem.indexOf(u8, all.items, "privatevalue") != null);
         for ([_][]const u8{ "attributejunk", "not opened", "hidden", "bwFXML" }) |noise|
             try std.testing.expect(std.mem.indexOf(u8, all.items, noise) == null);
@@ -3985,6 +3986,44 @@ test "UTF-16 WAV XML indexes Unicode descriptions without exposing markup or ext
     try search.indexFolderWithOptions(allocator, 1, fixture.root, .{ .fast = true });
     try std.testing.expectEqual(original.id, (try db.inspectFile("little.wav")).?.id);
     try std.testing.expectEqual(@as(usize, 2), try search.search(allocator, "explosión 東京", null, &rows, rows.len));
+}
+
+test "XMP descriptive attributes refresh previous extraction rows while retaining IDs and analysis" {
+    var fixture = try Fixture.init();
+    defer fixture.deinit();
+    const xml = "<x:xmpmeta xmlns:x='adobe:ns:meta/'><rdf:RDF xmlns:rdf='http://www.w3.org/1999/02/22-rdf-syntax-ns#'><rdf:Description xmlns:dc='http://purl.org/dc/elements/1.1/' xmlns:dm='http://ns.adobe.com/xmp/1.0/DynamicMedia/' xmlns:NOTE='https://example.invalid/namespacejunk' dc:title='río caf&#233;' dm:logComment=\"marea suave 東京 &#x1F30A;\" private='attributejunk' rdf:about='resourcejunk'/></rdf:RDF></x:xmpmeta>";
+    var bytes: std.ArrayList(u8) = .empty;
+    defer bytes.deinit(allocator);
+    try bytes.appendSlice(allocator, "RIFF\x00\x00\x00\x00WAVE");
+    try appendMetadataChunk(&bytes, "fmt ", &.{ 1, 0, 1, 0, 0x40, 0x1f, 0, 0, 0x80, 0x3e, 0, 0, 2, 0, 16, 0 });
+    const pcm = try allocator.alloc(u8, 16000);
+    defer allocator.free(pcm);
+    @memset(pcm, 0);
+    try appendMetadataChunk(&bytes, "data", pcm);
+    try appendMetadataChunk(&bytes, "_PMX", xml);
+    std.mem.writeInt(u32, bytes.items[4..8], @intCast(bytes.items.len - 8), .little);
+    try fixture.tmp.dir.writeFile(io, .{ .sub_path = "opaque.wav", .data = bytes.items });
+    try openFixture(&fixture);
+    try search.indexFolderWithOptions(allocator, 1, fixture.root, .{ .fast = true });
+    var rows: [4]main_c.WSResult = undefined;
+    try std.testing.expectEqual(@as(usize, 1), try search.search(allocator, "café marea 東京", null, &rows, rows.len));
+    for ([_][]const u8{ "namespacejunk", "attributejunk", "resourcejunk" }) |noise|
+        try std.testing.expectEqual(@as(usize, 0), try search.search(allocator, noise, null, &rows, rows.len));
+    const old = (try db.inspectFile("opaque.wav")).?;
+    _ = try db.setSemanticModel("xmp-attributes", 2);
+    try db.upsertSemanticEmbedding(allocator, @intCast(old.id), old.content_hash, &.{ 1, 0 });
+    db.close();
+    try rawExec(fixture.db_path, "UPDATE file_audio_metadata SET extraction_version=5; UPDATE files SET search_text=name,description='';");
+    try openFixture(&fixture);
+    try search.indexFolderWithOptions(allocator, 1, fixture.root, .{ .fast = true });
+    try std.testing.expectEqual(old.id, (try db.inspectFile("opaque.wav")).?.id);
+    try std.testing.expectEqual(@as(i64, 1), (try db.semanticStatus()).embedded_count);
+    try std.testing.expectEqual(@as(usize, 1), try search.search(allocator, "café marea 東京", null, &rows, rows.len));
+    try std.testing.expectEqual(@as(u32, 8000), (try db.fileMetadata(@intCast(old.id))).?.sample_rate);
+    try std.testing.expectEqual(@as(u32, 0), (try db.integrityCheck(true)).errors_found);
+    const after = try fixture.tmp.dir.readFileAlloc(io, "opaque.wav", allocator, .limited(bytes.items.len + 1));
+    defer allocator.free(after);
+    try std.testing.expectEqualSlices(u8, bytes.items, after);
 }
 
 test "structured sparse metadata preserves Unicode entities and private values without markup noise" {

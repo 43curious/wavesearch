@@ -186,6 +186,11 @@ changelog/agent documentation added afterward.
 
 ### Fixed
 
+- WAV XML indexing now reads quoted descriptive attributes, including XMP
+  `logComment`, with Unicode/entity handling and existing metadata bounds.
+  Namespace declarations and unrelated attributes remain excluded. Older rows
+  refresh once on scan while retaining IDs and analysis.
+
 - Semantic bundle verification rejects pipes, devices and directories before
   hashing and checks known artifact sizes before reading. Runtime symlinks still
   work; repairing a FIFO model uses verified atomic replacement and retains the

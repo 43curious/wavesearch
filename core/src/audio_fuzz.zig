@@ -162,7 +162,7 @@ fn makeSeed(out: []u8, kind: usize) usize {
         @memcpy(out[0..4], "RIFF");
         @memcpy(out[8..12], "WAVE");
         var pos: usize = 12;
-        const units = std.unicode.utf8ToUtf16LeStringLiteral("<?xml version='1.0' encoding='UTF-16'?><BWFXML><NOTE>café 東京 🌊</NOTE></BWFXML>");
+        const units = std.unicode.utf8ToUtf16LeStringLiteral("<?xml version='1.0' encoding='UTF-16'?><BWFXML xmlns:NOTE='https://example.invalid/artwork' dm:logComment='caf&#233; 東京 🌊'><NOTE>rain</NOTE></BWFXML>");
         var payload: [512]u8 = undefined;
         const endian: std.builtin.Endian = if (kind == 25) .little else .big;
         std.mem.writeInt(u16, payload[0..2], 0xfeff, endian);
@@ -219,7 +219,7 @@ fn makeSeed(out: []u8, kind: usize) usize {
         if (kind == 9) std.mem.writeInt(u32, pcm[0..4], 0x7fc00000, endian);
         chunk(out, &pos, "data", pcm[0 .. bits / 4], endian);
         chunk(out, &pos, "bext", "door\x00hit\xff", endian);
-        chunk(out, &pos, "iXML", "<BWFXML><NOTE>golpe 日本語</NOTE></BWFXML>", endian);
+        chunk(out, &pos, "iXML", "<BWFXML dm:logComment='caf&#233;'><NOTE>golpe 日本語</NOTE></BWFXML>", endian);
         chunk(out, &pos, "_PMX", "\x00\xff<> & hostile", endian);
         chunk(out, &pos, "LIST", "INFOINAM\x05\x00\x00\x00swish\x00", endian);
     }

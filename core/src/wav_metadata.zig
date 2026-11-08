@@ -112,7 +112,7 @@ pub fn clean(allocator: std.mem.Allocator, out: *std.ArrayList(u8), bytes: []con
 
 fn descriptive(name: []const u8) bool {
     const local = if (std.mem.lastIndexOfScalar(u8, name, ':')) |i| name[i + 1 ..] else name;
-    for ([_][]const u8{ "DESCRIPTION", "BWF_DESCRIPTION", "NOTE", "NOTES", "COMMENT", "TITLE", "SUBJECT", "KEYWORDS", "FXNAME", "ASWG_FXNAME", "SM_DESCRIPTION" }) |key| if (std.ascii.eqlIgnoreCase(local, key)) return true;
+    for ([_][]const u8{ "DESCRIPTION", "BWF_DESCRIPTION", "NOTE", "NOTES", "COMMENT", "LOGCOMMENT", "TITLE", "SUBJECT", "KEYWORDS", "FXNAME", "ASWG_FXNAME", "SM_DESCRIPTION" }) |key| if (std.ascii.eqlIgnoreCase(local, key)) return true;
     return false;
 }
 
@@ -148,12 +148,14 @@ fn encodedXml(allocator: std.mem.Allocator, all: *std.ArrayList(u8), description
     return xml(allocator, all, description, decoded.items);
 }
 
-// A bounded character-data extractor, not an XML validator. No DTD/entity
-// expansion, tag/attribute indexing or external resource access is performed.
+// A bounded text extractor, not an XML validator. Only recognized descriptive
+// attribute values join character data; markup and namespace declarations stay
+// out of search. No DTD expansion or external resource access is performed.
 fn xml(allocator: std.mem.Allocator, all: *std.ArrayList(u8), description: *std.ArrayList(u8), bytes: []const u8) !bool {
     var stack: [32]bool = undefined;
     var depth: usize = 0;
     var pos: usize = 0;
+    var limited = false;
     while (pos < bytes.len) {
         try query.check();
         if (bytes[pos] != '<') {
@@ -195,16 +197,43 @@ fn xml(allocator: std.mem.Allocator, all: *std.ArrayList(u8), description: *std.
             if (depth == 0) return true;
             depth -= 1;
         } else if (tag.len > 0 and tag[0] != '?' and tag[0] != '!') {
+            const name_end = std.mem.indexOfAny(u8, tag, " \t\r\n/") orelse tag.len;
+            limited = (try attributes(allocator, all, description, tag[name_end..])) or limited;
             if (!std.mem.endsWith(u8, tag, "/")) {
                 if (depth == stack.len) return true;
-                const name_end = std.mem.indexOfAny(u8, tag, " \t\r\n/") orelse tag.len;
                 stack[depth] = (depth > 0 and stack[depth - 1]) or descriptive(tag[0..name_end]);
                 depth += 1;
             }
         }
         pos = end + 1;
     }
-    return depth != 0;
+    return limited or depth != 0;
+}
+
+fn attributes(allocator: std.mem.Allocator, all: *std.ArrayList(u8), description: *std.ArrayList(u8), bytes: []const u8) !bool {
+    var rest = bytes;
+    while (true) {
+        try query.check();
+        rest = std.mem.trimStart(u8, rest, " \t\r\n");
+        if (rest.len == 0 or std.mem.eql(u8, rest, "/")) return false;
+        const name_end = std.mem.indexOfAny(u8, rest, "= \t\r\n/") orelse return true;
+        if (name_end == 0) return true;
+        const name = rest[0..name_end];
+        rest = std.mem.trimStart(u8, rest[name_end..], " \t\r\n");
+        if (rest.len == 0 or rest[0] != '=') return true;
+        rest = std.mem.trimStart(u8, rest[1..], " \t\r\n");
+        if (rest.len == 0 or (rest[0] != '\'' and rest[0] != '"')) return true;
+        const quote = rest[0];
+        rest = rest[1..];
+        const end = std.mem.indexOfScalar(u8, rest, quote) orelse return true;
+        const prefix_end = std.mem.indexOfScalar(u8, name, ':') orelse name.len;
+        if (!std.ascii.eqlIgnoreCase(name[0..prefix_end], "xmlns") and descriptive(name)) {
+            try characterData(allocator, all, rest[0..end], true);
+            try characterData(allocator, description, rest[0..end], true);
+        }
+        rest = rest[end + 1 ..];
+        if (rest.len > 0 and std.mem.indexOfScalar(u8, " \t\r\n/", rest[0]) == null) return true;
+    }
 }
 
 fn characterData(allocator: std.mem.Allocator, out: *std.ArrayList(u8), bytes: []const u8, entities: bool) !void {
@@ -257,4 +286,23 @@ test "XML extraction bounds nesting and entities and preserves valid character d
     var deep: [128]u8 = undefined;
     for (0..32) |i| @memcpy(deep[i * 4 ..][0..4], "<xx>");
     try std.testing.expect(try xml(allocator, &all, &description, &deep));
+}
+
+test "descriptive XML attributes preserve entities and Unicode without indexing namespace or quoted decoys" {
+    const a = std.testing.allocator;
+    var all: std.ArrayList(u8) = .empty;
+    defer all.deinit(a);
+    var description: std.ArrayList(u8) = .empty;
+    defer description.deinit(a);
+    const text = "<!DOCTYPE r [<!ENTITY hidden SYSTEM 'file:///not-opened'>]><r xmlns:TITLE='namespacejunk' dc:title = 'caf&#233; &amp; lluvia' private=\"dc:title='quotedjunk'\"><item dm:logComment=\"東京 &lt;sea&gt; &#x1F30A; &hidden;\"/><NOTE>tail</NOTE><PRIVATE>privateword</PRIVATE></r>";
+    try std.testing.expect(!try xml(a, &all, &description, text));
+    try std.testing.expectEqualStrings("café lluvia 東京 sea 🌊 tail privateword", all.items);
+    try std.testing.expectEqualStrings("café lluvia 東京 sea 🌊 tail", description.items);
+    for ([_][]const u8{ "<r TITLE=unquoted><NOTE>survives</NOTE></r>", "<r invalid><NOTE>survives</NOTE></r>", "<r TITLE='first'NOTE='decoy'><NOTE>survives</NOTE></r>" }) |malformed| {
+        all.clearRetainingCapacity();
+        description.clearRetainingCapacity();
+        try std.testing.expect(try xml(a, &all, &description, malformed));
+        try std.testing.expect(std.mem.endsWith(u8, description.items, "survives"));
+        try std.testing.expect(std.mem.indexOf(u8, all.items, "decoy") == null);
+    }
 }

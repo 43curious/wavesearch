@@ -84,7 +84,8 @@ against the implementation before relying on them.
 - Keep optional model/runtime downloads explicit and opt-in. Normal builds and
   tests must work without installing models. The native installer owns and drains
   its network/staging task at shutdown; verify before atomic activation and
-  retain the previous bundle when repairing. See [model setup](core/models/README.md).
+  retain the previous bundle when repairing. Use nonblocking opens and descriptor
+  type checks for native artifact hashing. See [model setup](core/models/README.md).
 - Keep temporary preview ranges in `PlayerController` so waveform selection,
   keyboard marks, auditioning, and selected-range exports share the same bounds.
 - Scope bare preview/navigation keys to results focus. Preserve text editing
