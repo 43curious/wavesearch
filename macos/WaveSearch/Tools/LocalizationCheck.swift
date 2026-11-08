@@ -1,8 +1,9 @@
 import Foundation
+import WaveSearchKit
 
 @main
 struct LocalizationCheck {
-    static func main() throws {
+    static func main() async throws {
         let spanish = CommandLine.arguments.contains("--spanish")
         precondition(Bundle.main.preferredLocalizations.first == (spanish ? "es" : "en"))
         precondition(RefinementMode.fastOnly.title == (spanish ? "Solo rápido" : "Fast only"))
@@ -46,6 +47,52 @@ struct LocalizationCheck {
         precondition(search == (spanish ? "Busca en nombres y metadatos o introduce un filtro de duración" : "Search filenames and metadata, or enter a duration filter"))
         let help = Bundle.main.localizedString(forKey: "Preview keys work while results have focus. Press Esc in search to focus results; press Esc again or ⌘K to return to search. Tab and Shift–Tab move between controls; arrows adjust the focused control.", value: nil, table: nil)
         precondition(help.contains("⌘K") && help.contains(spanish ? "Mayús–Tab" : "Shift–Tab"))
+        try await Task.detached { try selectsErrors(spanish: spanish) }.value
         print("PASS: \(spanish ? "Spanish" : "English") native resources, plurals, large counts, timing, errors and stable domain keys; duration=\(LocalizedText.duration(125))")
+    }
+
+    nonisolated private static func selectsErrors(spanish: Bool) throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("wavesearch-localized-selects-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        precondition(root.appendingPathComponent("catalog.sqlite").path.withCString { ws_init($0) } == 0)
+        defer { ws_deinit() }
+        _ = try PortableSelects.importData(Data(#"{"version":1,"sources":[{"path":"/synthetic/café.wav","favourite":true,"tags":["Before"]}]}"#.utf8))
+        let before = try PortableSelects.exportData()
+        let invalidDocument = spanish ? "Este no es un documento de selecciones de WaveSearch válido." : "This is not a valid WaveSearch selects document."
+        let invalidIdentity = spanish ? "Este documento de selecciones contiene una identidad de origen no válida." : "This selects document contains an invalid source identity."
+        func document(_ source: [String: Any]) throws -> Data {
+            try JSONSerialization.data(withJSONObject: ["version": 1, "sources": [source]])
+        }
+        let cases: [(Data, String, String)] = [
+            (Data(#"{"version":1,"sources":["#.utf8), "UnexpectedEndOfInput", invalidDocument),
+            (Data(#"{"version":1,"version":1,"sources":[]}"#.utf8), "DuplicateField", invalidDocument),
+            (Data(#"{"version":1,"sources":[{"path":"\q"}]}"#.utf8), "SyntaxError", invalidDocument),
+            (Data(#"{"version":1.5,"sources":[]}"#.utf8), "InvalidNumber", invalidDocument),
+            (try document(["path": ""]), "InvalidSelectsPath", spanish ? "Este documento de selecciones contiene una ruta de origen no válida." : "This selects document contains an invalid source path."),
+            (try document(["path": "/synthetic.wav", "id": "bad"]), "InvalidSelectsID", invalidIdentity),
+            (try document(["path": "/synthetic.wav", "file_size": -2]), "InvalidSelectsIdentity", invalidIdentity),
+            (try document(["path": String(repeating: "x", count: 4097)]), "ValueTooLong", spanish ? "Se supera el límite admitido para el documento o las anotaciones." : "This exceeds the supported document or annotation limit."),
+        ]
+        for (data, diagnostic, message) in cases {
+            do {
+                _ = try PortableSelects.importData(data)
+                preconditionFailure("Invalid selects document was accepted")
+            } catch {
+                let error = error as NSError
+                precondition(error.localizedDescription == message, "Unexpected localized selects error: \(error.localizedDescription)")
+                let underlying = error.userInfo[NSUnderlyingErrorKey] as? NSError
+                precondition(underlying?.localizedDescription == diagnostic, "The core diagnostic must remain available")
+            }
+            let after = try PortableSelects.exportData()
+            precondition(after == before, "A rejected import changed saved annotations")
+        }
+        do {
+            try PortableSelects.edit(file: -1, kind: UInt32(WS_SELECTS_TAG), name: "bad\0name", range: nil, enabled: true)
+            preconditionFailure("NUL in a tag name was accepted")
+        } catch {
+            precondition(error.localizedDescription == (spanish ? "Usa un nombre de etiqueta o colección más corto y no vacío." : "Use a shorter, non-empty tag or collection name."))
+        }
+        print("PASS: localized selects JSON failures, retained core diagnostics and unchanged annotations")
     }
 }

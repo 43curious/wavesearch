@@ -451,3 +451,7 @@
 "This saved reference no longer exists. Refresh the list and try again." = "Esta referencia guardada ya no existe. Actualiza la lista e inténtalo de nuevo.";
 "Choose a JSON document stored as a regular file." = "Elige un documento JSON guardado como archivo normal.";
 "Remove all tags, collection ranges and favourite status for %@? The indexed sound and audio file stay in place. Importing an older JSON export can restore these annotations." = "¿Eliminar todas las etiquetas, los rangos de colecciones y el estado de favorito de %@? El sonido indexado y el archivo de audio permanecen en su ubicación. Importar una exportación JSON anterior puede restaurar estas anotaciones.";
+"This selects document contains an invalid source path." = "Este documento de selecciones contiene una ruta de origen no válida.";
+"This selects document contains an invalid source identity." = "Este documento de selecciones contiene una identidad de origen no válida.";
+"This sound is no longer in the catalog. Refresh the list and try again." = "Este sonido ya no está en el catálogo. Actualiza la lista e inténtalo de nuevo.";
+"This saved reference is already linked to a sound. Refresh the list and try again." = "Esta referencia guardada ya está vinculada a un sonido. Actualiza la lista e inténtalo de nuevo.";

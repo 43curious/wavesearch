@@ -15,6 +15,13 @@ language; the host's explanatory UI and recovery instructions are translated.
 Interface localization is separate from bilingual lexical relevance and CLAP
 language capabilities.
 
+Selects import errors translate malformed/truncated JSON, duplicate fields,
+invalid source paths/identities and size limits before publication. Unexpected
+core failures also have a translated summary; the original core diagnostic is
+retained as the NSError's underlying error for inspection. Rejected documents
+leave existing annotations intact. Native checks exercise the real core import
+path in each language using a disposable catalog.
+
 `LocalizedText` uses native `.stringsdict` plural rules for files, discovered
 files, sounds, loaded sounds, matches and channels. Its second format argument
 contains the locale-grouped number. Both plural forms must retain `%2$@`; the

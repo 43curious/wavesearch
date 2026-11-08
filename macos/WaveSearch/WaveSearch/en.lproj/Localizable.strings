@@ -451,3 +451,7 @@
 "This saved reference no longer exists. Refresh the list and try again." = "This saved reference no longer exists. Refresh the list and try again.";
 "Choose a JSON document stored as a regular file." = "Choose a JSON document stored as a regular file.";
 "Remove all tags, collection ranges and favourite status for %@? The indexed sound and audio file stay in place. Importing an older JSON export can restore these annotations." = "Remove all tags, collection ranges and favourite status for %@? The indexed sound and audio file stay in place. Importing an older JSON export can restore these annotations.";
+"This selects document contains an invalid source path." = "This selects document contains an invalid source path.";
+"This selects document contains an invalid source identity." = "This selects document contains an invalid source identity.";
+"This sound is no longer in the catalog. Refresh the list and try again." = "This sound is no longer in the catalog. Refresh the list and try again.";
+"This saved reference is already linked to a sound. Refresh the list and try again." = "This saved reference is already linked to a sound. Refresh the list and try again.";

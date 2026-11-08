@@ -105,6 +105,9 @@ imports remain additive; removal does not create portable deletion tombstones.
 
 The native result reports imported, merged, unresolved and ID-conflict counts.
 Malformed/unsupported input and capacity failures roll back the entire import.
+The native error summary is localized, including incomplete JSON, duplicate
+fields and invalid paths/identities; core diagnostics remain available as an
+underlying error instead of replacing the explanation.
 Limits are 16 MiB input and bounded snapshot accounting, 100,000 sources,
 256 tags and 256 collection memberships per source, 128 UTF-8 bytes per name,
 and 4,096 bytes per path. A snapshot includes conservative JSON structural

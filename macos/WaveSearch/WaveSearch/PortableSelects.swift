@@ -48,17 +48,28 @@ nonisolated enum PortableSelects {
     }
 
     static func failure() -> NSError {
+        let diagnostic = ifBackendError()
         let message: String
-        switch ifBackendError() {
+        switch diagnostic {
         case "InvalidSelectsName": message = String(localized: "Use a shorter, non-empty tag or collection name.")
         case "InvalidSelectsRange": message = String(localized: "Choose a valid preview range.")
+        case "InvalidSelectsPath": message = String(localized: "This selects document contains an invalid source path.")
+        case "InvalidSelectsID", "InvalidSelectsIdentity": message = String(localized: "This selects document contains an invalid source identity.")
+        case "SelectsFileMissing": message = String(localized: "This sound is no longer in the catalog. Refresh the list and try again.")
+        case "SelectsAlreadyLinked": message = String(localized: "This saved reference is already linked to a sound. Refresh the list and try again.")
         case "SelectsReferenceMissing": message = String(localized: "This saved reference no longer exists. Refresh the list and try again.")
-        case "SelectsLimit": message = String(localized: "This exceeds the supported document or annotation limit.")
+        case "SelectsLimit", "ValueTooLong": message = String(localized: "This exceeds the supported document or annotation limit.")
         case "UnsupportedSelectsVersion": message = String(localized: "This JSON uses an unsupported WaveSearch selects version.")
-        case "InvalidNumber", "UnexpectedToken", "MissingField", "UnknownField", "SyntaxError": message = String(localized: "This is not a valid WaveSearch selects document.")
-        default: message = ifBackendError() ?? String(localized: "Cannot update tags and collections")
+        case "InvalidNumber", "UnexpectedToken", "MissingField", "UnknownField", "SyntaxError", "UnexpectedEndOfInput", "DuplicateField":
+            message = String(localized: "This is not a valid WaveSearch selects document.")
+        default: message = String(localized: "Cannot update tags and collections")
         }
-        return NSError(domain: "WaveSearch.Selects", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
+        var info: [String: Any] = [NSLocalizedDescriptionKey: message]
+        if let diagnostic {
+            info[NSUnderlyingErrorKey] = NSError(domain: "WaveSearch.Core", code: 1,
+                                                userInfo: [NSLocalizedDescriptionKey: diagnostic])
+        }
+        return NSError(domain: "WaveSearch.Selects", code: 1, userInfo: info)
     }
 
     static func snapshot(legacyFavourites: [String]? = nil) throws -> SelectsDocument {
@@ -78,7 +89,8 @@ nonisolated enum PortableSelects {
 
     static func edit(file: Int32, kind: UInt32, name: String, range: SelectsMembership?, enabled: Bool) throws {
         guard !name.utf8.contains(0) else {
-            throw NSError(domain: "WaveSearch.Selects", code: 2, userInfo: [NSLocalizedDescriptionKey: "Use a valid tag or collection name."])
+            throw NSError(domain: "WaveSearch.Selects", code: 2,
+                          userInfo: [NSLocalizedDescriptionKey: String(localized: "Use a shorter, non-empty tag or collection name.")])
         }
         let result = name.withCString { ws_selects_edit_v1(file, kind, $0, range?.start_ms ?? -1, range?.end_ms ?? -1, enabled ? 1 : 0) }
         guard result == 0 else { throw failure() }

@@ -181,6 +181,11 @@ changelog/agent documentation added afterward.
 
 ### Fixed
 
+- Selects failures now explain malformed/truncated JSON, duplicate fields,
+  invalid source paths/identities and annotation errors in English and Spanish.
+  Technical causes remain attached for diagnostics; rejected imports retain
+  existing saved annotations.
+
 - Selects JSON imports reject named pipes, devices and directories using the
   opened file descriptor. Symlinks to regular files remain supported; oversized
   files fail before reading, with the existing chunked size limit retained.
