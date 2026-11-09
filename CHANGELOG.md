@@ -186,6 +186,9 @@ changelog/agent documentation added afterward.
 
 ### Fixed
 
+- Audio fuzz replay now accepts saved artifacts at the full 8 KiB campaign limit
+  while rejecting larger files. Normal core checks exercise both CLI boundaries.
+
 - Healthy library changes preempt another library's delayed retry timer instead
   of waiting for its 30-second backoff. Failed roots keep their retry deadline,
   and event bursts retain an already earlier wake.

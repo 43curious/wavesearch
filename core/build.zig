@@ -100,6 +100,23 @@ pub fn build(b: *std.Build) void {
     b.step("audio-fuzz", "Bounded model-free audio mutation fuzzing; run [iterations seed artifact] or replay path").dependOn(&run_fuzz.step);
     const short_fuzz = b.addRunArtifact(fuzz_exe);
     test_step.dependOn(&short_fuzz.step);
+    // Replay must cover the campaign's full 8 KiB input contract, while still
+    // rejecting one byte more before any parser work.
+    const replay_inputs = b.addWriteFiles();
+    const max_replay_bytes: [8192]u8 = @splat(0);
+    const oversized_replay_bytes: [8193]u8 = @splat(0);
+    const replay_max = b.addRunArtifact(fuzz_exe);
+    replay_max.addArg("replay");
+    replay_max.addFileArg(replay_inputs.add("fuzz-replay-max.bin", &max_replay_bytes));
+    replay_max.expectExitCode(0);
+    replay_max.expectStdErrMatch("PASS: replay ");
+    test_step.dependOn(&replay_max.step);
+    const replay_oversized = b.addRunArtifact(fuzz_exe);
+    replay_oversized.addArg("replay");
+    replay_oversized.addFileArg(replay_inputs.add("fuzz-replay-oversized.bin", &oversized_replay_bytes));
+    replay_oversized.expectExitCode(1);
+    replay_oversized.expectStdErrMatch("error: StreamTooLong");
+    test_step.dependOn(&replay_oversized.step);
 
     const waveform_abi_mod = b.createModule(.{
         .target = target,

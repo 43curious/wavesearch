@@ -72,6 +72,8 @@ against the implementation before relying on them.
 - Preserve atomic catalog updates, source/model identity checks, bounded
   memory use, and cooperative cancellation. An OS or runtime call may finish
   before cancellation takes effect; a canceled caller is not proof of draining.
+  For Zig `Dir.readFileAlloc`, set its exclusive limit one byte above an inclusive
+  input ceiling.
 - Treat filesystem events as invalidation hints for complete snapshots. Transfer
   individual file identity only with unambiguous complete-byte proof. Stop/drain
   native watches before library teardown and keep missing-volume scans safe.

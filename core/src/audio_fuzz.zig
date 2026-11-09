@@ -22,7 +22,8 @@ pub fn main(init: std.process.Init) !void {
     if (std.mem.eql(u8, mode, "replay")) {
         const path = args.next() orelse return error.MissingReplayPath;
         if (args.next() != null) return error.InvalidArguments;
-        const bytes = try std.Io.Dir.cwd().readFileAlloc(io, path, std.heap.c_allocator, .limited(max_input));
+        // readFileAlloc's limit is exclusive; the campaign can save max_input bytes.
+        const bytes = try std.Io.Dir.cwd().readFileAlloc(io, path, std.heap.c_allocator, .limited(max_input + 1));
         defer std.heap.c_allocator.free(bytes);
         try exercise(io, path, bytes, backing);
         std.debug.print("PASS: replay {s}\n", .{path});

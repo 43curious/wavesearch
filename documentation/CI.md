@@ -59,6 +59,11 @@ WAV/AIFF preprocessing, duration, WAV and compressed metadata readers, and query
 parsing. Inputs are capped at 8 KiB, parser allocation uses a 4 MiB buffer, and
 the default campaign checks its 30-second budget between cases. The current input is saved
 before execution to `core/zig-out/audio-fuzz-current.bin` for crash replay.
+Replay accepts the complete 8,192-byte input ceiling and rejects larger files
+before parser execution. The pinned Zig file-reader limit is exclusive, so the
+loader permits one byte above that inclusive ceiling as its read limit. Normal
+core checks run the real replay executable on generated 8,192- and 8,193-byte
+artifacts to cover both acceptance and rejection.
 Intact seeds always run before budgeted truncations and hostile size/payload
 mutations. They include PCM/Float formats, BOM-identified UTF-16LE/BE WAV XML,
 descriptive XML attributes and entity/namespace-declaration boundaries,
