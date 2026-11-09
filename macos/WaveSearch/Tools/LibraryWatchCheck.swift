@@ -52,6 +52,7 @@ struct LibraryWatchCheck {
         }
         try await Task.detached { try selectsDocumentFiles() }.value
         await coalescingAndRecovery()
+        await retryDoesNotBlockOtherRoots()
         try await favouriteRelocation()
         await shutdownDrainsScanning()
         print("PASS: library event coalescing/recovery, real file relocation and watcher shutdown")
@@ -167,6 +168,31 @@ struct LibraryWatchCheck {
         try? await Task.sleep(for: .milliseconds(30))
         precondition(calls.count == 7 && source.stops == 2, "Stopped/replaced sources must not admit new scans")
         print("PASS: 500-event burst, busy admission, downtime/loss, fair roots, reconnect and obsolete callbacks")
+    }
+
+    private static func retryDoesNotBlockOtherRoots() async {
+        let source = EventSource()
+        var calls: [Int] = []
+        let coordinator = LibraryWatchCoordinator(source: source.source, delay: .milliseconds(5)) { id in
+            calls.append(id)
+            return true
+        }
+        defer { coordinator.stop() }
+        coordinator.update([
+            LibraryFolder(id: 1, name: "Failed", path: "/failed", isMissing: false),
+            LibraryFolder(id: 2, name: "Healthy", path: "/healthy", isMissing: false),
+        ])
+        await until { calls.count == 2 }
+        coordinator.retry(1) // Leave a real 30-second backoff timer pending.
+        source.receive?(.init(paths: ["/healthy/first.wav"]))
+        await until { calls.count == 3 }
+        precondition(calls == [1, 2, 2], "Healthy changes must preempt another root's backoff without retrying it early")
+        // Serving the healthy root restores the delayed timer; another event
+        // must be able to preempt it again without losing the dirty retry root.
+        source.receive?(.init(paths: ["/healthy/second.wav"]))
+        await until { calls.count == 4 }
+        precondition(calls == [1, 2, 2, 2])
+        print("PASS: healthy library changes preempt another root's retry timer while preserving its backoff")
     }
 
     private static func favouriteRelocation() async throws {

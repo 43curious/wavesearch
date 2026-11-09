@@ -54,8 +54,11 @@ by default. The native source uses FSEvents file/root events with a one-second
 latency. The coordinator coalesces changes by library for two seconds, admits
 one root at a time at utility priority, and rotates ready roots fairly. Batches
 are capped at 4,096 paths before requesting full recovery. There is no new idle
-polling timer. Failed scans retry after 30 seconds; busy roots wait for a host
-foreground-completion signal. Starting search, playback preparation, playback,
+polling timer. Failed scans retry after 30 seconds. A ready healthy root can
+preempt that delayed wake without pulling the failed root's retry forward;
+repeated events retain an already earlier wake instead of postponing service.
+Busy roots wait for a host foreground-completion signal. Starting search,
+playback preparation, playback,
 or selected-file analysis cooperatively cancels an automatic scan and retains
 its dirty hint. Manual Re-index and Deep Re-index remain available.
 
@@ -105,7 +108,7 @@ bash scripts/test-library-watching.sh --native
 
 The deterministic watcher check uses injected signals plus disposable real WAVs
 and a real core catalog. It covers a 500-event burst, busy admission, startup/loss
-recovery, fair roots, reconnect, stale callbacks, native favourites/selection/range
+recovery, fair roots, retry-timer preemption, reconnect, stale callbacks, native favourites/selection/range
 relocation, foreground deferral and stop/drain order. Core checks cover changed
 mtime/hash mode, duplicates/copies, missing proofs, cross-library moves, schema-14
 migration, sampled collisions, replacement, cancellation during publication and
@@ -123,12 +126,10 @@ A warm synthetic 1,000-file scan measured 395 ms initially and 161 ms unchanged,
 with 8.9 MB process peak RSS. These tiny identical WAV fixtures are not a
 cold-storage, real-library, or end-to-end latency result.
 
-The deterministic Swift and refinement-policy checks pass, Linux compilation
-passes, and the full Swift app/window-check sources compile with strict
-concurrency checking. This host's native FSEvents probe reports unavailable;
-Xcode project builds abort in the host runtime, and the lifecycle suite fails
-its native autoplay assertion on both unchanged HEAD and this implementation.
-Native event delivery, external-drive removal during enumeration,
-desktop interaction, idle wakeups and representative foreground/cold-storage
-latency still need acceptance on a normal logged-in Mac. Passing injected-event
-tests does not establish those results.
+The development host now runs the full app build, headless lifecycle checks and
+native window/Settings checks. Older Xcode/audio-service failures are recorded in
+[host capability validation](CI.md#local-reproduction). The separate `--native`
+probe passed on 2026-11-09, delivering a real disposable audio-file change.
+External-drive removal during enumeration, idle wakeups and representative
+foreground/cold-storage latency remain separate acceptance work. Passing
+injected-event tests does not establish those results.

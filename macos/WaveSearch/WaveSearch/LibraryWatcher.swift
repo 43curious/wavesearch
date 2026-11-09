@@ -87,6 +87,7 @@ final class LibraryWatchCoordinator {
     private var pending: Set<Int> = []
     private var retryAt: [Int: ContinuousClock.Instant] = [:]
     private var task: Task<Void, Never>?
+    private var wakeAt: ContinuousClock.Instant?
     private var stopSource: (() -> Void)?
     private var generation: UInt64 = 0
     private var delivering = false
@@ -162,14 +163,21 @@ final class LibraryWatchCoordinator {
     /// Call when foreground work or a scan finishes. Busy admission leaves dirty
     /// roots queued without polling until the host signals another opportunity.
     func wake() {
-        guard task == nil, !pending.isEmpty, !delivering else { return }
-        let wait = pending.map { id in retryAt[id].map { ContinuousClock.now.duration(to: $0) } ?? .zero }.min() ?? .zero
-        let pause = max(delay, wait)
+        guard !pending.isEmpty, !delivering else { return }
+        let now = ContinuousClock.now
+        let wait = pending.map { id in retryAt[id].map { now.duration(to: $0) } ?? .zero }.min() ?? .zero
+        let deadline = now.advanced(by: max(delay, wait))
+        // A healthy root can become ready before an outstanding retry timer.
+        // Keep earlier wakes intact so repeated events cannot postpone service.
+        if let wakeAt, wakeAt <= deadline { return }
+        task?.cancel()
+        wakeAt = deadline
         let generation = generation
         task = Task { [weak self] in
-            do { try await Task.sleep(for: pause) } catch { return }
-            guard let self, self.generation == generation else { return }
+            do { try await Task.sleep(until: deadline, clock: .continuous) } catch { return }
+            guard let self, self.generation == generation, self.wakeAt == deadline else { return }
             self.task = nil
+            self.wakeAt = nil
             self.delivering = true
             let ready = self.pending.sorted().filter { self.retryAt[$0].map { $0 <= .now } ?? true }
             var admitted = false
@@ -188,6 +196,7 @@ final class LibraryWatchCoordinator {
         generation &+= 1
         task?.cancel()
         task = nil
+        wakeAt = nil
         stopSource?()
         stopSource = nil
         isWatching = false

@@ -186,6 +186,10 @@ changelog/agent documentation added afterward.
 
 ### Fixed
 
+- Healthy library changes preempt another library's delayed retry timer instead
+  of waiting for its 30-second backoff. Failed roots keep their retry deadline,
+  and event bursts retain an already earlier wake.
+
 - WAV XML indexing now reads quoted descriptive attributes, including XMP
   `logComment`, with Unicode/entity handling and existing metadata bounds.
   Namespace declarations and unrelated attributes remain excluded. Older rows

@@ -125,8 +125,9 @@ Use existing checks appropriate to the change; fix failures before finishing.
   entry point. If the host cannot run part of it, report exactly what remains
   unverified. For documentation-only changes, check facts, local links, and
   `git diff --check`; an application rebuild is unnecessary.
-- When core code changes, rebuild the library used by Swift checks rather than
-  testing against a stale XCFramework. The lifecycle, refinement-policy,
+- After core changes, rebuild the library used by Swift checks. Finish library
+  and XCFramework replacement before starting Swift compilation; replacement
+  during compilation invalidates the check. The lifecycle, refinement-policy,
   `test-clap-installer.sh` and watcher scripts support `WS_CORE_LIBRARY` and
   `WS_CORE_HEADERS` overrides. Watcher checks inject events by default;
   `--native` additionally needs working FSEvents. Unrelated AppStore fixtures
