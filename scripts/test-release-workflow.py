@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Exercise the distribution barriers with disposable files and injected Apple tools."""
+from dataclasses import replace
 import hashlib
 import importlib.util
 import json
@@ -18,8 +19,9 @@ spec.loader.exec_module(release)
 
 
 class NativeTools:
-    def __init__(self, *, rejected=None, team="ABCDEFGHIJ", architectures="arm64 x86_64"):
+    def __init__(self, *, rejected=None, team="ABCDEFGHIJ", architectures="arm64 x86_64", unsigned=False):
         self.calls = []
+        self.unsigned = unsigned
         self.rejected = rejected
         self.team = team
         self.architectures = architectures
@@ -32,6 +34,8 @@ class NativeTools:
             stdout = self.architectures
         elif name.startswith("signature-"):
             stderr = f"Authority=Developer ID Application: Fixture\nTeamIdentifier={self.team}\nflags=0x10000(runtime)\n"
+            if self.unsigned:
+                stderr = "Signature=adhoc\nflags=0x10000(runtime)\n"
         elif name == "entitlements":
             stdout = release.ENTITLEMENTS.read_text()
         elif name == "archive-app":
@@ -111,6 +115,22 @@ class DistributionCheck(unittest.TestCase):
         with self.assertRaisesRegex(release.ReleaseError, "catalog"):
             release.distribute(self.app, self.work, self.output, self.config, tools)
         self.assertNotIn("sign-app", tools.calls)
+
+    def test_unsigned_distribution_needs_no_credentials_and_records_its_limits(self):
+        config = replace(self.config, unsigned=True, identity="", team="", profile="")
+        config.validate()
+        tools = NativeTools(unsigned=True)
+        result = release.distribute(self.app, self.work, self.output, config, tools)
+        self.assertTrue(result["file"].endswith("-unsigned.dmg"))
+        self.assertEqual(result["notarization"], {"app": None, "dmg": None, "status": "not submitted"})
+        self.assertIn("ad-hoc", result["signatures"])
+        self.assertIn("Open Anyway", (self.work / "image/INSTALL.txt").read_text())
+        self.assertIn("verify-dmg-image", tools.calls)
+        self.assertFalse(any(name.startswith(("notary-", "staple-", "gatekeeper-")) for name in tools.calls))
+        artifact = self.output / result["file"]
+        self.assertEqual(result["sha256"], hashlib.sha256(artifact.read_bytes()).hexdigest())
+        with self.assertRaisesRegex(release.ReleaseError, "cannot be combined"):
+            replace(self.config, unsigned=True).validate()
 
     def test_explicit_version_and_credentials_are_required(self):
         self.config.validate()

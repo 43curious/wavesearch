@@ -98,6 +98,9 @@ against the implementation before relying on them.
   files unchanged and renders partial selections as PCM24 WAVs. Exports are
   persistent media that projects may reference; source files must survive
   cancellation, and completed exports are not disposable caches.
+- DMG packaging supports free `--unsigned` ad-hoc builds and Developer ID
+  notarized builds; keep their trust/acceptance status explicit. See the release
+  workflow before changing either path.
 - Keep generated build products, XCFramework copies, personal Xcode state, and
   model/runtime artifacts out of commits. Vendor updates should be deliberate
   dependency changes.

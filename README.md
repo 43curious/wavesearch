@@ -68,8 +68,9 @@ linking the Swift app. Local builds use ad-hoc signing and need no developer
 account.
 
 Signed, notarized DMGs use the separate [release workflow](documentation/RELEASING.md)
-with an explicitly chosen version/commit and Developer ID credentials. It does
-not change normal builds or publish a GitHub release automatically.
+with an explicitly chosen version/commit and Developer ID credentials. A free `--unsigned` option creates an ad-hoc signed app in an unsigned DMG,
+with manual first-launch approval instructions and no Apple membership required.
+Neither option changes normal builds or publishes a GitHub release automatically.
 
 The macOS core build compiles arm64 and x86_64 libraries, combines them with
 `lipo`, creates `WaveSearchKit.xcframework`, and copies it into the app sources.

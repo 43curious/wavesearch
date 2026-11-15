@@ -12,6 +12,10 @@ changelog/agent documentation added afterward.
 
 ### Added
 
+- Free `--unsigned` DMG packaging uses ad-hoc app signing without Apple
+  credentials, with explicit manifest status and English/Spanish first-launch
+  instructions. The signed/notarized release path remains available.
+
 - Opt-in editor payload preparation and exact rendered-sample checks accompany
   a native Resolve 21.1.1 acceptance report: 12 WAV/AIFF/ALAC import-mode/range
   cases retained their paths and durations after project reopening and rendered

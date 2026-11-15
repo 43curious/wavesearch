@@ -1,4 +1,4 @@
-# Signed macOS distribution
+# macOS DMG distribution
 
 The release script builds a chosen clean commit into a universal Developer ID
 application and notarized DMG. It does not create a Git tag, edit the changelog's
@@ -12,6 +12,39 @@ Developer ID credentials or notarization credentials were supplied during
 implementation. The current restricted host also aborts during Xcode project
 initialization. Tests inject native-tool results and validate orchestration;
 they are not evidence that Apple accepted an artifact.
+
+## Free distribution without Apple membership
+
+Use `--unsigned` to package a universal Release app without a paid Apple account,
+Developer ID certificate or notarization credentials:
+
+```bash
+python3 scripts/release-macos.py --unsigned \
+  --version "$RELEASE_VERSION" --build "$RELEASE_BUILD" \
+  --release-date "$RELEASE_DATE" --commit "$RELEASE_COMMIT"
+```
+
+The chosen metadata, clean source, toolchain and source-check requirements below
+still apply. Add `--plan` to inspect the command without building. This option
+uses a free ad-hoc app signature with the same sandbox/Hardened Runtime
+entitlements; it does not establish a developer identity. The DMG is unsigned
+and neither artifact is notarized or stapled. Signing credentials cannot be
+combined with `--unsigned`. The existing Actions workflow remains signed-only.
+
+Outputs use an `-unsigned` suffix in the directory and DMG filename. Bundle
+contents, universal architectures, app signature/entitlements and DMG image
+integrity are still checked. Checksums and the manifest record the result,
+including the absence of notarization and Gatekeeper acceptance.
+
+The image includes English/Spanish first-launch instructions: copy the app into
+Applications, attempt to launch it, then use **System Settings → Privacy & Security
+→ Open Anyway** if macOS blocks it. Approve only trusted copies; managed Macs
+may prohibit the exception. See [Apple's instructions](https://support.apple.com/102445).
+No quarantine removal or global Gatekeeper changes are needed. Browser-download
+installation, manual approval, sandbox permissions, playback/imports and optional
+runtime loading still need acceptance on the actual packaged app. Ad-hoc builds
+have no stable Developer ID team identity; verify saved folder grants across app
+replacement rather than assuming they survive updates.
 
 ## Local command
 

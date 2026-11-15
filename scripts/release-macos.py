@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a chosen clean commit into a signed/notarized universal DMG. Never publish."""
+"""Build a chosen clean commit into a signed/notarized or ad-hoc universal DMG. Never publish."""
 import argparse
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
@@ -36,6 +36,7 @@ class ReleaseConfig:
     profile: str = ""
     keychain: str = ""
     headless: bool = False
+    unsigned: bool = False
 
     def validate(self, signing=True):
         if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", self.version):
@@ -49,7 +50,9 @@ class ReleaseConfig:
             raise ReleaseError("Release date must be YYYY-MM-DD") from error
         if not re.fullmatch(r"[a-f0-9]{40}", self.commit):
             raise ReleaseError("Commit must be the complete lowercase 40-character SHA")
-        if signing and (not self.identity or not self.profile or not re.fullmatch(r"[A-Z0-9]{10}", self.team)):
+        if self.unsigned and any((self.identity, self.team, self.profile, self.keychain)):
+            raise ReleaseError("--unsigned cannot be combined with signing credentials")
+        if signing and not self.unsigned and (not self.identity or not self.profile or not re.fullmatch(r"[A-Z0-9]{10}", self.team)):
             raise ReleaseError("Signing requires --identity, --team-id and an existing --notary-profile")
 
     def notary_auth(self):
@@ -105,7 +108,8 @@ def notarize(artifact, label, config, commands):
 
 
 def sign_code(path, config, commands, label, entitlements=None, *, runtime=True):
-    args = ["codesign", "--force", "--timestamp", "--sign", config.identity]
+    args = ["codesign", "--force", "--timestamp=none" if config.unsigned else "--timestamp",
+            "--sign", "-" if config.unsigned else config.identity]
     if runtime:
         args += ["--options", "runtime"]
     if config.keychain:
@@ -120,7 +124,10 @@ def verify_code(path, config, commands, label, *, app=False):
                  f"verify-{label}")
     details = commands.run(["codesign", "-d", "--verbose=4", path], f"signature-{label}")
     metadata = details.stdout + details.stderr
-    if "Authority=Developer ID Application:" not in metadata or f"TeamIdentifier={config.team}\n" not in metadata:
+    if config.unsigned:
+        if "Signature=adhoc" not in metadata:
+            raise ReleaseError(f"{label} must have an ad-hoc signature")
+    elif "Authority=Developer ID Application:" not in metadata or f"TeamIdentifier={config.team}\n" not in metadata:
         raise ReleaseError(f"{label} is not signed with the intended Developer ID team")
     if app and not re.search(r"flags=.*\bruntime\b", metadata):
         raise ReleaseError("The app signature does not enable Hardened Runtime")
@@ -178,12 +185,14 @@ def sign_app(app, config, commands):
 def distribute(app, work, output, config, commands):
     """The acceptance barriers are shared by production and the failure-path checks."""
     sign_app(app, config, commands)
-    archive = work / "WaveSearch.zip"
-    commands.run(["ditto", "-c", "-k", "--keepParent", app, archive], "archive-app")
-    app_submission = notarize(archive, "app", config, commands)
-    commands.run(["xcrun", "stapler", "staple", app], "staple-app")
-    commands.run(["xcrun", "stapler", "validate", app], "validate-app-ticket")
-    commands.run(["spctl", "--assess", "--type", "execute", "--verbose=2", app], "gatekeeper-app")
+    app_submission = None
+    if not config.unsigned:
+        archive = work / "WaveSearch.zip"
+        commands.run(["ditto", "-c", "-k", "--keepParent", app, archive], "archive-app")
+        app_submission = notarize(archive, "app", config, commands)
+        commands.run(["xcrun", "stapler", "staple", app], "staple-app")
+        commands.run(["xcrun", "stapler", "validate", app], "validate-app-ticket")
+        commands.run(["spctl", "--assess", "--type", "execute", "--verbose=2", app], "gatekeeper-app")
 
     staging = work / "image"
     staging.mkdir()
@@ -197,16 +206,31 @@ def distribute(app, work, output, config, commands):
         "Arrastra WaveSearch.app a Aplicaciones, ábrelo y añade una biblioteca de sonidos.\n"
         "La instalación y la búsqueda léxica funcionan sin conexión. Los modelos y el\n"
         "runtime opcionales solo se descargan cuando los eliges en Ajustes.\n")
-    dmg = work / f"WaveSearch-{config.version}-{config.build}-universal.dmg"
+    if config.unsigned:
+        with (staging / "INSTALL.txt").open("a") as instructions:
+            instructions.write(
+                "\nThis build is not Developer ID signed or notarized by Apple.\n"
+                "After copying to Applications, try opening WaveSearch once. If macOS blocks it,\n"
+                "open System Settings > Privacy & Security > Open Anyway and confirm.\n"
+                "Only approve a copy obtained from a source you trust. Managed Macs may prevent this.\n\n"
+                "Esta versión no tiene firma Developer ID ni notarización de Apple.\n"
+                "Tras copiarla a Aplicaciones, intenta abrir WaveSearch una vez. Si macOS la bloquea,\n"
+                "abre Ajustes del Sistema > Privacidad y seguridad > Abrir igualmente y confirma.\n"
+                "Autoriza solo copias de confianza. Los Mac gestionados pueden impedirlo.\n"
+                "\nhttps://support.apple.com/102445\n")
+    suffix = "-unsigned" if config.unsigned else ""
+    dmg = work / f"WaveSearch-{config.version}-{config.build}-universal{suffix}.dmg"
     commands.run(["hdiutil", "create", "-volname", f"WaveSearch {config.version}", "-srcfolder", staging,
                   "-fs", "HFS+", "-format", "UDZO", dmg], "create-dmg")
-    sign_code(dmg, config, commands, "dmg", runtime=False)
-    verify_code(dmg, config, commands, "dmg")
-    dmg_submission = notarize(dmg, "dmg", config, commands)
-    commands.run(["xcrun", "stapler", "staple", dmg], "staple-dmg")
-    commands.run(["xcrun", "stapler", "validate", dmg], "validate-dmg-ticket")
-    commands.run(["spctl", "--assess", "--type", "open", "--context", "context:primary-signature",
-                  "--verbose=2", dmg], "gatekeeper-dmg")
+    dmg_submission = None
+    if not config.unsigned:
+        sign_code(dmg, config, commands, "dmg", runtime=False)
+        verify_code(dmg, config, commands, "dmg")
+        dmg_submission = notarize(dmg, "dmg", config, commands)
+        commands.run(["xcrun", "stapler", "staple", dmg], "staple-dmg")
+        commands.run(["xcrun", "stapler", "validate", dmg], "validate-dmg-ticket")
+        commands.run(["spctl", "--assess", "--type", "open", "--context", "context:primary-signature",
+                      "--verbose=2", dmg], "gatekeeper-dmg")
     commands.run(["hdiutil", "verify", dmg], "verify-dmg-image")
     digest = hashlib.sha256()
     with dmg.open("rb") as source:
@@ -216,9 +240,10 @@ def distribute(app, work, output, config, commands):
     dmg = dmg.rename(output / dmg.name)
     (output / "SHA256SUMS").write_text(f"{checksum}  {dmg.name}\n")
     return {"file": dmg.name, "sha256": checksum, "size_bytes": dmg.stat().st_size,
-            "notarization": {"app": app_submission, "dmg": dmg_submission, "status": "Accepted"},
-            "signatures": "verified Developer ID", "tickets": "app and DMG stapled and validated",
-            "gatekeeper": "app execute and DMG open accepted"}
+            "notarization": {"app": app_submission, "dmg": dmg_submission, "status": "not submitted" if config.unsigned else "Accepted"},
+            "signatures": "verified ad-hoc app; unsigned DMG" if config.unsigned else "verified Developer ID",
+            "tickets": "none" if config.unsigned else "app and DMG stapled and validated",
+            "gatekeeper": "manual user approval required; not assessed" if config.unsigned else "app execute and DMG open accepted"}
 
 
 def build_release(config, output):
@@ -268,7 +293,7 @@ def build_release(config, output):
                               "xcode": xcode, "swift": swift, "host_macos": host},
                 "source_checks": {"command": check_args, "status": "passed", "skips": skips},
                 "manual_acceptance": {"desktop_checks": "pending" if config.headless else "passed source checks",
-                                      "browser_quarantine_install": "pending", "signed_app_library_playback_import": "pending",
+                                      "browser_quarantine_install": "pending", "packaged_app_library_playback_import": "pending",
                                       "optional_real_model_runtime": "not run"},
                 "distribution": distribution}
     (output / "release.json").write_text(json.dumps(manifest, indent=2) + "\n")
@@ -287,10 +312,11 @@ def main():
     parser.add_argument("--keychain", default="")
     parser.add_argument("--output", type=Path)
     parser.add_argument("--headless-checks", action="store_true", help="Use CI source checks; desktop acceptance remains pending")
+    parser.add_argument("--unsigned", action="store_true", help="Use free ad-hoc app signing; no Apple notarization or DMG signing")
     parser.add_argument("--plan", action="store_true", help="Print the chosen build plan without credentials or filesystem writes")
     args = parser.parse_args()
     config = ReleaseConfig(args.version, args.build, args.release_date, args.commit, args.identity,
-                           args.team_id, args.notary_profile, args.keychain, args.headless_checks)
+                           args.team_id, args.notary_profile, args.keychain, args.headless_checks, args.unsigned)
     try:
         config.validate(signing=not args.plan)
         if args.plan:
@@ -298,11 +324,13 @@ def main():
                               "commit": config.commit, "architectures": sorted(ARCHITECTURES), "minimum_macos": "14.0",
                               "core_optimization": "safe", "swift_optimization": "-O",
                               "create_github_release": False, "create_tag": False,
-                              "steps": ["clean source and checks", "universal Release build", "Developer ID + Hardened Runtime",
+                              "steps": (["clean source and checks", "universal Release build", "ad-hoc app signing",
+                                         "unsigned DMG packaging and image verification", "final checksum and manifest"]
+                                        if config.unsigned else ["clean source and checks", "universal Release build", "Developer ID + Hardened Runtime",
                                         "app notarization/stapling/Gatekeeper", "DMG packaging/signing",
-                                        "DMG notarization/stapling/Gatekeeper", "final checksum and manifest"]}, indent=2))
+                                        "DMG notarization/stapling/Gatekeeper", "final checksum and manifest"])}, indent=2))
         else:
-            output = args.output or ROOT / "dist" / f"WaveSearch-{config.version}-{config.build}"
+            output = args.output or ROOT / "dist" / f"WaveSearch-{config.version}-{config.build}{'-unsigned' if config.unsigned else ''}"
             build_release(config, output.resolve())
     except (ReleaseError, OSError, subprocess.SubprocessError) as error:
         print(f"Release stopped: {error}", file=sys.stderr)
