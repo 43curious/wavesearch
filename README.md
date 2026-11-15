@@ -43,8 +43,8 @@ local CLAP semantic search.
 - **Keep control of your files.** Choose original-file imports or persistent
   copies, and manage catalog backups, recovery, and waveform caches in Settings.
 
-The first version is **0.1_alpha**. Later changes are recorded under
-[Unreleased in the changelog](CHANGELOG.md#unreleased).
+The current version is **0.2.0**, build **1** (alpha). The original
+**0.1_alpha** and subsequent changes are recorded in the [changelog](CHANGELOG.md).
 
 ## Build
 

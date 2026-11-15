@@ -6,6 +6,11 @@ explicitly assigned. Entries describe changes, not planned features.
 
 ## Unreleased
 
+## 0.2.0 — 2026-11-15
+
+First distributable alpha, build **1**. The unsigned DMG requires manual
+first-launch approval; clean-machine acceptance remains pending.
+
 Changes since `0.1_alpha`, including
 [a5a98d5](https://github.com/43curious/wavesearch/commit/a5a98d5) and the
 changelog/agent documentation added afterward.
