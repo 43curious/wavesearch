@@ -155,8 +155,8 @@ MP3 ID3v2.2/2.3/2.4 text frames and comments support ISO-8859-1, UTF-16 with BOM
 UTF-16BE and UTF-8. FLAC Vorbis-comment blocks and Ogg Vorbis/Opus comment packets
 use UTF-8. Duplicate fields contribute all values. These are bounded metadata
 extractors, not audio decoders or complete container validators (Ogg CRCs are
-not verified). M4A atoms, compressed/encrypted frames, and whole-tag v2.2/v2.3
-unsynchronisation are not extracted. ID3v2.3/2.4 grouping identifiers are skipped
+not verified). M4A atoms, compressed/encrypted frames, and compressed v2.2 tags
+are not extracted. ID3v2.3/2.4 grouping identifiers are skipped
 before decoding text. For v2.4, optional synchsafe data-length indicators must
 match the actual encoded text payload after format prefixes and unsynchronisation
 are removed, before character transcoding. Frame/tag-level v2.4 unsynchronisation
@@ -166,6 +166,14 @@ DLI values never become allocation sizes. Missing/invalid prefixes or mismatched
 lengths are malformed; unsupported format flags remain limited and do not stop
 later supported frames from being read. Unsupported ID3 representations
 set the existing metadata-limit flag; missing tags leave fields unknown.
+
+For whole-tag unsynchronisation in ID3v2.2/2.3, the parser reads the physical tag
+body within the metadata budget, removes inserted bytes in place, and parses
+frame sizes against the recovered body. This path may read embedded artwork as
+part of the tag body. It skips oversized tags with a metadata-limit flag.
+Per-frame limits still apply, and tags without whole-tag unsynchronisation
+continue to skip artwork by length. [ID3v2.2 specification](https://id3.org/id3v2-00),
+[ID3v2.3 specification](https://id3.org/id3v2.3.0).
 
 MP3 files without an ID3v2 header also support the fixed 128-byte ID3v1/1.1
 footer. Title/comment populate descriptions; artist/album join general search
@@ -226,7 +234,8 @@ remain available. Extraction version 5 refreshes previously skipped grouped/DLI
 ID3 text on the next scan, retaining the same identity and analysis rules.
 Extraction version 6 refreshes older rows once to recover descriptive XML
 attributes and `LOGCOMMENT` values. This also retains IDs and existing analysis,
-without changing the schema or source audio.
+without changing the schema or source audio. Extraction version 7 refreshes
+older rows once to recover whole-tag unsynchronised ID3v2.2/2.3 descriptions.
 
 Fixtures cover 6 MiB artwork preceding text, duplicate/missing/malformed fields,
 Unicode/UTF-16, Ogg page continuation, cancellation, vendor keys, recognized and

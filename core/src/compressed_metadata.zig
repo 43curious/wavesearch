@@ -32,8 +32,8 @@ const State = struct {
     remaining: usize,
     limited: bool = false,
 
-    fn bytes(self: *State, offset: u64, size: usize) !?[]u8 {
-        if (size > self.remaining or size > MAX_FIELD) {
+    fn bytes(self: *State, offset: u64, size: usize, maximum: usize) !?[]u8 {
+        if (size > self.remaining or size > maximum) {
             self.limited = true;
             return null;
         }
@@ -54,7 +54,7 @@ const State = struct {
     // trailing TAG block; arbitrary container payloads can contain those bytes.
     fn id3v1(self: *State) !void {
         if (self.reader.size < 128) return;
-        const raw = (try self.bytes(self.reader.size - 128, 128)) orelse return;
+        const raw = (try self.bytes(self.reader.size - 128, 128, MAX_FIELD)) orelse return;
         defer self.allocator.free(raw);
         if (!std.mem.eql(u8, raw[0..3], "TAG")) return;
         const comment_end: usize = if (raw[125] == 0 and raw[126] != 0) 125 else 127;
@@ -75,18 +75,35 @@ const State = struct {
 
     fn id3(self: *State, header: [10]u8) !void {
         const version = header[3];
+        const tag_flags = header[5];
         if (version < 2 or version > 4 or header[4] == 255) return error.MalformedMetadata;
         const size = try synchsafe(header[6..10]);
         const end: u64 = @as(u64, size) + 10;
         if (end > self.reader.size) return error.TruncatedMetadata;
-        // v2.2 compression and v2.2/v2.3 whole-tag unsynchronisation need a
-        // different logical cursor. Keep filenames usable and expose the limit.
-        if ((version < 4 and header[5] & 0x80 != 0) or (version == 2 and header[5] & 0x40 != 0)) {
+        if (version == 2 and tag_flags & 0x40 != 0) {
             self.limited = true;
             return;
         }
-        var pos: u64 = 10;
-        if (version >= 3 and header[5] & 0x40 != 0) {
+        if (version < 4 and tag_flags & 0x80 != 0) {
+            // The tag header stores the physical size, but v2.2/v2.3 frame
+            // and extended-header sizes describe bytes before unsynchronisation.
+            const raw = (try self.bytes(10, size, self.remaining)) orelse return;
+            defer self.allocator.free(raw);
+            const used = deunsync(raw);
+            var nested = self.*;
+            nested.reader.size = used;
+            nested.reader.prefix = raw[0..used];
+            nested.remaining = used;
+            try nested.id3Frames(version, tag_flags, 0, used);
+            self.limited = nested.limited;
+            return;
+        }
+        try self.id3Frames(version, tag_flags, 10, end);
+    }
+
+    fn id3Frames(self: *State, version: u8, tag_flags: u8, start: u64, end: u64) !void {
+        var pos = start;
+        if (version >= 3 and tag_flags & 0x40 != 0) {
             var ext: [4]u8 = undefined;
             if (end - pos < 4 or try self.reader.readAll(&ext, pos) != 4) return error.TruncatedMetadata;
             const len: u64 = if (version == 4) try synchsafe(&ext) else @as(u64, std.mem.readInt(u32, &ext, .big)) + 4;
@@ -98,12 +115,13 @@ const State = struct {
         while (pos < end and count < MAX_FIELDS) : (count += 1) {
             try query.check();
             var frame: [10]u8 = @splat(0);
-            if (end - pos < header_size) {
+            const available: usize = @intCast(@min(end - pos, header_size));
+            if (try self.reader.readAll(frame[0..available], pos) != available) return error.TruncatedMetadata;
+            if (frame[0] == 0) break;
+            if (available < header_size) {
                 self.limited = true;
                 break;
             }
-            if (try self.reader.readAll(frame[0..header_size], pos) != header_size) return error.TruncatedMetadata;
-            if (frame[0] == 0) break;
             const id = frame[0..if (version == 2) @as(usize, 3) else 4];
             for (id) |ch| if (!std.ascii.isUpper(ch) and !std.ascii.isDigit(ch)) return error.MalformedMetadata;
             const len: u64 = if (version == 2) std.mem.readInt(u24, frame[3..6], .big) else if (version == 4) try synchsafe(frame[4..8]) else std.mem.readInt(u32, frame[4..8], .big);
@@ -115,9 +133,9 @@ const State = struct {
             if (id[0] == 'T' or comment) {
                 if (unsupported) {
                     self.limited = true;
-                } else if (try self.bytes(pos, @intCast(len))) |raw| {
+                } else if (try self.bytes(pos, @intCast(len), MAX_FIELD)) |raw| {
                     defer self.allocator.free(raw);
-                    const used = if (version == 4 and (flags & 2 != 0 or header[5] & 0x80 != 0)) deunsync(raw) else raw.len;
+                    const used = if (version == 4 and (flags & 2 != 0 or tag_flags & 0x80 != 0)) deunsync(raw) else raw.len;
                     var body: []const u8 = raw[0..used];
                     // Format fields precede text and share frame unsynchronisation.
                     // DLI describes payload bytes before text decoding, never allocation size.
@@ -190,7 +208,7 @@ const State = struct {
             if (try self.reader.readAll(prefix[0..wanted], pos) != wanted) return error.TruncatedMetadata;
             if (std.mem.indexOfScalar(u8, prefix[0..wanted], '=')) |split| {
                 if (textField(prefix[0..split])) {
-                    if (try self.bytes(pos + split + 1, len - split - 1)) |bytes_| {
+                    if (try self.bytes(pos + split + 1, len - split - 1, MAX_FIELD)) |bytes_| {
                         defer self.allocator.free(bytes_);
                         try self.value(prefix[0..split], bytes_);
                     }

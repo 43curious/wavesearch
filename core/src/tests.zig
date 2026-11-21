@@ -3752,6 +3752,63 @@ test "grouped ID3 text and data length indicators preserve Unicode and later fra
     try std.testing.expectEqual(@as(usize, 4), try search.search(allocator, "café lluvia", null, &rows, rows.len));
 }
 
+test "whole-tag ID3 unsynchronisation restores legacy Unicode within the scan budget" {
+    var fixture = try Fixture.init();
+    defer fixture.deinit();
+    const cases = [_]struct { name: []const u8, version: u8, flags: u8, body: []const u8, description: []const u8 }{
+        .{
+            .name = "v22.mp3",
+            .version = 2,
+            .flags = 0x80,
+            .body = "TT2\x00\x00\x07\x01\xff\x00\xfe\x71\x67\xac\x4e" ++
+                "COM\x00\x00\x0e\x00eng\x00riverside\x00",
+            .description = "東京 riverside",
+        },
+        .{
+            .name = "v23.mp3",
+            .version = 3,
+            .flags = 0xc0,
+            .body = "\x00\x00\x00\x06\x00\x00\x00\x00\x00\x01" ++ // Extended header with one byte of padding.
+                "TIT2\x00\x00\x00\x07\x00\x00\x01\xff\x00\xfe\x71\x67\xac\x4e" ++
+                "COMM\x00\x00\x00\x0c\x00\x00\x00eng\x00vintage\x00",
+            .description = "東京 vintage",
+        },
+    };
+    const metadata = @import("compressed_metadata.zig");
+    for (cases) |case| {
+        var tag: std.ArrayList(u8) = .empty;
+        defer tag.deinit(allocator);
+        try tag.appendSlice(allocator, &.{ 'I', 'D', '3', case.version, 0, case.flags, 0, 0, 0, @intCast(case.body.len) });
+        try tag.appendSlice(allocator, case.body);
+        try tag.appendSlice(allocator, "outside tag");
+        try fixture.tmp.dir.writeFile(io, .{ .sub_path = case.name, .data = tag.items });
+        var file = try fixture.tmp.dir.openFile(io, case.name, .{});
+        defer file.close(io);
+        const reader = @import("audio_file.zig").Reader{ .handle = &file, .io = io, .size = tag.items.len };
+        var all: std.ArrayList(u8) = .empty;
+        defer all.deinit(allocator);
+        var description: std.ArrayList(u8) = .empty;
+        defer description.deinit(allocator);
+        try std.testing.expect(try metadata.read(allocator, &all, &description, reader, .mp3, case.body.len - 1));
+        try std.testing.expectEqualStrings("", all.items);
+        try std.testing.expect(!try metadata.read(allocator, &all, &description, reader, .mp3, case.body.len));
+        try std.testing.expectEqualStrings(case.description, description.items);
+        try std.testing.expectEqualStrings(case.description, all.items);
+    }
+
+    try openFixture(&fixture);
+    try search.indexFolderWithOptions(allocator, 1, fixture.root, .{ .fast = true });
+    var rows: [8]main_c.WSResult = undefined;
+    try std.testing.expectEqual(@as(usize, 2), try search.search(allocator, "東京", null, &rows, rows.len));
+    const original = (try db.inspectFile("v23.mp3")).?;
+    db.close();
+    try rawExec(fixture.db_path, "UPDATE file_audio_metadata SET extraction_version=6,limited=1; UPDATE files SET search_text=name,description='';");
+    try openFixture(&fixture);
+    try search.indexFolderWithOptions(allocator, 1, fixture.root, .{ .fast = true });
+    try std.testing.expectEqual(original.id, (try db.inspectFile("v23.mp3")).?.id);
+    try std.testing.expectEqual(@as(usize, 1), try search.search(allocator, "vintage", null, &rows, rows.len));
+}
+
 test "compressed metadata skips large artwork and indexes Unicode duplicate and vendor values" {
     var fixture = try Fixture.init();
     defer fixture.deinit();

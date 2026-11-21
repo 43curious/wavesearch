@@ -12,6 +12,14 @@ nonisolated struct SelectsMembership: Codable, Hashable, Sendable {
     let start_ms: Int64?
     let end_ms: Int64?
     var identity: String { Data(name.utf8).base64EncodedString() + "|\(start_ms ?? -1)|\(end_ms ?? -1)" }
+
+    func previewRange(duration: Double) -> ClosedRange<Double>? {
+        guard let start_ms, let end_ms, duration.isFinite, duration > 0 else { return nil }
+        let start = Double(start_ms) / 1000 / duration
+        let end = min(Double(end_ms) / 1000 / duration, 1)
+        guard start >= 0, start < end else { return nil }
+        return start...end
+    }
 }
 
 nonisolated struct SelectsSource: Codable, Identifiable, Sendable {

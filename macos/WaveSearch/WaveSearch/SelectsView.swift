@@ -120,8 +120,12 @@ struct SelectsView: View {
                             if let start = member.start_ms, let end = member.end_ms {
                                 Text(String(format: "%.3f–%.3f s", locale: Locale.current, Double(start) / 1000, Double(end) / 1000)).monospacedDigit()
                                 if let file = selected(source) {
-                                    Button("Use Range") { applyRange(member, file: file) }
-                                        .disabled(player.isPreparing || player.currentFile?.id != file.id || player.duration <= 0)
+                                    if canPreview(file), member.previewRange(duration: player.duration) == nil {
+                                        Text("Range is outside this audio file").foregroundStyle(.secondary)
+                                    } else {
+                                        Button("Use Range") { applyRange(member, file: file) }
+                                            .disabled(!canPreview(file))
+                                    }
                                 }
                             }
                             Spacer()
@@ -206,10 +210,13 @@ struct SelectsView: View {
         store.editSelects(file: file, kind: UInt32(WS_SELECTS_COLLECTION), name: collection, range: savesRange ? savedRange : nil)
     }
 
+    private func canPreview(_ file: SoundFile) -> Bool {
+        player.currentFile?.id == file.id && !player.isPreparing && player.duration > 0
+    }
+
     private func applyRange(_ member: SelectsMembership, file: SoundFile) {
-        guard player.currentFile?.id == file.id, !player.isPreparing, player.duration > 0,
-              let start = member.start_ms, let end = member.end_ms else { return }
-        player.setSelection(Double(start) / (player.duration * 1000)...Double(end) / (player.duration * 1000))
+        guard canPreview(file), let range = member.previewRange(duration: player.duration) else { return }
+        player.setSelection(range)
     }
 
     private func browse(_ kind: UInt32, _ name: String) {

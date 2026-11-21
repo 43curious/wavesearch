@@ -28,8 +28,10 @@ search leaves annotation browsing. Existing text, UCS and acoustic search retain
 their own modes. A collection returns each matching sound once; saved ranges
 are visible in the editor. Select the sound in results, reopen the editor and
 choose **Use Range** after preview preparation. This updates the shared preview
-selection, including waveform, keyboard audition and exports. A changed shorter
-source clamps the preview range; the saved JSON bounds are retained.
+selection, including waveform, keyboard audition and exports. If the source
+becomes shorter, **Use Range** applies the overlapping portion. For a range
+entirely outside the audio, the editor explains why it cannot be used. The saved
+JSON bounds are retained.
 
 ## Storage and identity
 

@@ -262,6 +262,7 @@
 "Preview, set in and out points, then drag the clip into DaVinci or any other timeline." = "Escucha el sonido, marca la entrada y la salida y arrastra el clip a DaVinci o a cualquier otra línea de tiempo.";
 "Provider is not loaded. Background refinement policy controls when loading is allowed." = "El proveedor no está cargado. La política de refinamiento en segundo plano controla cuándo puede cargarse.";
 "R" = "R";
+"Range is outside this audio file" = "El rango queda fuera de este archivo de audio";
 "Rate" = "Velocidad";
 "Re-index" = "Reindexar";
 "Re-indexing %@…" = "Reindexando %@…";

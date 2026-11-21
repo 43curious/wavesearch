@@ -16,6 +16,10 @@ explicitly assigned. Entries describe changes, not planned features.
   while the sound prepares.
 - The pitch-capable preview applies quiet-file normalization above unity gain
   before limiting peaks.
+- MP3 descriptions from whole-tag unsynchronised ID3v2.2 and v2.3 tags become
+  searchable on the next scan within existing metadata budgets.
+- Collection ranges entirely past the end of a shortened source show an
+  unavailable message and leave the current preview selection in place.
 
 ## 0.2.0 — 2026-11-15
 

@@ -285,6 +285,11 @@ struct LibraryWatchCheck {
         precondition(renamed.tags == ["Rain 東京"] && renamed.favourite)
         precondition(renamed.collections == [SelectsMembership(name: "Edit café", start_ms: 100, end_ms: 500)],
                      "Renaming a collection must retain saved ranges")
+        let savedRange = renamed.collections[0]
+        precondition(savedRange.previewRange(duration: 0.2) == 0.5...1,
+                     "The overlapping part of a saved range must remain available")
+        precondition(savedRange.previewRange(duration: 0.1) == nil && savedRange.previewRange(duration: 0.08) == nil,
+                     "A range ending up outside the source must not turn into whole-file playback")
         store.browseSelects(kind: UInt32(WS_SELECTS_COLLECTION), name: "Edit café")
         await store.waitForSearch()
         precondition(store.results.map(\.id) == [file.id])
