@@ -22,6 +22,12 @@ retained as the NSError's underlying error for inspection. Rejected documents
 leave existing annotations intact. Native checks exercise the real core import
 path in each language using a disposable catalog.
 
+Search-by-example failures from the core and macOS decoders show translated
+guidance that includes the original filename. Technical diagnostic details are
+recorded privately in the `SPL.WaveSearch` unified log under `ExampleSearch`.
+The localization check sends malformed WAV and MP3 files through the production
+request path in both languages.
+
 `LocalizedText` uses native `.stringsdict` plural rules for files, discovered
 files, sounds, loaded sounds, matches and channels. Its second format argument
 contains the locale-grouped number. Both plural forms must retain `%2$@`; the

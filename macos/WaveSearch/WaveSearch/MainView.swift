@@ -32,8 +32,8 @@ struct MainView: View {
             query = store.query
             searchFocused = true
             installKeyboardMonitor()
-            // If a folder is already selected, trigger a browse
-            if store.selectedFolderId != nil && store.query.isEmpty {
+            if store.selectedFolderId != nil, store.query.isEmpty,
+               !store.isExampleSearch, store.selectsFilter == nil {
                 store.search("")
             }
         }

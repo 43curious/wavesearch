@@ -43,8 +43,10 @@ Host decoding runs on the replaceable search worker, retains security-scoped
 access until decoding and search finish, and checks cancellation between chunks.
 Compressed examples are limited to 60 seconds and 64 MiB of interleaved Float32
 PCM; invalid samples, truncated output, and observed size/mtime changes fail the
-request. Search inputs create no catalog entries or exported files. Typing or
-clearing search replaces the example request and suppresses obsolete results.
+request. Search inputs create no catalog entries or exported files. Starting an
+example search leaves the active tag, collection or favourites view. Refreshes
+continue using the example. Typing or clearing search replaces the example
+request and suppresses obsolete results and errors.
 
 The app lifecycle check synthesizes WAV and ALAC/CAF equivalents and verifies
 model-free matching parity, stereo interleaving, chunk cancellation, invalid

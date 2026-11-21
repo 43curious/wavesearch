@@ -6,6 +6,13 @@ explicitly assigned. Entries describe changes, not planned features.
 
 ## Unreleased
 
+### Fixed
+
+- Starting an audio example search from a tag, collection or favourites view
+  keeps the example active through refreshes. Clearing it dismisses its error.
+- Audio example search shows English and Spanish guidance for unreadable files
+  and retains decoder and core diagnostics in the system log.
+
 ## 0.2.0 — 2026-11-15
 
 First distributable alpha, build **1**. The unsigned DMG requires manual

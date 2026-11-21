@@ -1109,6 +1109,7 @@ final class AppStore: ObservableObject {
     }
 
     func search(_ q: String) {
+        let wasExampleSearch = isExampleSearch
         selectsFilter = nil
         isExampleSearch = false
         exampleSourceURL = nil
@@ -1123,6 +1124,7 @@ final class AppStore: ObservableObject {
             currentSearchID = nil
             searchWorker.cancel()
             isSearching = false
+            if wasExampleSearch { lastBackendError = nil }
             applyResults([])
         } else {
             submitSearch(trimmed.isEmpty ? .browse : .text(trimmed))
@@ -1221,6 +1223,7 @@ final class AppStore: ObservableObject {
     func searchByExample(url: URL) {
         guard canUseLibrary else { return }
         lastSearchRequest = ""
+        selectsFilter = nil
         isExampleSearch = true
         exampleSourceURL = url
         exampleSourceName = url.deletingPathExtension().lastPathComponent

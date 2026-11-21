@@ -1,5 +1,6 @@
 import Foundation
 import AVFoundation
+import OSLog
 import WaveSearchKit
 
 nonisolated struct SearchOutcome: Sendable {
@@ -13,6 +14,8 @@ nonisolated struct SearchOutcome: Sendable {
 /// Immutable request + one atomic C cancellation flag. Every operation and
 /// canceller retains this owner, so destroy cannot race either of them.
 nonisolated final class SearchRequest: @unchecked Sendable {
+    private static let exampleLogger = Logger(subsystem: "SPL.WaveSearch", category: "ExampleSearch")
+
     enum Kind: Sendable {
         case text(String)
         case browse
@@ -102,12 +105,15 @@ nonisolated final class SearchRequest: @unchecked Sendable {
                         }
                     }
                 }
-                guard count >= 0 else { return failure(count) }
+                if count == WS_QUERY_CANCELLED { return SearchOutcome(cancelled: true) }
+                guard count >= 0 else { return exampleFailure(url, diagnostic: ifBackendError() ?? "Core status \(count)") }
                 return SearchOutcome(files: raw.prefix(Int(count)).map { file($0.result, group: $0.acoustic_group_id) })
             } catch is CancellationError {
                 return SearchOutcome(cancelled: true)
-            } catch {
+            } catch let error as ExampleAudio.DecodeError {
                 return SearchOutcome(error: String(localized: "Cannot use \(url.lastPathComponent): \(error.localizedDescription)"))
+            } catch {
+                return exampleFailure(url, diagnostic: String(describing: error))
             }
         }
         let browsing: Bool
@@ -149,6 +155,11 @@ nonisolated final class SearchRequest: @unchecked Sendable {
     private static func failure(_ code: Int32) -> SearchOutcome {
         // This function runs on the same thread as the failing C call.
         SearchOutcome(error: ifBackendError() ?? String(localized: "Search failed"), cancelled: code == WS_QUERY_CANCELLED)
+    }
+
+    private static func exampleFailure(_ url: URL, diagnostic: String) -> SearchOutcome {
+        exampleLogger.error("Example search failed: \(diagnostic, privacy: .private)")
+        return SearchOutcome(error: String(localized: "Could not use \(url.lastPathComponent) as a search example. Make sure it opens or choose another audio file."))
     }
 
     static func file(_ result: WSResult, group: Int64 = 0) -> SoundFile {

@@ -109,6 +109,7 @@
 "Could not read cache storage" = "No se ha podido leer el almacenamiento de la caché";
 "Could not read storage at %@" = "No se ha podido leer el almacenamiento en %@";
 "Could not unpack ONNX Runtime. Retry the installation." = "No se ha podido extraer ONNX Runtime. Vuelve a intentar la instalación.";
+"Could not use %@ as a search example. Make sure it opens or choose another audio file." = "No se ha podido usar %@ como ejemplo de búsqueda. Comprueba que se pueda abrir o elige otro archivo de audio.";
 "Create Backup…" = "Crear copia de seguridad…";
 "Creating backup…" = "Creando copia de seguridad…";
 "Custom semantic provider paths are configured. Installing the default pack does not change them." = "Hay rutas personalizadas del proveedor semántico. Instalar el paquete predeterminado no las cambia.";

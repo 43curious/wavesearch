@@ -47,8 +47,32 @@ struct LocalizationCheck {
         precondition(search == (spanish ? "Busca en nombres y metadatos o introduce un filtro de duración" : "Search filenames and metadata, or enter a duration filter"))
         let help = Bundle.main.localizedString(forKey: "Preview keys work while results have focus. Press Esc in search to focus results; press Esc again or ⌘K to return to search. Tab and Shift–Tab move between controls; arrows adjust the focused control.", value: nil, table: nil)
         precondition(help.contains("⌘K") && help.contains(spanish ? "Mayús–Tab" : "Shift–Tab"))
-        try await Task.detached { try selectsErrors(spanish: spanish) }.value
+        try await Task.detached {
+            try exampleErrors(spanish: spanish)
+            try selectsErrors(spanish: spanish)
+        }.value
         print("PASS: \(spanish ? "Spanish" : "English") native resources, plurals, large counts, timing, errors and stable domain keys; duration=\(LocalizedText.duration(125))")
+    }
+
+    nonisolated private static func exampleErrors(spanish: Bool) throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("wavesearch-localized-examples-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        precondition(root.appendingPathComponent("catalog.sqlite").path.withCString { ws_init($0) } == 0)
+        defer { ws_deinit() }
+        for ext in ["wav", "mp3"] {
+            let name = "Lluvia_雨.\(ext)"
+            let input = root.appendingPathComponent(name)
+            try Data("invalid audio".utf8).write(to: input)
+            let request = SearchRequest(kind: .example(input), folderID: -1)!
+            let outcome = SearchRequest.execute(request, lexicalOnly: false)
+            let expected = spanish
+                ? "No se ha podido usar \(name) como ejemplo de búsqueda. Comprueba que se pueda abrir o elige otro archivo de audio."
+                : "Could not use \(name) as a search example. Make sure it opens or choose another audio file."
+            precondition(!outcome.cancelled && outcome.error == expected,
+                         "Unexpected error for a malformed \(ext) search example: \(outcome.error ?? "missing error")")
+        }
+        print("PASS: localized audio example errors from the core and native decoders")
     }
 
     nonisolated private static func selectsErrors(spanish: Bool) throws {

@@ -900,10 +900,18 @@ struct AppStoreLifecycleCheck {
         await store.waitForSearch()
         let expected = store.results.map(\.id)
         precondition(expected.count == 1, store.lastBackendError ?? "WAV example did not match itself")
+        store.browseSelects(kind: UInt32(WS_SELECTS_FAVOURITE))
+        await store.waitForSearch()
+        precondition(store.selectsFilter != nil && store.results.isEmpty)
         precondition(store.acceptSearchExamples([external]))
         await store.waitForSearch()
-        precondition(store.lastBackendError == nil && store.results.map(\.id) == expected,
+        precondition(store.isExampleSearch && store.selectsFilter == nil &&
+                     store.lastBackendError == nil && store.results.map(\.id) == expected,
                      store.lastBackendError ?? "External example lost acoustic parity without CLAP")
+        store.refreshSearch()
+        await store.waitForSearch()
+        precondition(store.lastBackendError == nil && store.results.map(\.id) == expected,
+                     "Refreshing an example search must keep its acoustic matches")
         precondition(store.acceptSearchExamples([linked]))
         await store.waitForSearch()
         precondition(store.lastBackendError == nil && store.results.map(\.id) == expected,
@@ -921,6 +929,10 @@ struct AppStoreLifecycleCheck {
         store.acceptSearchExamples([invalid])
         await store.waitForSearch()
         precondition(store.lastBackendError?.contains("broken.mp3") == true && !store.isSearching)
+        precondition(store.selectedFolderId == nil, "Expected All Libraries for the clear-search check")
+        store.search("")
+        precondition(!store.isExampleSearch && store.lastBackendError == nil && store.results.isEmpty,
+                     "Clearing an example search left its error or results visible")
         store.acceptSearchExamples([invalid])
         store.acceptSearchExamples([external])
         await store.waitForSearch()
@@ -931,7 +943,7 @@ struct AppStoreLifecycleCheck {
         await store.waitForSearch()
         precondition(!store.isExampleSearch && store.lastBackendError == nil && store.results.map(\.id) == expected)
         await store.shutdown()
-        print("PASS: external WAV/\(hasALAC ? "ALAC" : "PCM") CAF examples, model-free acoustic parity, Unicode/symlinks, stereo decode, cancellation, replacement, invalid/non-regular drops")
+        print("PASS: external WAV/\(hasALAC ? "ALAC" : "PCM") CAF examples, model-free acoustic parity, Unicode/symlinks, stereo decode, cancellation, refresh from favourites, clearing and replacing searches, invalid/non-regular drops")
     }
 
     private static func liveLibrarySmokeTest() async throws {
