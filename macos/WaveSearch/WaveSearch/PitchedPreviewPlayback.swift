@@ -13,6 +13,7 @@ nonisolated final class PitchedPreviewPlayback: PreviewPlayback, @unchecked Send
     private let limiter: AVAudioUnitEffect
     private let file: AVAudioFile
     private var fadeTimer: Timer?
+    private var limiterGainDB: Float = 0
     private var epoch: UInt64 = 0
     private var anchor: AVAudioFramePosition = 0
     private var parked: TimeInterval = 0
@@ -89,8 +90,8 @@ nonisolated final class PitchedPreviewPlayback: PreviewPlayback, @unchecked Send
         set { pitchUnit.pitch = min(max(newValue, -1200), 1200) }
     }
     var volume: Float {
-        get { node.volume }
-        set { fadeTimer?.invalidate(); fadeTimer = nil; node.volume = min(max(newValue, 0), 1) }
+        get { node.volume * pow(10, limiterGainDB / 20) }
+        set { setVolume(newValue, fadeDuration: 0) }
     }
     var currentTime: TimeInterval {
         get {
@@ -130,20 +131,29 @@ nonisolated final class PitchedPreviewPlayback: PreviewPlayback, @unchecked Send
         parked = 0
     }
 
-    // Gain changes share the native transport's bounded volume range. The final
-    // peak limiter also covers overshoots introduced by pitch/time processing.
     func setVolume(_ volume: Float, fadeDuration duration: TimeInterval) {
         fadeTimer?.invalidate()
-        let start = node.volume
-        let target = min(max(volume, 0), 1)
-        guard duration > 0 else { self.volume = target; return }
+        fadeTimer = nil
+        let target = min(max(volume, 0), 8)
+        guard duration > 0 else { applyGain(target); return }
+        let start = self.volume
         let started = ProcessInfo.processInfo.systemUptime
         fadeTimer = Timer.scheduledTimer(withTimeInterval: duration / 8, repeats: true) { [weak self] timer in
             guard let self else { timer.invalidate(); return }
             let progress = min(1, (ProcessInfo.processInfo.systemUptime - started) / duration)
-            self.node.volume = start + (target - start) * Float(progress)
+            self.applyGain(start + (target - start) * Float(progress))
             if progress == 1 { timer.invalidate(); self.fadeTimer = nil }
         }
+    }
+
+    private func applyGain(_ gain: Float) {
+        // The player node handles attenuation. Apply boosts before peak limiting.
+        let boostDB: Float = gain > 1 ? 20 * log10(gain) : 0
+        if boostDB != limiterGainDB,
+           AudioUnitSetParameter(limiter.audioUnit, kLimiterParam_PreGain, kAudioUnitScope_Global, 0, boostDB, 0) == noErr {
+            limiterGainDB = boostDB
+        }
+        node.volume = min(gain / pow(10, limiterGainDB / 20), 1)
     }
 
     private func invalidateSchedule() {

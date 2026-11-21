@@ -121,6 +121,7 @@ struct PreviewInspectionCheck {
             let originalTone = try Data(contentsOf: tone)
             try nativePitch(tone, channels: channels, pitch: 1200, rate: 0.5)
             if sign == -1 { try nativePitch(tone, channels: channels, pitch: -1200, rate: 2) }
+            if channels == 1 { try await nativeGain(tone) }
             let afterTone = try Data(contentsOf: tone)
             precondition(afterTone == originalTone, "Pitch audition changed source audio")
         }
@@ -137,20 +138,11 @@ struct PreviewInspectionCheck {
     /// controller state, after the time-pitch unit's startup latency has passed.
     private static func nativePitch(_ url: URL, channels: Int, pitch: Float, rate: Float) throws {
         let player = try PitchedPreviewPlayback(url: url, offline: true)
-        let format = AVAudioFormat(standardFormatWithSampleRate: 48000, channels: AVAudioChannelCount(channels))!
-        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4096)!
         player.volume = 0.25
         player.pitch = pitch
         player.rate = rate
         precondition(player.play())
-        var samples = [[Float]](repeating: [], count: channels)
-        for _ in 0..<12 {
-            let status = try player.renderOffline(frames: 4096, into: buffer)
-            precondition(status == .success)
-            for channel in 0..<channels {
-                samples[channel].append(contentsOf: UnsafeBufferPointer(start: buffer.floatChannelData![channel], count: Int(buffer.frameLength)))
-            }
-        }
+        let samples = try render(player, channels: channels, blocks: 12)
         let expectedFrequency = 750 * pow(2, Double(pitch) / 1200)
         var frequencies: [Double] = []
         for channel in samples {
@@ -170,5 +162,50 @@ struct PreviewInspectionCheck {
         player.stop()
         precondition(player.currentTime == 0 && !player.isPlaying)
         print("PASS: \(url.lastPathComponent) native pitch=\(pitch), rate=\(rate), channel_frequencies=\(frequencies) Hz, finite output, seek and stop")
+    }
+
+    private static func nativeGain(_ url: URL) async throws {
+        let player = try PitchedPreviewPlayback(url: url, offline: true)
+        player.volume = 1
+        precondition(player.play())
+
+        func renderTone() throws -> ArraySlice<Float> {
+            try render(player, channels: 1, blocks: 6)[0].suffix(8192)
+        }
+        func rms(_ samples: ArraySlice<Float>) -> Float {
+            sqrt(samples.reduce(0) { $0 + $1 * $1 } / Float(samples.count))
+        }
+
+        let unity = rms(try renderTone())
+        precondition(unity > 0.1)
+        player.volume = 2
+        let boosted = rms(try renderTone())
+        precondition(abs(boosted / unity - 2) < 0.05, "Preview dropped normalization gain above unity")
+
+        player.setVolume(8, fadeDuration: 0.08)
+        try await Task.sleep(for: .milliseconds(120))
+        let limited = try renderTone()
+        precondition(limited.allSatisfy { $0.isFinite && abs($0) <= 1 })
+        precondition(limited.contains { abs($0) > 0.8 }, "Peak limiter never received the boosted signal")
+
+        player.setVolume(0.5, fadeDuration: 0.08)
+        try await Task.sleep(for: .milliseconds(120))
+        let attenuated = rms(try renderTone())
+        precondition(abs(attenuated / unity - 0.5) < 0.05, "Fading below unity retained a stale boost")
+        print("PASS: native preview applies above-unity gain, limits peaks and fades back below unity")
+    }
+
+    private static func render(_ player: PitchedPreviewPlayback, channels: Int, blocks: Int) throws -> [[Float]] {
+        let format = AVAudioFormat(standardFormatWithSampleRate: 48000, channels: AVAudioChannelCount(channels))!
+        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4096)!
+        var samples = [[Float]](repeating: [], count: channels)
+        for _ in 0..<blocks {
+            let status = try player.renderOffline(frames: buffer.frameCapacity, into: buffer)
+            precondition(status == .success)
+            for channel in 0..<channels {
+                samples[channel].append(contentsOf: UnsafeBufferPointer(start: buffer.floatChannelData![channel], count: Int(buffer.frameLength)))
+            }
+        }
+        return samples
     }
 }

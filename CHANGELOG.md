@@ -12,6 +12,10 @@ explicitly assigned. Entries describe changes, not planned features.
   keeps the example active through refreshes. Clearing it dismisses its error.
 - Audio example search shows English and Spanish guidance for unreadable files
   and retains decoder and core diagnostics in the system log.
+- Turning off preview autoplay leaves an explicit Play or Return command queued
+  while the sound prepares.
+- The pitch-capable preview applies quiet-file normalization above unity gain
+  before limiting peaks.
 
 ## 0.2.0 — 2026-11-15
 

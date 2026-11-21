@@ -73,7 +73,8 @@ final class PlayerController: ObservableObject {
     private var shuttleTimer: Timer?
     private let preparationWorker: LatestRequestWorker<URL, PreparedPreviewPlayer?>
     private var isSuspended = false
-    private var wantsPlayback = false
+    private enum PlaybackIntent { case none, onSelection, play }
+    private var playbackIntent: PlaybackIntent = .none
     private var analysisLoadTask: Task<Void, Never>?
     private let maxShuttleMultiplier: Double = 32
     private let volumeDefaultsKey = "ws_preview_volume_v1"
@@ -122,7 +123,16 @@ final class PlayerController: ObservableObject {
             if autoplay == true { playFromSelectionStart() }
             return
         }
+        let intent: PlaybackIntent
+        if let autoplay {
+            intent = autoplay ? .play : .none
+        } else {
+            intent = autoplayOnSelect ? .onSelection : .none
+        }
+        prepare(file, intent: intent)
+    }
 
+    private func prepare(_ file: SoundFile, intent: PlaybackIntent) {
         spectrogram.clear()
         preparationWorker.cancel()
         analysisLoadTask?.cancel()
@@ -140,7 +150,7 @@ final class PlayerController: ObservableObject {
         isAnalyzingWaveform = true
         isPlaying = false
         isPreparing = true
-        wantsPlayback = autoplay ?? autoplayOnSelect
+        playbackIntent = intent
         selection = nil
         progress = 0
         duration = 0
@@ -154,8 +164,8 @@ final class PlayerController: ObservableObject {
             self.player?.currentTime = self.duration * self.progress
             self.configureTransport()
             self.applyOutputGain(fade: false)
-            if self.wantsPlayback { self.beginPlayback() }
-            if self.player == nil { self.wantsPlayback = false }
+            if self.player != nil { self.beginPlayback() }
+            else { self.playbackIntent = .none }
         }
 
         analysisLoadTask = Task { [weak self] in
@@ -195,18 +205,19 @@ final class PlayerController: ObservableObject {
     func togglePlayPause() {
         stopShuttle()
 
-        if isPlaying || wantsPlayback {
+        if isPlaying || playbackIntent != .none {
             stopPlayback()
             return
         }
 
-        wantsPlayback = currentFile != nil
+        playbackIntent = currentFile == nil ? .none : .play
         beginPlayback()
     }
 
     /// A stable ID at a new URL is a verified move, even when re-indexing changes
     /// hash mode. Keep the range/playhead while the native player reopens it.
     func relocate(_ file: SoundFile) {
+        guard !isSuspended else { return }
         guard let currentFile, currentFile.id == file.id,
               currentFile.contentHash == file.contentHash || currentFile.path != file.path else {
             load(file)
@@ -215,8 +226,7 @@ final class PlayerController: ObservableObject {
         guard currentFile != file else { return }
         let range = selection
         let position = progress
-        let playing = isPlaying || wantsPlayback
-        load(file, autoplay: playing)
+        prepare(file, intent: playbackIntent)
         setSelection(range)
         seek(to: position)
     }
@@ -225,12 +235,12 @@ final class PlayerController: ObservableObject {
         stopShuttle()
         progress = playbackRange.lowerBound
         player?.currentTime = duration * progress
-        wantsPlayback = currentFile != nil
+        playbackIntent = currentFile == nil ? .none : .play
         beginPlayback()
     }
 
     func stopPlayback() {
-        wantsPlayback = false
+        playbackIntent = .none
         player?.pause()
         stopTimer()
         stopShuttle()
@@ -260,7 +270,7 @@ final class PlayerController: ObservableObject {
         stopShuttle()
         isPlaying = false
         isPreparing = false
-        wantsPlayback = false
+        playbackIntent = .none
         selection = nil
         progress = 0
         duration = 0
@@ -290,7 +300,7 @@ final class PlayerController: ObservableObject {
     func setAutoplayOnSelect(_ enabled: Bool) {
         autoplayOnSelect = enabled
         preferences.set(enabled, forKey: Self.autoplayKey)
-        if !enabled && isPreparing { wantsPlayback = false }
+        if !enabled && playbackIntent == .onSelection { playbackIntent = .none }
     }
 
     func setLoops(_ enabled: Bool) {
@@ -345,14 +355,14 @@ final class PlayerController: ObservableObject {
     }
 
     private func beginPlayback() {
-        guard wantsPlayback, let player, duration > 0 else { return }
+        guard playbackIntent != .none, let player, duration > 0 else { return }
         if progress < playbackRange.lowerBound || progress >= playbackRange.upperBound {
             progress = playbackRange.lowerBound
             player.currentTime = duration * progress
         }
         configureTransport()
         isPlaying = player.play()
-        wantsPlayback = isPlaying
+        playbackIntent = isPlaying ? .play : .none
         if isPlaying {
             WaveformSignposts.event("PreviewStarted", fileID: currentFile?.id ?? 0)
             startTimer()
@@ -401,17 +411,17 @@ final class PlayerController: ObservableObject {
         // playhead within the audition range while testing the raw end position.
         progress = min(max(position, range.lowerBound), range.upperBound)
         if position >= range.upperBound || !player.isPlaying {
-            if loops && wantsPlayback {
+            if loops && playbackIntent != .none {
                 player.currentTime = duration * range.lowerBound
                 progress = range.lowerBound
                 isPlaying = player.play()
-                wantsPlayback = isPlaying
+                playbackIntent = isPlaying ? .play : .none
                 if !isPlaying { stopTimer(); stopShuttle() }
             } else {
                 player.pause()
                 player.currentTime = duration * range.upperBound
                 progress = range.upperBound
-                wantsPlayback = false
+                playbackIntent = .none
                 isPlaying = false
                 stopTimer()
                 stopShuttle()
@@ -422,7 +432,7 @@ final class PlayerController: ObservableObject {
     private func startShuttle(direction: Double) {
         guard let player, duration > 0 else { return }
 
-        wantsPlayback = false
+        playbackIntent = .none
         stopTimer()
 
         let sameDirection = shuttleSpeed.sign == direction.sign && shuttleSpeed != 0
@@ -441,7 +451,7 @@ final class PlayerController: ObservableObject {
                 player.currentTime = duration * playbackRange.lowerBound
             }
             isPlaying = player.isPlaying || player.play()
-            wantsPlayback = isPlaying
+            playbackIntent = isPlaying ? .play : .none
             guard isPlaying else { stopShuttle(); return }
 
             shuttleTimer = Timer.scheduledTimer(withTimeInterval: 0.04, repeats: true) { [weak self] _ in

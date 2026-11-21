@@ -411,12 +411,12 @@ struct AppStoreLifecycleCheck {
             let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 48000)!
             buffer.frameLength = 48000
             buffer.floatChannelData![0].initialize(repeating: 0, count: 48000)
-            for name in ["A", "B", "C", "D", "E"] {
+            for name in ["A", "B", "C", "D", "E", "F"] {
                 let file = try AVAudioFile(forWriting: root.appendingPathComponent("\(name).wav"), settings: format.settings)
                 try file.write(from: buffer)
             }
         }.value
-        let first = Gate(), latest = Gate(), paused = Gate(), events = Events()
+        let first = Gate(), latest = Gate(), paused = Gate(), automatic = Gate(), events = Events()
         let clock = PreviewTestClock()
         let player = PlayerController(preferences: prefs, prepare: { url in
             let name = url.deletingPathExtension().lastPathComponent
@@ -426,6 +426,7 @@ struct AppStoreLifecycleCheck {
                 if name == "A" { first.block() }
                 if name == "C" { latest.block() }
                 if name == "D" { paused.block() }
+                if name == "F" { automatic.block() }
             }
             if !native {
                 return PreparedPreviewPlayer(PreviewTestPlayback(name: name, clock: clock, acceptsPlayback: name != "E"))
@@ -457,7 +458,8 @@ struct AppStoreLifecycleCheck {
         player.load(file("A"), autoplay: true)
         await first.entered.wait()
         player.load(file("B"), autoplay: true)
-        player.load(file("C"), autoplay: true)
+        player.setAutoplayOnSelect(true)
+        player.load(file("C"))
         player.seek(to: 0.25)
         player.markIn()
         player.seek(to: 0.45)
@@ -467,10 +469,11 @@ struct AppStoreLifecycleCheck {
         first.release()
         await latest.entered.wait()
         precondition(events.values == ["A", "C"] && !player.isPlaying)
+        player.setAutoplayOnSelect(false)
         latest.release()
         await ready()
         precondition(player.currentFile?.name == "C.wav" && player.isPlaying && player.progress >= 0.25,
-                     "Only the newest prepared source should autoplay from its in point")
+                     "Disabling autoplay must preserve explicit Return playback from the in point")
         if !native {
             precondition(clock.playedNames == ["C"] && clock.firstStart == 0.25,
                          "Only the newest transport should receive play at its in point")
@@ -511,6 +514,13 @@ struct AppStoreLifecycleCheck {
         paused.release()
         await ready()
         precondition(!player.isPlaying, "Pause during preparation did not revoke queued playback")
+        player.setAutoplayOnSelect(true)
+        player.load(file("F"))
+        await automatic.entered.wait()
+        player.setAutoplayOnSelect(false)
+        automatic.release()
+        await ready()
+        precondition(!player.isPlaying, "Disabling autoplay did not revoke preference-driven playback")
         if !native {
             player.load(file("E"), autoplay: true)
             await ready()
@@ -537,7 +547,7 @@ struct AppStoreLifecycleCheck {
         }
         await player.stopAndDrain()
         precondition(!player.isPlaying && player.currentFile == nil && player.selection == nil)
-        print("PASS: \(native ? "native" : "controlled-clock") newest-source autoplay, deferred Return, in/out marks, range/whole-file loops, rate, pause and drain")
+        print("PASS: \(native ? "native" : "controlled-clock") newest-source autoplay, deferred Return with autoplay turned off, in/out marks, range/whole-file loops, rate, pause and drain")
     }
 
     private static func lexicalResultsPrecedeRefinementDebounce() async {

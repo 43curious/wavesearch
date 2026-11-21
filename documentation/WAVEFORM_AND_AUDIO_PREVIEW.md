@@ -62,7 +62,9 @@ change. See [accessibility workflows and acceptance limits](ACCESSIBILITY.md).
 
 **Settings → General → Audio preview → Autoplay selected sounds** is off by
 default and persists independently of preview volume. When enabled, selection
-starts playback only after the newest source is prepared. The panel's **Loop**
+starts playback only after the newest source is prepared. Turning autoplay off
+cancels pending playback requested by the preference. Explicit play commands
+issued during preparation still start when the source is ready. The panel's **Loop**
 and **Rate** controls are session settings, retained across selected files. Rates
 are 0.5×, 0.75×, 1×, 1.5× and 2×. These controls never modify sources or rendered
 exports. The existing h/l shuttle remains available and explicit rate selection
@@ -366,6 +368,12 @@ Preview playback targets `-18 LUFS`. Requested normalization is:
 - Reduced when necessary to keep the measured sample peak below `-1 dBFS`.
 - Multiplied independently by the user’s persisted volume setting.
 - Applied with a short fade when analysis arrives or volume changes.
+
+The pitch-capable graph applies gain above unity at the peak limiter's input.
+The player node applies attenuation, including mute. The AVAudioPlayer fallback
+uses its native volume control, whose nominal range ends at unity. Native offline
+checks render a tone through the graph to verify boost, limiting and fades back
+to attenuation.
 
 The peak constraint uses decoded sample peak, not an oversampled standards-grade
 true-peak meter.
